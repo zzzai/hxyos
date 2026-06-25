@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>荷小悦 · 员工端</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap');
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg: #f5f7f6;
+            --text: #2c2c2c;
+            --text-light: #6b6b6b;
+            --accent: #4a7c59;
+            --accent-light: #e8f0eb;
+            --gold: #b8860b;
+            --gold-light: #f5f0e0;
+            --border: #e5e0d8;
+            --white: #ffffff;
+        }
+        body { font-family: 'Noto Sans SC', sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+        button,input { font: inherit; }
+        .container { max-width: 800px; margin: 0 auto; padding: 20px; }
+
+        /* Auth gate */
+        .auth-gate {
+            position: fixed; inset: 0; z-index: 999; background: var(--bg);
+            display: flex; align-items: center; justify-content: center; flex-direction: column;
+        }
+        .auth-gate.hidden { display: none; }
+        .auth-gate h2 { font-size: 20px; margin-bottom: 20px; color: var(--accent); }
+        .auth-gate input {
+            padding: 12px 16px; border: 1px solid var(--border); border-radius: 8px;
+            font-size: 15px; width: 240px; text-align: center; outline: none;
+        }
+        .auth-gate input:focus { border-color: var(--accent); }
+        .auth-gate button {
+            margin-top: 12px; padding: 10px 32px; background: var(--accent);
+            min-height:44px; color: white; border: none; border-radius: 8px; font-size: 14px; cursor: pointer;
+        }
+        .auth-gate .err { color: #c0392b; font-size: 12px; margin-top: 8px; }
+
+        /* Header */
+        .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+        .header h1 { font-size: 18px; font-weight: 700; color: var(--accent); }
+        .header-actions { display: flex; gap: 8px; align-items: center; }
+        .refresh-btn {
+            padding: 6px 14px; border: 1px solid var(--border); border-radius: 6px;
+            min-height:44px; background: var(--white); font-size: 12px; cursor: pointer; color: var(--text-light);
+        }
+        .refresh-btn:active { background: #f0f0f0; }
+
+        /* Filters */
+        .filters { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+        .filter-btn {
+            padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 500;
+            min-height:44px; border: 1px solid var(--border); background: var(--white); cursor: pointer; color: var(--text-light);
+        }
+        .filter-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
+
+        /* Stats */
+        .stats { display: flex; gap: 12px; margin-bottom: 16px; }
+        .stat-card {
+            flex: 1; background: var(--white); border: 1px solid var(--border);
+            border-radius: 10px; padding: 12px; text-align: center;
+        }
+        .stat-num { font-size: 24px; font-weight: 700; color: var(--accent); }
+        .stat-label { font-size: 11px; color: var(--text-light); }
+
+        /* Order list */
+        .order-list { display: flex; flex-direction: column; gap: 10px; }
+        .order-card {
+            background: var(--white); border: 1px solid var(--border);
+            border-radius: 10px; padding: 14px 16px;
+        }
+        .order-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .order-phone { font-size: 14px; font-weight: 600; }
+        .order-time { font-size: 11px; color: var(--text-light); }
+        .order-items { font-size: 13px; color: var(--text); line-height: 1.8; margin-bottom: 8px; }
+        .order-note { font-size: 12px; color: var(--gold); margin-bottom: 8px; font-style: italic; }
+        .order-meta { font-size: 12px; color: var(--text-light); margin-bottom: 6px; }
+        .order-bottom { display: flex; justify-content: space-between; align-items: center; }
+        .order-total { font-size: 16px; font-weight: 700; color: var(--accent); }
+        .order-actions { display: flex; gap: 6px; }
+        .status-btn {
+            padding: 5px 12px; border-radius: 14px; font-size: 11px; font-weight: 600;
+            min-height:44px; border: none; cursor: pointer;
+        }
+        .status-btn.confirm-btn { background: var(--accent-light); color: var(--accent); }
+        .status-btn.complete-btn { background: var(--gold-light); color: var(--gold); }
+        .status-btn.cancel-btn { background: #fff1f0; color: #b42318; }
+        .status-btn.exception-btn { background: #fff7ed; color: #c2410c; }
+        .status-btn:active { opacity: 0.7; }
+
+        .badge {
+            display: inline-block; font-size: 10px; padding: 2px 8px;
+            border-radius: 10px; font-weight: 600;
+        }
+        .badge.pending { background: var(--gold-light); color: var(--gold); }
+        .badge.confirmed { background: var(--accent-light); color: var(--accent); }
+        .badge.completed { background: #eee; color: #888; }
+        .badge.cancelled { background: #fff1f0; color: #b42318; }
+        .badge.exception { background: #fff7ed; color: #c2410c; }
+
+        .empty { text-align: center; padding: 60px 20px; color: var(--text-light); font-size: 14px; }
+
+        @media (max-width: 480px) {
+            .stats { flex-direction: row; flex-wrap: wrap; }
+            .stat-card { min-width: calc(50% - 6px); flex: unset; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="auth-gate" id="authGate">
+    <h2>荷小悦 · 员工端</h2>
+    <input id="authUser" autocomplete="username" placeholder="账号，默认 admin" style="margin-bottom:10px">
+    <input type="password" id="authInput" autocomplete="current-password" placeholder="请输入密码">
+    <button id="authBtn" type="button">进入</button>
+    <div class="err" id="authErr" role="alert"></div>
+</div>
+
+<div class="container" id="app" style="display:none">
+    <div class="header">
+        <h1>荷小悦 · 订单管理</h1>
+        <div class="header-actions">
+            <button class="refresh-btn" id="refreshBtn" type="button">刷新</button>
+        </div>
+    </div>
+
+    <div class="stats" id="stats"></div>
+    <div class="filters" id="filters"></div>
+    <div class="order-list" id="orderList"></div>
+</div>
+
+<script>
+const API = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') && location.port === '18888'
+    ? 'http://localhost:8000' : '';
+const LEGACY_TOKEN = 'hxy2024';
+const STAFF_TOKEN_KEY = 'hxy_staff_token';
+const STAFF_SESSION_KEY = 'hxy_staff_session_token';
+const STAFF_ACCOUNT_KEY = 'hxy_staff_account';
+const params = new URLSearchParams(location.search);
+const STORE_ID = params.get('store_id') || '';
+let currentFilter = '';
+let orders = [];
+
+// Auth
+if (sessionStorage.getItem(STAFF_SESSION_KEY) || sessionStorage.getItem('hxy_staff') === '1') { showApp(); }
+document.getElementById('authBtn').addEventListener('click', tryAuth);
+document.getElementById('authInput').addEventListener('keydown', e => { if(e.key==='Enter') tryAuth(); });
+
+async function tryAuth() {
+  const username = document.getElementById('authUser').value.trim() || 'admin';
+  const password = document.getElementById('authInput').value;
+  document.getElementById('authErr').textContent = '';
+  try {
+    const res = await fetch(API + '/api/v1/wellness/auth/login', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({username, password}),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || '账号或密码错误');
+    const payload = await res.json();
+    sessionStorage.setItem('hxy_staff', '1');
+    sessionStorage.setItem(STAFF_SESSION_KEY, payload.token);
+    sessionStorage.setItem(STAFF_ACCOUNT_KEY, JSON.stringify(payload.account || {}));
+    sessionStorage.removeItem(STAFF_TOKEN_KEY);
+    showApp();
+  } catch (error) {
+    if (username === 'admin' && password === LEGACY_TOKEN) {
+      sessionStorage.setItem('hxy_staff', '1');
+      sessionStorage.setItem(STAFF_TOKEN_KEY, password);
+      sessionStorage.removeItem(STAFF_SESSION_KEY);
+      showApp();
+      return;
+    }
+    document.getElementById('authErr').textContent = error.message || '登录失败';
+  }
+}
+
+function showApp() {
+  document.getElementById('authGate').classList.add('hidden');
+  document.getElementById('app').style.display = '';
+  loadOrders();
+}
+
+// Filters
+function renderFilters() {
+  const filters = [
+    {key:'', label:'全部'},
+    {key:'pending', label:'待确认'},
+    {key:'confirmed', label:'已确认'},
+    {key:'completed', label:'已完成'},
+    {key:'cancelled', label:'已取消'},
+    {key:'exception', label:'异常'},
+  ];
+  document.getElementById('filters').innerHTML = filters.map(f =>
+    `<button class="filter-btn ${currentFilter===f.key?'active':''}" type="button" data-filter="${f.key}">${f.label}</button>`
+  ).join('');
+  document.querySelectorAll('.filter-btn').forEach(el => {
+    el.addEventListener('click', () => { currentFilter = el.dataset.filter; renderFilters(); renderOrders(); });
+  });
+}
+
+function renderStats() {
+  const pending = orders.filter(o=>o.status==='pending').length;
+  const confirmed = orders.filter(o=>o.status==='confirmed').length;
+  const exception = orders.filter(o=>o.status==='exception').length;
+  const todayTotal = orders.filter(o => {
+    const d = new Date(o.created_at);
+    const now = new Date();
+    return d.toDateString() === now.toDateString();
+  }).reduce((s,o)=>s+o.total, 0);
+  document.getElementById('stats').innerHTML = `
+    <div class="stat-card"><div class="stat-num">${pending}</div><div class="stat-label">待确认</div></div>
+    <div class="stat-card"><div class="stat-num">${confirmed}</div><div class="stat-label">进行中</div></div>
+    <div class="stat-card"><div class="stat-num">${exception}</div><div class="stat-label">异常</div></div>
+    <div class="stat-card"><div class="stat-num">${orders.length}</div><div class="stat-label">总订单</div></div>
+    <div class="stat-card"><div class="stat-num">¥${todayTotal}</div><div class="stat-label">今日营收</div></div>
+  `;
+}
+
+function renderOrders() {
+  const filtered = currentFilter ? orders.filter(o=>o.status===currentFilter) : orders;
+  if (!filtered.length) {
+    document.getElementById('orderList').innerHTML = '<div class="empty">暂无订单</div>';
+    return;
+  }
+  const statusMap = {pending:'待确认',confirmed:'已确认',completed:'已完成',cancelled:'已取消',exception:'异常'};
+  document.getElementById('orderList').innerHTML = filtered.map(o => {
+    const items = (typeof o.items === 'string' ? JSON.parse(o.items) : o.items) || [];
+    let actions = '';
+    if (o.status === 'pending') actions = `
+      <button class="status-btn confirm-btn" type="button" data-id="${o.id}" data-to="confirmed">确认</button>
+      <button class="status-btn cancel-btn" type="button" data-id="${o.id}" data-to="cancelled">取消</button>
+      <button class="status-btn exception-btn" type="button" data-id="${o.id}" data-to="exception">异常</button>`;
+    else if (o.status === 'confirmed') actions = `
+      <button class="status-btn complete-btn" type="button" data-id="${o.id}" data-to="completed">完成</button>
+      <button class="status-btn exception-btn" type="button" data-id="${o.id}" data-to="exception">异常</button>`;
+    return `<div class="order-card">
+      <div class="order-top">
+        <span class="order-phone">${o.phone || '未留手机号'} <span class="badge ${o.status}">${statusMap[o.status]}</span></span>
+        <span class="order-time">${new Date(o.created_at).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
+      </div>
+      <div class="order-meta">${[o.store && `门店 ${o.store}`, o.seat && `座位 ${o.seat}`].filter(Boolean).join(' · ') || '未带门店/座位'}</div>
+      <div class="order-items">${items.map(i=>i.name).join(' · ')}</div>
+      ${o.note ? `<div class="order-note">备注: ${o.note}</div>` : ''}
+      <div class="order-bottom">
+        <span class="order-total">¥${o.total}</span>
+        <div class="order-actions">${actions}</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  document.querySelectorAll('.status-btn').forEach(btn => {
+    btn.addEventListener('click', () => updateStatus(btn.dataset.id, btn.dataset.to));
+  });
+}
+
+async function loadOrders() {
+  try {
+    const query = [
+      currentFilter ? `status=${encodeURIComponent(currentFilter)}` : '',
+      STORE_ID ? `store_id=${encodeURIComponent(STORE_ID)}` : '',
+    ].filter(Boolean).join('&');
+    const res = await fetch(API+`/api/v1/wellness/staff/orders${query ? '?' + query : ''}`, {
+      headers: authHeaders()
+    });
+    orders = await res.json();
+    renderStats();
+    renderFilters();
+    renderOrders();
+  } catch(e) {
+    document.getElementById('orderList').innerHTML = `<div class="empty">加载失败: ${e.message}</div>`;
+  }
+}
+
+async function updateStatus(orderId, newStatus) {
+  try {
+    await fetch(API+`/api/v1/wellness/staff/orders/${orderId}/status`, {
+      method:'PUT', headers:{'Content-Type':'application/json', ...authHeaders()},
+      body: JSON.stringify({status: newStatus, actor: 'staff'})
+    });
+    loadOrders();
+  } catch(e) { alert('更新失败: '+e.message); }
+}
+
+document.getElementById('refreshBtn').addEventListener('click', loadOrders);
+
+function authHeaders() {
+  const sessionToken = sessionStorage.getItem(STAFF_SESSION_KEY);
+  if (sessionToken) return {'X-Wellness-Session-Token': sessionToken};
+  const legacyToken = sessionStorage.getItem(STAFF_TOKEN_KEY) || (sessionStorage.getItem('hxy_staff') === '1' ? LEGACY_TOKEN : '');
+  return legacyToken ? {'X-Wellness-Admin-Token': legacyToken} : {};
+}
+
+// Auto refresh every 15s
+setInterval(() => { if (sessionStorage.getItem('hxy_staff') === '1') loadOrders(); }, 15000);
+</script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+# Local secrets
+ops/env/*.env
+!ops/env/*.env.example
+
+# Sensitive exports and backups
+data/exports/*.sensitive.sql
+data/backups/
+quarantine/
+
+# Runtime and dependency artifacts
+.venv/
+node_modules/
+dist/
+build/
+.next/
+.turbo/
+.cache/
+.pytest_cache/
+__pycache__/
+*.pyc
+tmp/
+.claude/settings.local.json
+
+# Logs
+*.log
+logs/
+ops/logs/

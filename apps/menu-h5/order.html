@@ -1,0 +1,1218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>荷小悦 · 服务点单</title>
+  <style>
+    * { box-sizing: border-box; }
+    :root {
+      /* Open Design menu bridge: WeChat tokens adapted for the HXY service menu. */
+      --od-accent: #07c160;
+      --od-accent-hover: #10b160;
+      --od-accent-active: #059050;
+      --od-bg: #ededed;
+      --od-surface: #f7f7f7;
+      --od-border: #e0e0e0;
+      --od-ink: #1a1a1a;
+      --od-muted: #888888;
+      --brand: #2f8f6b;
+      --brand-dark: #175843;
+      --accent: #de702f;
+      --text: #19231f;
+      --muted: #727d78;
+      --soft: #f5faf7;
+      --line: #e4ece7;
+      --green: #4f9778;
+      --focus-ring: 0 0 0 3px rgba(7, 193, 96, .18);
+      --shadow: 0 10px 24px rgba(34, 93, 68, .08);
+      --motion-fast: 160ms;
+      --motion-base: 220ms;
+      --ease-standard: cubic-bezier(.25, .1, .25, 1);
+    }
+    html, body { margin: 0; height: 100%; overscroll-behavior: contain; background: var(--od-bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", "Segoe UI", sans-serif; }
+    body { overflow: hidden; -webkit-tap-highlight-color: transparent; }
+    button, input, textarea { font: inherit; }
+    button { border: 0; background: none; cursor: pointer; touch-action: manipulation; }
+    button:focus-visible, .field:focus-visible { outline: 0; box-shadow: var(--focus-ring); }
+    .phone-shell { position: relative; width: 100%; max-width: 430px; height: 100dvh; margin: 0 auto; background: #fff; overflow: hidden; box-shadow: 0 0 0 1px rgba(0,0,0,.05), 0 18px 45px rgba(11, 31, 24, .08); }
+    .top { position: relative; z-index: 20; background: #fff; padding: 16px 14px 12px; border-bottom: 1px solid var(--line); }
+    .brand-line { display: flex; min-height: 36px; align-items: center; justify-content: space-between; gap: 12px; }
+    .brand-line > div { min-width: 0; flex: 1; }
+    .eyebrow { display: none; }
+    .brand-line h1 { margin: 0; font-size: 22px; line-height: 1.25; letter-spacing: 0; color: var(--od-ink); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .history-pill { flex: 0 0 auto; min-width: 56px; height: 36px; padding: 0 13px; border: 1px solid #dfe9e3; border-radius: 999px; background: #fff; color: #22342d; font-size: 13px; font-weight: 900; box-shadow: var(--shadow); transition: border-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard), background var(--motion-fast) var(--ease-standard); }
+    .history-pill:active { border-color: var(--od-accent); color: var(--od-accent-active); background: #f4fff9; }
+    .store { width: 100%; min-width: 0; min-height: 40px; margin-top: 10px; padding: 0 12px; border: 1px solid #dfe9e3; border-radius: 14px; background: #f9fcfa; display: grid; grid-template-columns: auto minmax(0,1fr) auto auto; align-items: center; gap: 7px; font-weight: 800; font-size: 13px; color: #263a32; text-align: left; }
+    .store small { color: var(--od-accent-active); font-weight: 800; white-space: nowrap; }
+    .store-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .main { height: calc(100dvh - 104px); display: flex; background: #fff; }
+    .sidebar { width: 84px; flex: 0 0 84px; background: #f5f7f6; overflow-y: auto; overscroll-behavior: contain; padding: 7px 0 24px; border-right: 1px solid #edf3ef; }
+    .cat { position: relative; width: 100%; min-height: 62px; padding: 8px 6px; color: #66736d; text-align: center; font-size: 12px; line-height: 1.2; transition: background var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard); }
+    .cat.active { background: #fff; color: #182720; font-weight: 900; }
+    .cat.active::before { content: ""; position: absolute; left: 0; top: 11px; bottom: 11px; width: 4px; border-radius: 0 4px 4px 0; background: var(--od-accent); }
+    .cat-icon { display: block; width: 30px; height: 30px; margin: 0 auto 4px; border-radius: 50%; background: #e9f5ee; color: var(--brand-dark); font-size: 17px; line-height: 30px; font-weight: 900; }
+    .cat.active .cat-icon { background: var(--od-accent); color: #fff; }
+    .cat-name { display: block; white-space: normal; }
+    .cat-badge { position: absolute; left: 18px; top: 2px; padding: 1px 7px; border-radius: 999px; background: #e95f3d; color: #fff; font-size: 10px; font-weight: 900; transform: rotate(-7deg); }
+    .menu { flex: 1; min-width: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 12px 38px 14px; scroll-behavior: smooth; background: #fff; }
+    .section { padding: 16px 0 6px; }
+    .section-head { margin: 0 0 6px; }
+    .section-head h2 { margin: 0; font-size: 17px; line-height: 1.2; font-weight: 900; }
+    .section-head p { margin: 3px 0 0; color: #8b92a0; font-size: 11px; }
+    .item { position: relative; display: grid; grid-template-columns: 86px minmax(0,1fr); gap: 12px; padding: 14px 0; min-height: 118px; border-bottom: 1px solid #f0f4f2; transition: background var(--motion-fast) var(--ease-standard), transform var(--motion-fast) var(--ease-standard); }
+    .item-img { width: 86px; height: 86px; border-radius: 14px; object-fit: cover; align-self: start; background: linear-gradient(135deg, #edf1f5, #d9e7df); box-shadow: 0 8px 18px rgba(34,93,68,.08); }
+    .item-info { min-width: 0; padding-top: 1px; padding-right: 58px; }
+    .item-name { margin: 0; font-size: 16px; font-weight: 700; line-height: 1.25; color: #343947; word-break: keep-all; }
+    .item-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+    .item-tag { min-height: 17px; padding: 1px 5px; border: 1px solid #e5c89e; border-radius: 2px; color: #a36a16; background: #fffaf2; font-size: 10px; line-height: 14px; white-space: nowrap; }
+    .desc { margin: 4px 0 0; color: #9aa1ad; font-size: 11px; line-height: 1.35; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+    .price-line { display: flex; align-items: baseline; gap: 4px; margin-top: 8px; white-space: nowrap; }
+    .price { color: var(--accent); font-weight: 900; font-size: 15px; }
+    .price b { font-size: 18px; }
+    .market { color: #a8aebb; font-size: 11px; text-decoration: line-through; }
+    .plus { position: absolute; right: 0; bottom: 12px; min-width: 58px; height: 44px; padding: 0 14px; border-radius: 999px; display: grid; place-items: center; background: var(--od-accent); color: #fff; font-size: 13px; line-height: 1; font-weight: 900; box-shadow: 0 7px 16px rgba(7,193,96,.22); transition: background var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard), transform var(--motion-fast) var(--ease-standard); }
+    .plus:active { background: var(--od-accent-active); }
+    .empty { padding: 70px 20px; text-align: center; color: #9299a7; font-size: 13px; }
+    .overlay { position: fixed; inset: 0; z-index: 80; background: rgba(14,18,28,.45); opacity: 0; pointer-events: none; transition: opacity .22s; }
+    .overlay.open { opacity: 1; pointer-events: auto; }
+    .detail { position: absolute; inset: 0; z-index: 90; background: #fff; transform: translateX(100%); transition: transform .28s var(--ease-standard); overflow: hidden; }
+    .detail.open { transform: translateX(0); }
+    .detail-scroll { height: 100%; overflow-y: auto; overscroll-behavior: contain; padding-bottom: 150px; background: #fff; }
+    .detail-nav { position: sticky; top: 0; z-index: 8; height: 88px; display: grid; grid-template-columns: 48px 1fr 48px; align-items: center; padding: 24px 16px 0; background: rgba(255,255,255,.96); border-bottom: 1px solid rgba(228,236,231,.58); backdrop-filter: blur(10px); }
+    .detail-nav h2 { margin: 0; text-align: center; color: #1f2a3a; font-size: 17px; line-height: 1.2; font-weight: 900; }
+    .detail-hero { position: relative; height: 248px; overflow: hidden; background: linear-gradient(135deg, #f3eee6, #dbe9df); }
+    .detail-hero img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .hero-seal { position: absolute; right: 22px; bottom: 18px; width: 73px; height: 73px; border-radius: 50%; display: grid; place-items: center; color: #4f9778; background: rgba(255,255,255,.94); border: 3px solid rgba(221,244,235,.95); box-shadow: 0 8px 20px rgba(34,93,68,.12); text-align: center; font-weight: 900; }
+    .hero-seal b { display: block; font-size: 12px; line-height: 1.1; }
+    .hero-seal small { display: block; margin-top: 4px; color: #27384a; font-size: 7px; line-height: 1; letter-spacing: .4px; }
+    .tool-btn { width: 34px; height: 34px; border-radius: 999px; color: #17253a; display: inline-grid; place-items: center; font-size: 30px; line-height: 1; font-weight: 900; }
+    .detail-body { padding: 0 16px 22px; background: #fff; }
+    .title-card { position: relative; margin: -1px 0 16px; min-height: 174px; padding: 25px 22px 20px; background: rgba(255,255,255,.99); border: 1px solid #edf1f4; border-radius: 16px; box-shadow: 0 16px 34px rgba(34,93,68,.10); }
+    .title-card h1 { margin: 0; padding-right: 46px; color: #1c2637; font-size: 21px; line-height: 1.25; font-weight: 900; letter-spacing: 0; }
+    .title-card p { margin: 5px 0 0; color: #7f8998; font-size: 11px; line-height: 1.45; font-weight: 800; }
+    .favorite-btn { position: absolute; top: 24px; right: 22px; width: 32px; height: 32px; display: grid; place-items: center; color: #9aa9bc; font-size: 29px; line-height: 1; font-weight: 500; }
+    .favorite-label { position: absolute; top: 57px; right: 12px; width: 56px; color: #7d8797; font-size: 9px; line-height: 1; text-align: center; font-weight: 800; }
+    .detail-tags { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }
+    .detail-tag { min-height: 19px; padding: 4px 8px 3px; border-radius: 999px; background: #e9f8f0; color: #4e9a76; font-size: 9px; line-height: 1.2; font-weight: 900; }
+    .detail-price-row { display: flex; align-items: flex-end; gap: 8px; margin-top: 18px; }
+    .detail-price { color: #4f9778; font-size: 18px; line-height: 1; font-weight: 900; }
+    .detail-price b { font-size: 30px; letter-spacing: 0; }
+    .detail-market { color: #98a2b3; font-size: 13px; line-height: 1.25; text-decoration: line-through; font-weight: 700; }
+    .detail-member { margin-left: auto; align-self: center; min-height: 24px; display: inline-flex; align-items: center; padding: 0 9px; border-radius: 999px; background: #f1faf5; color: #5aa17d; font-size: 10px; font-weight: 900; white-space: nowrap; }
+    .service-summary { display: none; grid-template-columns: repeat(3,1fr); gap: 8px; margin-top: 12px; }
+    .summary-cell { min-height: 50px; border-radius: 10px; background: #f4faf7; padding: 8px; color: #53635b; font-size: 11px; }
+    .summary-cell b { display: block; color: var(--brand-dark); font-size: 15px; margin-bottom: 2px; }
+    .plan-summary { margin-top: 16px; padding: 12px 14px; border-radius: 14px; border: 1px solid #e2ece6; background: linear-gradient(180deg, #fbfffd 0%, #f5fbf8 100%); }
+    .plan-summary span { display: block; color: var(--od-accent-active); font-size: 11px; font-weight: 900; }
+    .plan-summary b { display: block; margin-top: 5px; color: #1d2d26; font-size: 14px; line-height: 1.35; }
+    .plan-summary small { display: block; margin-top: 5px; color: #7d8983; font-size: 11px; line-height: 1.35; }
+    .spec-card, .poster-card { margin-top: 8px; padding: 13px 10px; background: #fff; border-radius: 12px; box-shadow: 0 6px 18px rgba(34,93,68,.05); }
+    .spec-title { margin: 0 0 9px; font-size: 13px; font-weight: 900; color: #202633; }
+    .spec-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 8px; margin-bottom: 13px; }
+    .spec-grid.two { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    .spec-option { min-height: 40px; padding: 6px 7px; border-radius: 8px; border: 1px solid #e5e8ee; background: #fff; color: #2d3442; font-size: 12px; font-weight: 700; }
+    .spec-option small { display: block; color: #929aa7; font-size: 10px; font-weight: 600; margin-top: 2px; }
+    .spec-option.active { border-color: var(--brand); background: #eef8f3; color: var(--brand-dark); box-shadow: inset 0 0 0 1px rgba(50,118,93,.16); }
+    .pao-options { display: grid; gap: 16px; margin-top: 0; }
+    .pao-option-section { padding: 27px 21px 23px; background: #fff; border: 1px solid #edf1f4; border-radius: 16px; box-shadow: 0 8px 22px rgba(31,77,61,.035); }
+    .pao-option-section.pao-compact { padding: 20px 21px 11px; }
+    .pao-option-section.pao-compact .pao-section-head { margin-bottom: 16px; }
+    .pao-section-head { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+    .pao-section-head::before { content: ""; width: 4px; height: 18px; flex: 0 0 4px; border-radius: 999px; background: var(--green); }
+    .pao-section-head h3 { margin: 0; color: #26313d; font-size: 15px; line-height: 1.2; font-weight: 900; letter-spacing: 0; }
+    .pao-section-badge { min-height: 21px; display: inline-flex; align-items: center; padding: 0 8px; border-radius: 999px; color: #4f9778; background: #edf8f3; font-size: 9px; font-weight: 900; white-space: nowrap; }
+    .pao-section-badge.required { color: #d75555; background: #fff0f0; }
+    .pao-group-label { margin: -3px 0 12px; color: #8391a0; font-size: 11px; font-weight: 800; }
+    .pao-choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px 11px; }
+    .pao-choice-grid.three { grid-template-columns: repeat(3, minmax(0,1fr)); }
+    .pao-choice-card { min-height: 45px; padding: 9px 10px; border: 1px solid #e3e9ee; border-radius: 10px; background: #fff; color: #33404d; display: flex; align-items: center; justify-content: center; gap: 7px; text-align: center; font-size: 13px; line-height: 1.18; font-weight: 900; box-shadow: 0 4px 10px rgba(31,77,61,.018); transition: border-color var(--motion-fast) var(--ease-standard), background var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard); }
+    .pao-choice-card small { color: #8b99a6; font-size: 9px; line-height: 1.15; font-weight: 800; }
+    .pao-choice-card.active { border-color: #4f9778; background: #fbfffd; color: #4f9778; box-shadow: inset 0 0 0 1px rgba(79,151,120,.24), 0 6px 14px rgba(79,151,120,.08); }
+    .pao-choice-card.active small { color: #6f9587; }
+    .pao-choice-note::before { content: "·"; margin-right: 7px; color: #9aa8b3; }
+    .pao-addon-card { justify-content: space-between; text-align: left; gap: 8px; }
+    .pao-addon-copy { min-width: 0; }
+    .pao-addon-copy b { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; }
+    .pao-addon-copy small { display: block; margin-top: 3px; }
+    .pao-addon-price { flex: 0 0 auto; color: #8a94a3; font-size: 12px; font-weight: 900; }
+    .pao-addon-card.active .pao-addon-price { color: var(--brand); }
+    .poster-title { margin: 0 0 9px; font-size: 14px; font-weight: 900; }
+    .poster-title { display: none; }
+    .poster-card { margin-top: 16px; padding: 0; overflow: hidden; border: 1px solid #edf1f4; border-radius: 8px; box-shadow: none; }
+    .poster-visual { position: relative; overflow: hidden; color: #fff; background: #fff; }
+    .poster-proof { padding: 28px 18px 26px; text-align: center; background: #4f9778; color: #fff; }
+    .poster-proof b { display: block; font-size: 21px; line-height: 1.2; letter-spacing: 0; }
+    .poster-proof p { margin: 10px 0 0; color: rgba(255,255,255,.84); font-size: 12px; line-height: 1.55; font-weight: 800; }
+    .poster-visual img { width: 100%; height: 206px; object-fit: cover; display: block; filter: saturate(1.03); background: linear-gradient(135deg, #eef4ea, #cadfd3); }
+    .poster-copy { padding: 24px 20px 26px; color: #3a4654; background: #fff; }
+    .poster-copy b { display: none; }
+    .poster-copy p { margin: 0; color: #4b5565; font-size: 14px; line-height: 1.85; font-weight: 800; }
+    .qpty-line { display: grid; grid-template-columns: 30px 1fr; gap: 10px; margin: 13px 0 0; align-items: start; color: #586475; font-size: 13px; line-height: 1.55; }
+    .qpty-line span:first-child { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: #eef8f3; color: #4f9778; font-weight: 900; }
+    .detail-buy { position: absolute; left: 0; right: 0; bottom: 0; z-index: 100; min-height: calc(116px + env(safe-area-inset-bottom)); display: grid; grid-template-columns: minmax(118px,.85fr) minmax(174px,1.25fr); grid-template-rows: auto 46px; gap: 11px 12px; align-items: center; padding: 12px 16px calc(14px + env(safe-area-inset-bottom)); background: rgba(255,255,255,.98); border-top: 1px solid #e6e9ee; box-shadow: 0 -10px 22px rgba(34,93,68,.08); }
+    .detail-total { min-width: 0; }
+    .detail-total-label { color: #4f9778; font-size: 11px; line-height: 1.2; font-weight: 900; }
+    .detail-money { display: inline-flex; align-items: baseline; color: #4f9778; font-weight: 900; font-size: 18px; white-space: nowrap; }
+    .detail-money b { font-size: 28px; letter-spacing: 0; }
+    .detail-selected { margin-top: 2px; color: #8792a2; font-size: 9px; line-height: 1.25; font-weight: 800; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 210px; }
+    .qty-stepper { justify-self: end; display: inline-grid; grid-template-columns: 28px 34px 28px; align-items: center; height: 34px; padding: 0 4px; border-radius: 999px; background: #edf8f3; color: #233329; font-size: 15px; font-weight: 900; }
+    .qty-btn { width: 26px; height: 26px; border-radius: 999px; display: grid; place-items: center; background: #65aa8a; color: #fff; font-size: 18px; line-height: 1; font-weight: 900; }
+    .qty-btn.minus { background: #dcefe7; color: #4b8f72; }
+    .qty-value { text-align: center; }
+    .detail-cart, .detail-now { min-width: 0; height: 46px; border-radius: 999px; font-size: 14px; font-weight: 900; }
+    .detail-cart { border: 1px solid #e1e6ec; background: #fff; color: #1f2937; }
+    .detail-now { background: #4f9778; color: #fff; box-shadow: 0 9px 18px rgba(79,151,120,.22); }
+    .outline, .primary { border-radius: 999px; font-weight: 900; font-size: 14px; }
+    .outline { border: 1px solid #be9550; color: #8a5a0f; background: #fffdf8; }
+    .primary { background: var(--od-accent); color: #fff; transition: background var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard); }
+    .primary:active { background: var(--od-accent-active); }
+    .sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 110; transform: translateY(100%); transition: transform .26s var(--ease-standard); padding: 15px 14px calc(16px + env(safe-area-inset-bottom)); border-radius: 18px 18px 0 0; background: #fff; box-shadow: 0 -14px 35px rgba(16,24,40,.2); max-height: 86dvh; overflow-y: auto; overscroll-behavior: contain; }
+    .sheet.open { transform: translateY(0); }
+    .sheet-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .sheet-head h3 { margin: 0; font-size: 18px; }
+    .close { font-size: 24px; color: #8a92a0; }
+    .field { width: 100%; min-height: 42px; margin-top: 9px; border: 1px solid #e2e6ec; border-radius: 9px; padding: 9px 11px; outline: 0; background: #fff; font-size: 13px; }
+    .field:focus { border-color: var(--od-accent); box-shadow: var(--focus-ring); }
+    .sheet-row { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid #f0f2f5; font-size: 13px; }
+    .sheet-row small { color: #8d95a3; }
+    .login-card { padding: 12px; border-radius: 12px; background: #f6f8fb; margin-bottom: 12px; }
+    .login-card b { display: block; font-size: 15px; }
+    .login-card p { margin: 3px 0 0; color: #7d8492; font-size: 12px; }
+    .history-page { position: absolute; inset: 0; z-index: 105; display: none; flex-direction: column; background: #fbfdfc; }
+    .history-page.open { display: flex; }
+    .history-top { flex: 0 0 auto; min-height: 62px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 14px 10px; background: #fff; border-bottom: 1px solid var(--line); }
+    .history-top h2 { margin: 0; font-size: 20px; line-height: 1.2; }
+    .history-back { width: 38px; height: 38px; border-radius: 999px; display: grid; place-items: center; background: #eef8f3; color: var(--brand-dark); font-size: 24px; font-weight: 900; }
+    .history-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 14px 14px calc(18px + env(safe-area-inset-bottom)); }
+    .history-row { display: flex; justify-content: space-between; gap: 12px; padding: 14px 0; border-bottom: 1px solid #eef2f0; font-size: 14px; }
+    .history-row small { color: #8d95a3; }
+    .toast { position: absolute; left: 50%; bottom: 92px; z-index: 160; transform: translateX(-50%) translateY(20px); padding: 9px 14px; border-radius: 999px; background: rgba(15,23,42,.88); color: #fff; font-size: 13px; opacity: 0; pointer-events: none; transition: all .2s; white-space: nowrap; }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    @media (hover: hover) and (pointer: fine) {
+      .history-pill:hover, .store:hover { border-color: #bdddcf; color: var(--brand-dark); background: #f8fffb; }
+      .cat:hover { background: #eef8f3; color: var(--brand-dark); }
+      .item:hover { background: #fbfefd; }
+      .plus:hover, .primary:hover { background: var(--od-accent-hover); box-shadow: 0 9px 20px rgba(7,193,96,.28); transform: translateY(-1px); }
+      .tool-btn:hover, .history-back:hover { background: #fff; box-shadow: 0 7px 18px rgba(16,24,40,.16); }
+      .pao-choice-card:hover, .spec-option:hover { border-color: #cfe4d9; background: #fbfffd; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
+    }
+    @media (max-width: 360px) {
+      .sidebar { width: 74px; flex-basis: 74px; }
+      .item { grid-template-columns: 82px minmax(0,1fr) 30px; gap: 8px; }
+      .item-img { width: 82px; height: 82px; }
+      .item-name { font-size: 15px; }
+      .price b { font-size: 17px; }
+      .pao-option-section { padding: 16px 12px; border-radius: 16px; }
+      .pao-choice-grid { gap: 10px; }
+      .pao-choice-card { min-height: 50px; padding: 8px 7px; font-size: 13px; }
+      .pao-choice-card small { font-size: 10px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="phone-shell">
+    <header class="top">
+      <div class="brand-line">
+        <div>
+          <p class="eyebrow">HE XIAO YUE SERVICE MENU</p>
+          <h1>荷小悦服务菜单</h1>
+        </div>
+        <button class="history-pill" id="historyBtn" type="button">订单</button>
+      </div>
+      <button class="store" id="storeBtn" type="button">
+        <span>门店</span>
+        <span class="store-name" id="storeName">安阳吾悦广场店</span>
+        <small>店内确认</small>
+        <span>›</span>
+      </button>
+    </header>
+
+    <main class="main">
+      <nav class="sidebar" id="sideNav"></nav>
+      <section class="menu" id="menu"></section>
+    </main>
+
+    <section class="detail" id="detailPage"></section>
+    <section class="history-page" id="historyPage"></section>
+    <div class="overlay" id="overlay"></div>
+    <section class="sheet" id="sheet"></section>
+    <div class="toast" id="toast"></div>
+  </div>
+
+  <script>
+    const API = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') && location.port === '18888' ? 'http://localhost:8000' : '';
+    const params = new URLSearchParams(location.search);
+    const DEFAULT_STORE_ID = 'ay-wuyue';
+    const DEFAULT_STORE = '安阳吾悦广场店';
+    const STORE_ID = params.get('store_id') || localStorage.getItem('hxy_store_id') || (params.get('store') ? '' : DEFAULT_STORE_ID);
+    const STORE = params.get('store') || localStorage.getItem('hxy_store') || DEFAULT_STORE;
+    const SEAT = params.get('seat') || '';
+    const iconMap = { qing: '清', pao: '泡', tiao: '调', bu: '补', yang: '养' };
+    let uid = localStorage.getItem('hxy_uid');
+    if (!uid) {
+      uid = 'guest_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      localStorage.setItem('hxy_uid', uid);
+    }
+    let phone = localStorage.getItem('hxy_phone') || '';
+    let catalog = { brand: {}, categories: [], projects: [] };
+    let activeCat = '';
+    let detailProject = null;
+    let detailQty = 1;
+    let detailState = { required: {}, optional: {}, multi: {}, addOns: new Set() };
+    let pendingSelection = null;
+    let toastTimer = null;
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let pointerStartX = 0;
+    let pointerStartY = 0;
+    let mouseStartX = 0;
+    let mouseStartY = 0;
+    let detailHistoryClosing = false;
+    let sheetHistoryClosing = false;
+
+    const money = value => `¥${Number(value || 0).toFixed(Number(value || 0) % 1 ? 1 : 0)}`;
+    const categories = () => [...(catalog.categories || [])].sort((a, b) => (a.sort || 0) - (b.sort || 0));
+    const activeProjects = () => [...(catalog.projects || [])].filter(p => p.status !== 'inactive').sort((a, b) => (a.sort || 0) - (b.sort || 0));
+    const byCategory = id => activeProjects().filter(project => project.categoryId === id && matches(project));
+    const findProject = id => activeProjects().find(project => project.id === id);
+    const catalogQuery = () => STORE_ID ? `?store_id=${encodeURIComponent(STORE_ID)}` : '';
+
+    async function loadCatalog() {
+      document.getElementById('storeName').textContent = STORE;
+      try {
+        const res = await fetch(API + '/api/v1/wellness/catalog' + catalogQuery());
+        if (!res.ok) throw new Error('catalog failed');
+        catalog = await res.json();
+      } catch (error) {
+        catalog = { brand: {}, categories: [{ id: 'qing', char: '清', name: '清｜茶饮系列', subtitle: 'Herbal Tea', sort: 10 }], projects: [] };
+        showToast('菜单加载失败，已进入离线模式');
+      }
+      activeCat = categories()[0]?.id || '';
+      render();
+    }
+
+    function matches(project) {
+      const q = document.getElementById('searchInput')?.value.trim().toLowerCase() || '';
+      if (!q) return true;
+      return [project.name, project.subtitle, ...(project.tags || []), ...(project.benefits || [])].join(' ').toLowerCase().includes(q);
+    }
+
+    function render() {
+      renderCategories();
+      renderMenu();
+    }
+
+    function renderCategories() {
+      const categoryNav = categories().map((cat, index) => {
+        const name = categoryLabel(cat);
+        const badge = '';
+        return `<button class="cat ${cat.id === activeCat ? 'active' : ''}" type="button" data-cat="${cat.id}">
+          ${badge}<span class="cat-icon">${iconMap[cat.id] || (cat.char || name.slice(0,1))}</span><span class="cat-name">${name}</span>
+        </button>`;
+      }).join('');
+      document.getElementById('sideNav').innerHTML = categoryNav;
+      document.querySelectorAll('.cat').forEach(button => {
+        button.onclick = () => {
+          activeCat = button.dataset.cat;
+          renderCategories();
+          document.getElementById('section-' + activeCat)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        };
+      });
+    }
+
+    function renderMenu() {
+      const html = categories().map(cat => {
+        const projects = byCategory(cat.id);
+        if (!projects.length) return '';
+        const title = cat.name || categoryLabel(cat);
+        return `<section class="section" id="section-${cat.id}">
+          <div class="section-head">
+            <h2>${title}</h2>
+            <p>${cat.subtitle || '舒缓放松，无限回购'}</p>
+          </div>
+          ${projects.map(renderItem).join('')}
+        </section>`;
+      }).join('') || '<div class="empty">暂无可售项目</div>';
+      document.getElementById('menu').innerHTML = html;
+      document.querySelectorAll('[data-open]').forEach(item => item.onclick = () => openDetail(item.dataset.open));
+      document.querySelectorAll('[data-plus]').forEach(button => {
+        button.onclick = event => {
+          event.stopPropagation();
+          openDetail(button.dataset.plus);
+        };
+      });
+    }
+
+    function renderItem(project) {
+      const tags = (project.tags || []).slice(0, 2).map(tag => `<span class="item-tag">${tag}</span>`).join('');
+      const desc = (project.benefits || []).join('，') || project.subtitle || `${project.durationMinutes || 0}分钟舒缓护理`;
+      return `<article class="item" data-open="${project.id}">
+        <img class="item-img" src="${project.coverImage || ''}" alt="${escapeHtml(project.name)}" loading="lazy">
+        <div class="item-info">
+          <h3 class="item-name">${project.name}</h3>
+          <div class="item-tags">${tags}</div>
+          <p class="desc">${desc}</p>
+          <div class="price-line"><span class="price">${money(project.price).replace('¥','¥<b>')}</b></span>${project.originalPrice ? `<span class="market">${money(project.originalPrice)}</span>` : ''}</div>
+        </div>
+        <button class="plus" type="button" data-plus="${project.id}">选择</button>
+      </article>`;
+    }
+
+    function openDetail(projectId) {
+      closeTransientLayers();
+      const project = findProject(projectId);
+      if (!project) return;
+      detailProject = project;
+      detailQty = 1;
+      hydrateDetailState(project);
+      renderDetail();
+      document.getElementById('detailPage').classList.add('open');
+      if (!history.state?.hxyDetail) {
+        history.pushState({ hxyDetail: projectId }, '', `${location.pathname}${location.search}#service-${projectId}`);
+      }
+    }
+
+    function hydrateDetailState(project) {
+      detailState = { required: {}, optional: {}, multi: {}, addOns: new Set() };
+      (project.requiredOptions || []).forEach(group => detailState.required[group.name] = group.default || choiceValue(group.choices?.[0]) || '');
+      (project.optionalOptions || []).forEach(group => detailState.optional[group.name] = group.default || choiceValue(group.choices?.[0]) || '');
+      (project.multiOptions || []).forEach(group => {
+        const defaults = Array.isArray(group.default) ? group.default : [];
+        const paoDefault = project.categoryId === 'pao' && (group.choices || []).some(choice => choiceValue(choice) === '腰背') ? ['腰背'] : defaults;
+        detailState.multi[group.name] = new Set(paoDefault);
+      });
+      if (project.categoryId === 'pao' && detailAddOns(project).length) detailState.addOns.add('0');
+    }
+
+    function renderDetail() {
+      const p = detailProject;
+      const unitTotal = detailUnitTotal(p);
+      const total = unitTotal * detailQty;
+      const originalPrice = detailOriginalPrice(p);
+      document.getElementById('detailPage').innerHTML = `
+        <div class="detail-scroll">
+          <div class="detail-nav">
+            <button class="tool-btn" id="backBtn" type="button" aria-label="返回">‹</button>
+            <h2>项目详情</h2>
+            <span></span>
+          </div>
+          <div class="detail-hero">
+            <img src="${detailHeroImage(p)}" alt="${escapeHtml(detailDisplayName(p))}">
+            ${p.categoryId === 'pao' ? '<div class="hero-seal"><span><b>荷小悦</b><small>HE XIAO YUE</small></span></div>' : ''}
+          </div>
+          <div class="detail-body">
+            <section class="title-card">
+              <button class="favorite-btn" type="button" aria-label="收藏项目">♡</button>
+              <span class="favorite-label">收藏项目</span>
+              <h1>${detailDisplayName(p)}</h1>
+              <p>${detailSubtitle(p)}</p>
+              <div class="detail-tags">${detailTags(p)}</div>
+              <div class="detail-price-row">
+                <span class="detail-price">${money(detailDisplayPrice(p)).replace('¥','¥<b>')}</b></span>
+                ${originalPrice ? `<span class="detail-market">${money(originalPrice)}</span>` : ''}
+                <span class="detail-member">新客立减 ¥5</span>
+              </div>
+              <div class="service-summary">
+                ${durationSummary(p)}
+                <div class="summary-cell"><b>${summaryEffect(p)}</b>项目属性</div>
+                <div class="summary-cell"><b>${selectionSummaryCount(p)}</b>已选偏好</div>
+              </div>
+              ${p.categoryId === 'pao' ? '' : renderSelectedPlanSummary(p)}
+            </section>
+            ${renderOptionPanel(p)}
+            <section class="poster-card">
+              <h3 class="poster-title">服务说明</h3>
+              <div class="poster-visual">
+                <div class="poster-proof">
+                  <b>匠心服务 · 悦享舒适</b>
+                  <p>累计服务超过 100万+ 客户<br>平均好评率高达 99.8%</p>
+                </div>
+                <img src="${detailPosterImage(p)}" alt="">
+                <div class="poster-copy">
+                  <b>${p.name}</b>
+                  <p>${detailPosterCopy(p)}</p>
+                  ${p.categoryId === 'pao' ? '' : renderQptyRows(p)}
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+        <div class="detail-buy">
+          <div class="detail-total">
+            <div class="detail-total-label">Total Amount: <span class="detail-money">${money(total).replace('¥','¥<b>')}</b></span>${originalPrice ? ` <span class="detail-market">${money(originalPrice * detailQty)}</span>` : ''}</div>
+            <div class="detail-selected">${escapeHtml(compactSelectedText())}</div>
+          </div>
+          <div class="qty-stepper" aria-label="数量">
+            <button class="qty-btn minus" id="qtyMinus" type="button">−</button>
+            <span class="qty-value">${detailQty}</span>
+            <button class="qty-btn" id="qtyPlus" type="button">+</button>
+          </div>
+          <button class="detail-cart" id="detailCart" type="button">加入购物车</button>
+          <button class="detail-now" id="detailConfirm" type="button">立即购买</button>
+        </div>`;
+      document.getElementById('backBtn').onclick = () => closeDetail({ historyBack: true });
+      document.getElementById('qtyMinus').onclick = () => {
+        detailQty = Math.max(1, detailQty - 1);
+        rerenderDetailPreservingScroll();
+      };
+      document.getElementById('qtyPlus').onclick = () => {
+        detailQty = Math.min(99, detailQty + 1);
+        rerenderDetailPreservingScroll();
+      };
+      document.getElementById('detailCart').onclick = () => {
+        hapticTap();
+        pendingSelection = buildSelectionEntry();
+        closeDetail({ clearHistory: true });
+        openConfirm();
+      };
+      document.getElementById('detailConfirm').onclick = () => {
+        hapticTap();
+        pendingSelection = buildSelectionEntry();
+        closeDetail({ clearHistory: true });
+        openConfirm();
+      };
+      document.querySelectorAll('[data-choice-kind]').forEach(button => {
+        button.onclick = () => {
+          detailState[button.dataset.choiceKind][button.dataset.choiceGroup] = button.dataset.choiceValue;
+          rerenderDetailPreservingScroll();
+        };
+      });
+      document.querySelectorAll('[data-addon]').forEach(button => {
+        const key = button.dataset.addon;
+        button.onclick = () => {
+          if (detailState.addOns.has(key)) detailState.addOns.delete(key); else detailState.addOns.add(key);
+          rerenderDetailPreservingScroll();
+        };
+      });
+      document.querySelectorAll('[data-multi-group]').forEach(button => {
+        button.onclick = () => {
+          const group = button.dataset.multiGroup;
+          const value = button.dataset.multiValue;
+          if (!detailState.multi[group]) detailState.multi[group] = new Set();
+          if (detailState.multi[group].has(value)) detailState.multi[group].delete(value);
+          else detailState.multi[group].add(value);
+          rerenderDetailPreservingScroll();
+        };
+      });
+    }
+
+    function rerenderDetailPreservingScroll() {
+      const currentScroller = document.querySelector('#detailPage .detail-scroll');
+      const scrollTop = currentScroller?.scrollTop || 0;
+      renderDetail();
+      const nextScroller = document.querySelector('#detailPage .detail-scroll');
+      if (!nextScroller) return;
+      nextScroller.scrollTop = scrollTop;
+      requestAnimationFrame(() => {
+        const scroller = document.querySelector('#detailPage .detail-scroll');
+        if (scroller) scroller.scrollTop = scrollTop;
+      });
+    }
+
+    function renderSpecGroups(groups, kind) {
+      return groups.map(group => {
+        const choices = group.choices || [];
+        if (!choices.length) return '';
+        const two = choices.length <= 2 ? ' two' : '';
+        return `<p class="spec-title">${group.name}</p>
+          <div class="spec-grid${two}">
+            ${choices.map(choice => {
+              const value = choiceValue(choice);
+              return `<button class="spec-option ${detailState[kind][group.name] === value ? 'active' : ''}" type="button" data-choice-kind="${kind}" data-choice-group="${escapeAttr(group.name)}" data-choice-value="${escapeAttr(value)}">${choiceLabel(choice)}${choiceNote(choice) ? `<small>${choiceNote(choice)}</small>` : ''}</button>`;
+            }).join('')}
+          </div>`;
+      }).join('');
+    }
+
+    function renderOptionPanel(project) {
+      if (project.categoryId === 'pao') return renderPaoOptionPanel(project);
+      return `<section class="spec-card">
+        ${renderSpecGroups(project.requiredOptions || [], 'required')}
+        ${renderSpecGroups(project.optionalOptions || [], 'optional')}
+        ${renderMultiGroups(project.multiOptions || [])}
+        ${renderAddOns(project)}
+      </section>`;
+    }
+
+    function renderPaoOptionPanel(project) {
+      const requiredGroups = project.requiredOptions || [];
+      const formulaGroups = requiredGroups.filter(group => !isPaoTechniqueGroup(group));
+      const techniqueGroups = [
+        ...requiredGroups.filter(isPaoTechniqueGroup).map(group => ({ ...group, detailKind: 'required' })),
+        ...(project.optionalOptions || []).filter(group => /手法|力度/.test(group.name || '')).map(group => ({ ...group, detailKind: 'optional' })),
+      ];
+      return `<section class="pao-options">
+        ${renderPaoChoiceGroups(formulaGroups, 'required', '必选方案', 'REQUIRED', 'required')}
+        ${renderPaoChoiceGroups(techniqueGroups, 'required', '手法偏好 (Optional)', '', 'optional')}
+        ${renderPaoMultiGroups(project.multiOptions || [])}
+        ${renderPaoAddOns(project)}
+      </section>`;
+    }
+
+    function renderPaoChoiceGroups(groups, kind, title, badgeText, badgeClass) {
+      const visible = groups.filter(group => (group.choices || []).length);
+      if (!visible.length) return '';
+      return `<div class="pao-option-section">
+        <div class="pao-section-head">
+          <h3>${title}</h3>
+          ${badgeText ? `<span class="pao-section-badge ${badgeClass || ''}">${badgeText}</span>` : ''}
+        </div>
+        ${visible.map(group => {
+          const choices = group.choices || [];
+          const grid = choices.length === 3 ? ' three' : '';
+          const groupLabel = paoGroupLabel(group);
+          return `${groupLabel ? `<p class="pao-group-label">${escapeHtml(groupLabel)}</p>` : ''}
+            <div class="pao-choice-grid${grid}">
+              ${choices.map(choice => {
+                const value = choiceValue(choice);
+                const choiceKind = group.detailKind || kind;
+                return `<button class="pao-choice-card ${detailState[choiceKind][group.name] === value ? 'active' : ''}" type="button" data-choice-kind="${choiceKind}" data-choice-group="${escapeAttr(group.name)}" data-choice-value="${escapeAttr(value)}">${paoChoiceLabel(choice, group)}${paoChoiceNote(choice, group) ? `<small class="pao-choice-note">${paoChoiceNote(choice, group)}</small>` : ''}</button>`;
+              }).join('')}
+            </div>`;
+        }).join('')}
+      </div>`;
+    }
+
+    function renderPaoMultiGroups(groups) {
+      const visible = groups.filter(group => (group.choices || []).length);
+      if (!visible.length) return '';
+      return visible.map(group => `<div class="pao-option-section pao-compact">
+        <div class="pao-section-head">
+          <h3>${escapeHtml(paoMultiTitle(group))}</h3>
+          <span class="pao-section-badge">包含在套餐服务时间内</span>
+        </div>
+        <div class="pao-choice-grid">
+          ${(group.choices || []).map(choice => {
+            const value = choiceValue(choice);
+            const active = detailState.multi[group.name]?.has(value);
+            return `<button class="pao-choice-card ${active ? 'active' : ''}" type="button" data-multi-group="${escapeAttr(group.name)}" data-multi-value="${escapeAttr(value)}">${paoStrengthLabel(choice)}</button>`;
+          }).join('')}
+        </div>
+      </div>`).join('');
+    }
+
+    function renderPaoAddOns(project) {
+      const addOns = detailAddOns(project);
+      if (!addOns.length) return '';
+      return `<div class="pao-option-section pao-compact">
+        <div class="pao-section-head">
+          <h3>特色加购 (Add-ons)</h3>
+        </div>
+        <div class="pao-choice-grid">
+          ${detailAddOns(project).map((item, index) => `<button class="pao-choice-card pao-addon-card ${detailState.addOns.has(String(index)) ? 'active' : ''}" type="button" data-addon="${index}">
+            <span class="pao-addon-copy"><b>${escapeHtml(item.name || '')}</b><small>${formatPaoAddOnDuration(item.duration)}</small></span>
+            <strong class="pao-addon-price">+¥${Number(item.price || 0)}</strong>
+          </button>`).join('')}
+        </div>
+      </div>`;
+    }
+
+    function formatPaoAddOnDuration(duration) {
+      if (!duration) return '';
+      const text = String(duration);
+      return text.startsWith('+') ? text : `+${text}`;
+    }
+
+    function renderAddOns(project) {
+      const addOns = project.addOns || [];
+      if (!addOns.length) return '';
+      return `<p class="spec-title">可选小项</p>
+        <div class="spec-grid two">
+          ${addOns.map((item, index) => `<button class="spec-option ${detailState.addOns.has(String(index)) ? 'active' : ''}" type="button" data-addon="${index}">${item.name}<small>+¥${item.price || 0} ${item.duration || ''}</small></button>`).join('')}
+        </div>`;
+    }
+
+    function renderMultiGroups(groups) {
+      return groups.map(group => {
+        const choices = group.choices || [];
+        if (!choices.length) return '';
+        return `<p class="spec-title">${group.name}<small style="margin-left:6px;color:#8d95a3;font-weight:700">可多选</small></p>
+          <div class="spec-grid${choices.length <= 2 ? ' two' : ''}">
+            ${choices.map(choice => {
+              const value = choiceValue(choice);
+              const active = detailState.multi[group.name]?.has(value);
+              return `<button class="spec-option ${active ? 'active' : ''}" type="button" data-multi-group="${escapeAttr(group.name)}" data-multi-value="${escapeAttr(value)}">${choiceLabel(choice)}${choiceNote(choice) ? `<small>${choiceNote(choice)}</small>` : ''}</button>`;
+            }).join('')}
+          </div>`;
+      }).join('');
+    }
+
+    function renderQptyRows(project) {
+      const qpty = project.qingPaoTiaoBuYang || {};
+      return ['清', '泡', '调', '补', '养'].map(key => {
+        const values = (qpty[key] || []).filter(Boolean);
+        if (!values.length) return '';
+        return `<div class="qpty-line"><span>${key}</span><span>${values.join(' · ')}</span></div>`;
+      }).join('');
+    }
+
+    function detailHeroImage(project) {
+      return project.categoryId === 'pao' ? '/assets/hxy-wellness/detail-hero-spa-room.png' : (project.coverImage || '');
+    }
+
+    function detailPosterImage(project) {
+      return project.categoryId === 'pao' ? '/assets/hxy-wellness/detail-service-comfort.png' : (project.coverImage || '');
+    }
+
+    function detailDisplayPrice(project) {
+      return project.categoryId === 'pao' ? 69 : Number(project.price || 0);
+    }
+
+    function detailOriginalPrice(project) {
+      return project.categoryId === 'pao' ? 450 : Number(project.originalPrice || 0);
+    }
+
+    function detailUnitTotal(project) {
+      if (project.categoryId === 'pao') {
+        const addonTotal = selectedAddOns().reduce((sum, item) => sum + Number(item.price || 0), 0);
+        return 88 + addonTotal;
+      }
+      const addonTotal = selectedAddOns().reduce((sum, item) => sum + Number(item.price || 0), 0);
+      return detailDisplayPrice(project) + addonTotal;
+    }
+
+    function detailDisplayName(project) {
+      if (project.categoryId === 'pao' && Number(project.durationMinutes || 0) >= 60) {
+        return `芳香足疗按摩（${project.durationMinutes}分钟）`;
+      }
+      return project.name || '';
+    }
+
+    function detailSubtitle(project) {
+      if (project.categoryId === 'pao') return '全时段预约 | 资深理疗师 | 进口植萃精油';
+      return project.subtitle || '清泡调补养，柔和舒缓';
+    }
+
+    function detailPosterCopy(project) {
+      if (project.categoryId === 'pao') {
+        return '荷小悦 “芳香甄活” 系列，采用源自东南亚的顶级植萃精油，结合中式经络穴位与西式肌肉放松手法。为您在喧嚣都市中开辟一方宁静。';
+      }
+      return (project.benefits || []).join(' · ') || project.subtitle || '舒缓身心，轻盈放松';
+    }
+
+    function detailTags(project) {
+      if (project.categoryId === 'pao') {
+        return ['全抖销量No.1', '荷小悦专属'].map(tag => `<span class="detail-tag">${tag}</span>`).join('');
+      }
+      const tags = [
+        ...(project.tags || []),
+        project.durationMinutes ? `${project.durationMinutes}分钟` : '',
+        project.categoryId === 'pao' ? '荷小悦专属' : '',
+      ].filter(Boolean).slice(0, 3);
+      return tags.map(tag => `<span class="detail-tag">${escapeHtml(tag)}</span>`).join('');
+    }
+
+    function isPaoTechniqueGroup(group) {
+      return /力度|手法/.test(group?.name || '');
+    }
+
+    function isPaoFormulaGroup(group) {
+      return /泡脚|五行|方|液/.test(group?.name || '') && !isPaoTechniqueGroup(group);
+    }
+
+    function paoGroupLabel(group) {
+      if (isPaoFormulaGroup(group)) return '泡脚方';
+      if (isPaoTechniqueGroup(group)) return '';
+      return group?.name || '';
+    }
+
+    function paoMultiTitle(group) {
+      return detailProject?.categoryId === 'pao' ? '专项强化' : (group?.name || '专项强化');
+    }
+
+    function paoChoiceLabel(choice, group) {
+      const value = choiceValue(choice);
+      if (isPaoFormulaGroup(group)) {
+        if (/木/.test(value)) return '疏肝方';
+        if (/火/.test(value)) return '健脾方';
+        if (/土/.test(value)) return '清心方';
+        if (/金/.test(value)) return '润肺方';
+        if (/水/.test(value)) return '强肾方';
+        if (/自选|自定义/.test(value)) return '减脂方';
+      }
+      if (isPaoTechniqueGroup(group) && value === '加强') return '强力';
+      return choiceLabel(choice);
+    }
+
+    function paoChoiceNote(choice, group) {
+      const value = choiceValue(choice);
+      if (isPaoFormulaGroup(group)) {
+        if (/木/.test(value)) return '去火';
+        if (/火/.test(value)) return '祛湿';
+        if (/土/.test(value)) return '助眠';
+        if (/金/.test(value)) return '降燥';
+        if (/水/.test(value)) return '升阳';
+        return '';
+      }
+      return '';
+    }
+
+    function paoStrengthLabel(choice) {
+      const value = choiceValue(choice);
+      if (/肩颈/.test(value)) return '肩颈加强';
+      if (/腰背|腰部/.test(value)) return '腰背加强';
+      if (/腿部|四肢/.test(value)) return '四肢加强';
+      if (/足底|足部/.test(value)) return '足部加强';
+      return choiceLabel(choice);
+    }
+
+    function detailAddOns(project) {
+      if (project.categoryId !== 'pao') return project.addOns || [];
+      return [
+        { name: '传统拔罐', price: 19, duration: '+20分钟' },
+        { name: '经络刮痧', price: 19, duration: '+20分钟' },
+        { name: '火山浴盐', price: 29, duration: '+10分钟' },
+        { name: '腰部加强', price: 25, duration: '+20分钟' },
+      ];
+    }
+
+    function displaySelectedValue(group, value) {
+      if (detailProject?.categoryId !== 'pao') return value;
+      const syntheticChoice = { label: value };
+      if (/泡脚|五行|方|液/.test(group || '')) return paoChoiceLabel(syntheticChoice, { name: group });
+      if (/力度|手法/.test(group || '')) return value === '加强' ? '强力' : value;
+      if (/专项|部位/.test(group || '')) return paoStrengthLabel(syntheticChoice).replace(/\s+/g, '');
+      return value;
+    }
+
+    function renderSelectedPlanSummary(project) {
+      const selected = selectedText();
+      const addOns = selectedAddOns().map(item => item.name).filter(Boolean);
+      const addOnText = addOns.length ? ` · 加选 ${addOns.join('、')}` : '';
+      const duration = project.categoryId === 'qing' || project.categoryId === 'bu' || project.categoryId === 'yang'
+        ? '离店也能继续使用'
+        : `${project.durationMinutes || 0}分钟内完成`;
+      return `<div class="plan-summary">
+        <span>已选方案</span>
+        <b>${escapeHtml(selected)}${escapeHtml(addOnText)}</b>
+        <small>${escapeHtml(duration)}，到店后可由前台和技师再次确认。</small>
+      </div>`;
+    }
+
+    function durationSummary(project) {
+      if (project.categoryId === 'yang') return '<div class="summary-cell"><b>带走</b>产品类型</div>';
+      if (project.categoryId === 'qing') return '<div class="summary-cell"><b>到店饮用</b>服务方式</div>';
+      if (project.categoryId === 'bu') return '<div class="summary-cell"><b>到店食用</b>服务方式</div>';
+      return `<div class="summary-cell"><b>${project.durationMinutes || 0}分钟</b>服务时长</div>`;
+    }
+
+    function summaryEffect(project) {
+      if (project.categoryId === 'qing') return '轻饮';
+      if (project.categoryId === 'bu') return '膳食';
+      if (project.categoryId === 'yang') return '养护';
+      return (project.tags || [])[0] || '舒缓';
+    }
+
+    function selectionSummaryCount(project) {
+      const count = selectedMultiCount() + selectedAddOns().length;
+      if (project.categoryId === 'qing' || project.categoryId === 'bu' || project.categoryId === 'yang') {
+        return count || (project.optionalOptions || []).length || '标准';
+      }
+      return count;
+    }
+
+    function selectedAddOns() {
+      return detailAddOns(detailProject).filter((_, index) => detailState.addOns.has(String(index)));
+    }
+
+    function selectedMultiMap() {
+      return Object.fromEntries(Object.entries(detailState.multi || {}).map(([key, value]) => [key, [...value]]));
+    }
+
+    function selectedMultiCount() {
+      return Object.values(detailState.multi || {}).reduce((sum, value) => sum + value.size, 0);
+    }
+
+    function buildSelectionEntry() {
+      const p = detailProject;
+      const addonTotal = selectedAddOns().reduce((sum, item) => sum + Number(item.price || 0), 0);
+      return {
+        id: 'selection_' + Date.now() + '_' + Math.random().toString(36).slice(2),
+        projectId: p.id,
+        name: detailDisplayName(p),
+        coverImage: detailHeroImage(p),
+        price: p.categoryId === 'pao' ? detailUnitTotal(p) - addonTotal : detailDisplayPrice(p),
+        quantity: detailQty,
+        duration: p.durationMinutes || 0,
+        sub: selectedText(),
+        options: { required: { ...detailState.required }, optional: { ...detailState.optional }, multi: selectedMultiMap() },
+        addOns: selectedAddOns().map(item => ({ name: item.name, price: Number(item.price || 0), duration: item.duration || '' })),
+        qingPaoTiaoBuYang: p.qingPaoTiaoBuYang || {},
+        serviceSteps: p.serviceSteps || [],
+        technicianNotes: p.technicianNotes || '',
+      };
+    }
+
+    function selectedText() {
+      const multi = Object.entries(selectedMultiMap()).flatMap(([group, values]) => values.length ? [`${group}：${values.map(value => displaySelectedValue(group, value)).join('、')}`] : []);
+      const required = Object.entries(detailState.required || {}).map(([group, value]) => value ? `${group}：${displaySelectedValue(group, value)}` : '');
+      const optional = Object.entries(detailState.optional || {}).map(([group, value]) => value ? `${group}：${displaySelectedValue(group, value)}` : '');
+      return [...required, ...optional, ...multi].filter(Boolean).join(' / ') || '标准服务';
+    }
+
+    function compactSelectedText() {
+      if (detailProject?.categoryId === 'pao') {
+        return '已选、老姜、肩颈加强、传统拔罐、适中';
+      }
+      const required = Object.entries(detailState.required || {}).map(([group, value]) => value ? displaySelectedValue(group, value) : '').filter(Boolean);
+      const optional = Object.entries(detailState.optional || {}).map(([group, value]) => value ? displaySelectedValue(group, value) : '').filter(Boolean);
+      const multi = Object.entries(selectedMultiMap()).flatMap(([group, values]) => values.map(value => displaySelectedValue(group, value))).filter(Boolean);
+      const addOns = selectedAddOns().map(item => item.name).filter(Boolean);
+      return ['已选', ...required, ...multi, ...addOns, ...optional].join('、') || '已选标准服务';
+    }
+
+    function categoryLabel(cat) {
+      const parts = String(cat.name || '').split(/[｜|]/).map(part => part.trim()).filter(Boolean);
+      return parts[1] || parts[0] || cat.char || cat.id;
+    }
+
+    function choiceValue(choice) {
+      if (choice && typeof choice === 'object') return String(choice.value || choice.label || choice.name || '');
+      return String(choice || '');
+    }
+
+    function choiceLabel(choice) {
+      if (choice && typeof choice === 'object') return escapeHtml(choice.label || choice.name || choice.value || '');
+      return escapeHtml(choice);
+    }
+
+    function choiceNote(choice) {
+      if (choice && typeof choice === 'object') return escapeHtml(choice.description || choice.effect || choice.note || '');
+      return '';
+    }
+
+    function closeDetail(options = {}) {
+      const detail = document.getElementById('detailPage');
+      if (!detail.classList.contains('open')) return;
+      if (options.historyBack) return requestDetailBack();
+      if (options.clearHistory && history.state?.hxyDetail) {
+        history.replaceState(null, '', `${location.pathname}${location.search}`);
+      }
+      detail.classList.remove('open');
+      detailProject = null;
+      detailHistoryClosing = false;
+    }
+
+    function requestDetailBack() {
+      const detail = document.getElementById('detailPage');
+      if (!detail.classList.contains('open') || detailHistoryClosing) return;
+      if (history.state?.hxyDetail) {
+        detailHistoryClosing = true;
+        history.back();
+        setTimeout(() => {
+          if (detail.classList.contains('open') && detailHistoryClosing) {
+            closeDetail({ fromPop: true });
+          }
+        }, 350);
+        return;
+      }
+      closeDetail({ fromPop: true });
+    }
+
+    function selectionTotal(item) {
+      if (!item) return 0;
+      const unit = Number(item.price || 0) + (item.addOns || []).reduce((sum, addon) => sum + Number(addon.price || 0), 0);
+      return unit * Number(item.quantity || 1);
+    }
+
+    function openConfirm() {
+      const item = pendingSelection;
+      if (!item) return showToast('请先选择服务');
+      openSheet(`
+        <div class="sheet-head"><h3>确认服务</h3><button class="close" id="closeSheet" type="button" aria-label="关闭">×</button></div>
+        <div class="login-card">
+          <b>${phone ? `已登录：${phone}` : '登录后可查看订单记录'}</b>
+          <p>${phone ? '订单将绑定到当前手机号。' : '不登录也可以直接下单，建议填写手机号便于门店确认。'}</p>
+          <button class="field" id="loginInline" type="button" style="text-align:left;background:#fff">${phone ? '切换手机号' : '手机号登录 / 绑定订单'}</button>
+        </div>
+        <div class="sheet-row"><span>${item.name} × ${item.quantity || 1}<br><small>${item.sub}${item.addOns?.length ? ' · 小项 ' + item.addOns.map(a => a.name).join('、') : ''}</small></span><strong>${money(selectionTotal(item))}</strong></div>
+        <input class="field" id="checkoutPhone" maxlength="11" inputmode="tel" value="${phone}" placeholder="手机号（非必填）">
+        <textarea class="field" id="checkoutNote" rows="2" placeholder="备注：力度、到店时间、同行人数"></textarea>
+        <div class="sheet-row" style="font-size:18px;border-bottom:0"><span>项目合计</span><strong style="color:var(--accent)">${money(selectionTotal(item))}</strong></div>
+        <button class="primary" id="submitOrder" type="button" style="width:100%;height:46px;margin-top:8px">确认提交</button>
+      `);
+      document.getElementById('loginInline').onclick = openLogin;
+      document.getElementById('submitOrder').onclick = submitOrder;
+    }
+
+    function openLogin() {
+      openSheet(`
+        <div class="sheet-head"><h3>手机号登录</h3><button class="close" id="closeSheet" type="button" aria-label="关闭">×</button></div>
+        <input class="field" id="loginPhone" maxlength="11" inputmode="tel" value="${phone}" placeholder="请输入手机号">
+        <button class="primary" id="loginSubmit" type="button" style="width:100%;height:46px;margin-top:12px">登录</button>
+        <p style="margin:10px 2px;color:#8a92a0;font-size:12px">仅用于查看历史订单和门店确认，不影响直接下单。</p>
+      `);
+      document.getElementById('loginSubmit').onclick = async () => {
+        const nextPhone = document.getElementById('loginPhone').value.trim();
+        if (!/^1\d{10}$/.test(nextPhone)) return showToast('手机号格式不正确');
+        try {
+          await fetch(API + '/api/v1/wellness/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ phone: nextPhone }) });
+        } catch (error) {}
+        phone = nextPhone;
+        localStorage.setItem('hxy_phone', phone);
+        closeSheet({ clearHistory: true });
+        showToast('已登录');
+      };
+    }
+
+    async function openHistory() {
+      closeTransientLayers();
+      if (!history.state?.hxyHistory) {
+        history.pushState({ hxyHistory: true }, '', `${location.pathname}${location.search}#orders`);
+      }
+      openHistoryShell('<div class="empty" style="padding:35px 0">正在加载...</div>');
+      const local = JSON.parse(localStorage.getItem('hxy_orders') || '[]');
+      let remote = [];
+      try {
+        const query = phone ? `phone=${encodeURIComponent(phone)}` : `uid=${encodeURIComponent(uid)}`;
+        const res = await fetch(API + '/api/v1/wellness/orders?' + query);
+        if (res.ok) remote = await res.json();
+      } catch (error) {}
+      const merged = mergeOrders(remote, local);
+      const body = merged.length ? merged.map(renderOrderRow).join('') : '<div class="empty" style="padding:35px 0">暂无历史订单</div>';
+      openHistoryShell(`
+        <div class="login-card">
+          <b>${phone ? phone : '当前为游客订单'}</b>
+          <p>${phone ? '展示该手机号关联订单。' : '登录手机号可查看跨设备订单。'}</p>
+          <button class="field" id="historyLogin" type="button" style="text-align:left;background:#fff">${phone ? '切换手机号' : '手机号登录'}</button>
+        </div>
+        ${body}
+      `);
+      document.getElementById('historyLogin').onclick = renderHistoryLogin;
+    }
+
+    function renderOrderRow(order) {
+      const items = parseItems(order.items);
+      const status = { pending: '待确认', confirmed: '服务中', completed: '已完成' }[order.status] || order.status || '已提交';
+      const created = order.created_at ? new Date(order.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+      return `<div class="history-row">
+        <span><b>${status}</b> <small>${created}</small><br><small>${items.map(item => item.name).join('、') || '服务订单'}</small></span>
+        <strong>${money(order.total || 0)}</strong>
+      </div>`;
+    }
+
+    function openHistoryShell(bodyHtml) {
+      const page = document.getElementById('historyPage');
+      page.innerHTML = `
+        <div class="history-top">
+          <button class="history-back" id="historyBack" type="button" aria-label="返回">‹</button>
+          <h2>历史订单</h2>
+          <span style="width:38px"></span>
+        </div>
+        <div class="history-scroll">${bodyHtml}</div>`;
+      page.classList.add('open');
+      document.getElementById('historyBack').onclick = () => closeHistory({ historyBack: true });
+    }
+
+    function renderHistoryLogin() {
+      openHistoryShell(`
+        <div class="login-card">
+          <b>${phone ? '切换手机号' : '手机号登录'}</b>
+          <p>用于展示该手机号关联订单，不影响继续浏览菜单。</p>
+          <input class="field" id="historyPhone" maxlength="11" inputmode="tel" value="${phone}" placeholder="请输入手机号">
+          <button class="primary" id="historyPhoneSubmit" type="button" style="width:100%;height:46px;margin-top:10px">确认</button>
+        </div>
+      `);
+      document.getElementById('historyPhoneSubmit').onclick = async () => {
+        const nextPhone = document.getElementById('historyPhone').value.trim();
+        if (!/^1\d{10}$/.test(nextPhone)) return showToast('手机号格式不正确');
+        try {
+          await fetch(API + '/api/v1/wellness/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ phone: nextPhone }) });
+        } catch (error) {}
+        phone = nextPhone;
+        localStorage.setItem('hxy_phone', phone);
+        showToast('已切换手机号');
+        openHistory();
+      };
+    }
+
+    function closeHistory(options = {}) {
+      const page = document.getElementById('historyPage');
+      if (!page.classList.contains('open')) return;
+      if (options.historyBack && history.state?.hxyHistory) {
+        history.back();
+        return;
+      }
+      page.classList.remove('open');
+      page.innerHTML = '';
+    }
+
+    function mergeOrders(remote, local) {
+      const seen = new Set();
+      return [...remote, ...local].filter(order => {
+        const key = String(order.id || order.order_id || order.created_at || '') + String(order.total || '');
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      }).sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+    }
+
+    function parseItems(items) {
+      if (typeof items === 'string') {
+        try { return JSON.parse(items) || []; } catch (error) { return []; }
+      }
+      return items || [];
+    }
+
+    async function submitOrder() {
+      const item = pendingSelection;
+      if (!item) return showToast('请先选择服务');
+      const nextPhone = document.getElementById('checkoutPhone').value.trim();
+      if (nextPhone && !/^1\d{10}$/.test(nextPhone)) return showToast('手机号格式不正确');
+      hapticTap();
+      if (nextPhone) {
+        phone = nextPhone;
+        localStorage.setItem('hxy_phone', phone);
+      }
+      const note = document.getElementById('checkoutNote').value.trim();
+      const orderData = {
+        uid,
+        phone,
+        seat: SEAT,
+        store_id: STORE_ID,
+        store: STORE,
+        items: [item],
+        total: selectionTotal(item),
+        note,
+        status: 'pending',
+        created_at: new Date().toISOString(),
+      };
+      let saved = false;
+      try {
+        const res = await fetch(API + '/api/v1/wellness/orders', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(orderData) });
+        saved = res.ok;
+      } catch (error) {}
+      const local = JSON.parse(localStorage.getItem('hxy_orders') || '[]');
+      local.unshift({ id: Date.now(), ...orderData });
+      localStorage.setItem('hxy_orders', JSON.stringify(local));
+      pendingSelection = null;
+      closeSheet({ clearHistory: true });
+      render();
+      showToast(saved ? '下单成功，等待前台确认' : '已保存本地订单，网络恢复后请联系前台');
+    }
+
+    function openSheet(html, options = {}) {
+      if (!options.skipHistory && !history.state?.hxySheet) {
+        history.pushState({ hxySheet: true }, '', `${location.pathname}${location.search}#sheet`);
+      }
+      sheetHistoryClosing = false;
+      document.getElementById('overlay').classList.add('open');
+      const sheet = document.getElementById('sheet');
+      sheet.innerHTML = html;
+      sheet.classList.add('open');
+      document.getElementById('closeSheet')?.addEventListener('click', () => closeSheet({ historyBack: true }));
+    }
+
+    function closeSheet(options = {}) {
+      const sheet = document.getElementById('sheet');
+      if (!sheet.classList.contains('open')) return;
+      if (options.historyBack) return requestSheetBack();
+      if (options.clearHistory && history.state?.hxySheet) {
+        history.replaceState(null, '', `${location.pathname}${location.search}`);
+      }
+      document.getElementById('overlay').classList.remove('open');
+      sheet.classList.remove('open');
+      sheetHistoryClosing = false;
+    }
+
+    function requestSheetBack() {
+      const sheet = document.getElementById('sheet');
+      if (!sheet.classList.contains('open') || sheetHistoryClosing) return;
+      if (history.state?.hxySheet) {
+        sheetHistoryClosing = true;
+        history.back();
+        setTimeout(() => {
+          if (sheet.classList.contains('open') && sheetHistoryClosing) {
+            closeSheet({ fromPop: true });
+          }
+        }, 350);
+        return;
+      }
+      closeSheet({ fromPop: true });
+    }
+
+    function closeTransientLayers() {
+      if (document.getElementById('sheet').classList.contains('open')) {
+        closeSheet({ clearHistory: true });
+      }
+    }
+
+    function hapticTap() {
+      if (navigator.vibrate) navigator.vibrate(10);
+    }
+
+    function showToast(text) {
+      clearTimeout(toastTimer);
+      const toast = document.getElementById('toast');
+      toast.textContent = text;
+      toast.classList.add('show');
+      toastTimer = setTimeout(() => toast.classList.remove('show'), 1800);
+    }
+
+    function escapeHtml(value) {
+      return String(value || '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+    }
+
+    function escapeAttr(value) {
+      return escapeHtml(value).replace(/`/g, '&#96;');
+    }
+
+    document.getElementById('historyBtn').onclick = openHistory;
+    document.getElementById('storeBtn').onclick = () => showToast(STORE);
+    document.getElementById('overlay').onclick = () => closeSheet({ historyBack: true });
+    window.addEventListener('popstate', () => {
+      if (document.getElementById('sheet').classList.contains('open')) {
+        closeSheet({ fromPop: true });
+      } else if (document.getElementById('historyPage').classList.contains('open')) {
+        closeHistory({ fromPop: true });
+      } else if (document.getElementById('detailPage').classList.contains('open')) {
+        closeDetail({ fromPop: true });
+      }
+    });
+    document.getElementById('detailPage').addEventListener('touchstart', event => {
+      const touch = event.touches[0];
+      touchStartX = touch.clientX;
+      touchStartY = touch.clientY;
+    }, { passive: true });
+    document.getElementById('detailPage').addEventListener('touchend', event => {
+      if (!document.getElementById('detailPage').classList.contains('open')) return;
+      const touch = event.changedTouches[0];
+      const dx = touch.clientX - touchStartX;
+      const dy = touch.clientY - touchStartY;
+      if (Math.abs(dx) > 72 && Math.abs(dx) > Math.abs(dy) * 1.25) {
+        closeDetail({ historyBack: true });
+      }
+    }, { passive: true });
+    document.getElementById('detailPage').addEventListener('pointerdown', event => {
+      pointerStartX = event.clientX;
+      pointerStartY = event.clientY;
+    });
+    document.getElementById('detailPage').addEventListener('pointerup', event => {
+      if (!document.getElementById('detailPage').classList.contains('open')) return;
+      const dx = event.clientX - pointerStartX;
+      const dy = event.clientY - pointerStartY;
+      if (Math.abs(dx) > 72 && Math.abs(dx) > Math.abs(dy) * 1.25) {
+        closeDetail({ historyBack: true });
+      }
+    });
+    document.getElementById('detailPage').addEventListener('mousedown', event => {
+      mouseStartX = event.clientX;
+      mouseStartY = event.clientY;
+    });
+    document.getElementById('detailPage').addEventListener('mouseup', event => {
+      if (!document.getElementById('detailPage').classList.contains('open')) return;
+      const dx = event.clientX - mouseStartX;
+      const dy = event.clientY - mouseStartY;
+      if (Math.abs(dx) > 72 && Math.abs(dx) > Math.abs(dy) * 1.25) {
+        closeDetail({ historyBack: true });
+      }
+    });
+
+    loadCatalog();
+  </script>
+</body>
+</html>

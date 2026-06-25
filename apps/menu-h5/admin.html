@@ -1,0 +1,1077 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>荷小悦 · 项目后台</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    :root { --primary:#4f9778; --dark:#153529; --soft:#eef8f3; --line:#e4ece7; --muted:#748094; --bg:#f7faf8; }
+    body { margin:0; font-family:"Noto Sans SC", system-ui, sans-serif; background:var(--bg); color:#101828; }
+    button,input,textarea,select { font-family:inherit; }
+    button { cursor:pointer; border:0; }
+    .auth { position:fixed; inset:0; z-index:20; background:linear-gradient(180deg,#fff,#edf7f1); display:grid; place-items:center; }
+    .auth.hidden { display:none; }
+    .auth-card { width:min(360px, calc(100vw - 32px)); background:#fff; border:1px solid var(--line); border-radius:18px; padding:28px; box-shadow:0 24px 60px rgba(31,86,63,.16); }
+    .auth-card h1 { margin:0 0 8px; font-size:24px; }
+    .auth-card p { margin:0 0 20px; color:var(--muted); }
+    .field { width:100%; min-height:40px; border:1px solid var(--line); border-radius:10px; padding:9px 11px; outline:none; background:#fff; }
+    .field:focus { border-color:var(--primary); box-shadow:0 0 0 3px rgba(79,151,120,.12); }
+    .btn { min-height:40px; border-radius:10px; padding:0 14px; font-weight:800; background:#fff; border:1px solid var(--line); color:#344054; }
+    .btn.primary { background:var(--primary); border-color:var(--primary); color:#fff; }
+    .btn.danger { color:#b42318; border-color:#fecdca; background:#fffafa; }
+    .shell { min-height:100dvh; display:grid; grid-template-columns:270px minmax(0,1fr); }
+    .sidebar { background:#fff; border-right:1px solid var(--line); padding:22px 16px; position:sticky; top:0; height:100dvh; overflow:auto; }
+    .brand h1 { margin:0; font-size:22px; }
+    .brand p { margin:6px 0 18px; color:var(--muted); font-size:13px; }
+    .toolbar { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:14px; }
+    .side-panel { border:1px solid var(--line); border-radius:14px; padding:12px; background:#fbfdfc; margin-bottom:14px; }
+    .side-panel h3 { margin:0 0 10px; font-size:15px; color:var(--dark); }
+    .side-panel .form-grid { grid-template-columns:1fr; gap:8px; }
+    .side-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px; }
+    .project-list { display:flex; flex-direction:column; gap:8px; }
+    .project-item { text-align:left; background:#fff; border:1px solid var(--line); border-radius:12px; padding:10px; }
+    .project-item.active { border-color:var(--primary); background:var(--soft); }
+    .project-item strong { display:block; font-size:14px; }
+    .project-item span { color:var(--muted); font-size:12px; }
+    .main { padding:24px; overflow:auto; }
+    .top { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:18px; }
+    .top h2 { margin:0; font-size:28px; letter-spacing:-.6px; }
+    .grid { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(340px,.9fr); gap:18px; align-items:start; }
+    .panel { background:#fff; border:1px solid var(--line); border-radius:16px; padding:18px; box-shadow:0 12px 35px rgba(16,24,40,.04); }
+    .panel h3 { margin:0 0 14px; padding-left:10px; border-left:4px solid var(--primary); }
+    .metric-grid { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:10px; }
+    .metric-card { border:1px solid var(--line); border-radius:13px; padding:12px; background:#fbfdfc; min-height:74px; }
+    .metric-card b { display:block; font-size:22px; color:var(--dark); }
+    .metric-card span { color:var(--muted); font-size:12px; }
+    .top-projects { display:grid; gap:8px; margin-top:12px; }
+    .top-project-row { display:grid; grid-template-columns:1fr auto auto; gap:10px; align-items:center; border-top:1px solid var(--line); padding-top:8px; color:#344054; font-size:13px; }
+    .account-layout { display:grid; grid-template-columns:minmax(220px,.7fr) minmax(0,1.3fr); gap:14px; align-items:start; }
+    .account-list { display:grid; gap:8px; }
+    .account-row { text-align:left; border:1px solid var(--line); border-radius:12px; padding:10px; background:#fbfdfc; }
+    .account-row.active { border-color:var(--primary); background:var(--soft); }
+    .account-row strong { display:block; color:var(--dark); font-size:14px; }
+    .account-row span { color:var(--muted); font-size:12px; }
+    .form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+    label { display:flex; flex-direction:column; gap:6px; font-size:12px; color:#667085; font-weight:700; }
+    label.wide { grid-column:1 / -1; }
+    textarea.field { min-height:82px; resize:vertical; }
+    .preview-card { border:1px solid var(--line); border-radius:16px; overflow:hidden; background:#fff; }
+    .preview-card img { width:100%; height:220px; object-fit:cover; background:#dfeee7; display:block; }
+    .preview-body { padding:16px; }
+    .preview-body h4 { margin:0 0 8px; font-size:21px; }
+    .chips { display:flex; flex-wrap:wrap; gap:8px; margin:10px 0; }
+    .chip { background:#e8f8f0; color:#059669; border-radius:999px; padding:4px 9px; font-size:12px; }
+    .option-editor { display:grid; gap:12px; }
+    .option-block { border:1px solid var(--line); border-radius:14px; padding:12px; background:#fbfdfc; }
+    .option-head { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:8px; }
+    .option-block h4 { margin:0; font-size:14px; color:#153529; }
+    .option-help { margin:4px 0 8px; color:var(--muted); font-size:12px; line-height:1.5; }
+    .option-rows { display:grid; gap:8px; }
+    .option-row { display:grid; grid-template-columns:minmax(110px,.75fr) minmax(180px,1.35fr) minmax(110px,.75fr) auto; gap:8px; align-items:end; border:1px solid var(--line); border-radius:12px; padding:10px; background:#fff; }
+    .option-row.addon { grid-template-columns:minmax(160px,1.25fr) 96px minmax(90px,.7fr) auto; }
+    .option-row label { font-size:11px; gap:5px; }
+    .option-empty { border:1px dashed #cfdad4; border-radius:12px; padding:12px; color:var(--muted); font-size:13px; background:#fff; }
+    .version-list { display:grid; gap:8px; }
+    .version-row { display:grid; grid-template-columns:1fr auto; gap:10px; align-items:center; border:1px solid var(--line); border-radius:12px; padding:10px 12px; background:#fbfdfc; }
+    .version-row strong { display:block; font-size:14px; color:#153529; }
+    .version-row span { color:var(--muted); font-size:12px; }
+    .json { min-height:360px; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; line-height:1.55; }
+    .status { color:var(--muted); font-size:13px; }
+    @media (max-width: 900px) {
+      .shell { grid-template-columns:1fr; }
+      .sidebar { position:relative; height:auto; }
+      .grid { grid-template-columns:1fr; }
+      .metric-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .account-layout { grid-template-columns:1fr; }
+      .option-row,
+      .option-row.addon { grid-template-columns:1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="auth" id="auth">
+    <div class="auth-card">
+      <h1>荷小悦项目后台</h1>
+      <p>维护项目、价格、图片、清泡调补养与技师服务说明。</p>
+      <input class="field" id="username" autocomplete="username" placeholder="账号，默认 admin" style="margin-bottom:10px" />
+      <input class="field" id="pass" type="password" autocomplete="current-password" placeholder="请输入密码" />
+      <button class="btn primary" id="login" type="button" style="width:100%;margin-top:12px">进入后台</button>
+      <p id="authMsg" role="alert" style="color:#b42318;margin-top:10px"></p>
+    </div>
+  </div>
+
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <h1>项目管理</h1>
+        <p>发布后用户端与技师端同步读取。</p>
+      </div>
+      <div class="toolbar">
+        <button class="btn" id="saveDraftTop" type="button">草稿</button>
+        <button class="btn primary" id="saveTop" type="button">发布</button>
+        <button class="btn" id="addProject" type="button">新增</button>
+      </div>
+      <label style="margin-bottom:12px">发布范围<select class="field" id="storeSelector"></select></label>
+      <div class="side-panel" id="storeEditor">
+        <h3>门店管理</h3>
+        <div class="form-grid">
+          <label>门店ID<input class="field" id="storeId" placeholder="如 yb-store"></label>
+          <label>门店名称<input class="field" id="storeName" placeholder="如 迎宾店"></label>
+          <label>城市<input class="field" id="storeCity" placeholder="如 安阳"></label>
+          <label>区域<input class="field" id="storeRegion" placeholder="如 北区"></label>
+          <label>联系电话<input class="field" id="storeContactPhone" placeholder="如 0372-0000000"></label>
+          <label>营业时间<input class="field" id="storeOpeningHours" placeholder="如 11:30-02:00"></label>
+          <label>地址<input class="field" id="storeAddress" placeholder="门店详细地址"></label>
+          <label>点单链接<input class="field" id="storeOrderUrl" placeholder="保存时自动生成"></label>
+          <label>二维码 URL<input class="field" id="storeQrCodeUrl" placeholder="/wellness-menu/qrcode.png"></label>
+          <label>状态<select class="field" id="storeStatus"><option value="active">启用</option><option value="inactive">停用</option></select></label>
+          <label>排序<input class="field" id="storeSort" type="number" value="0"></label>
+        </div>
+        <div class="side-actions">
+          <button class="btn" id="newStore" type="button">新门店</button>
+          <button class="btn primary" id="saveStore" type="button">保存门店</button>
+        </div>
+        <p class="status" id="storeMsg" style="margin:8px 0 0"></p>
+      </div>
+      <select class="field" id="categoryFilter" style="margin-bottom:12px"></select>
+      <div class="project-list" id="projectList"></div>
+    </aside>
+
+    <main class="main">
+      <div class="top">
+        <div>
+          <h2 id="editorTitle">项目编辑</h2>
+          <div class="status" id="status" role="status" aria-live="polite">正在加载...</div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn" id="duplicateProject" type="button">复制项目</button>
+          <button class="btn danger" id="deleteProject" type="button">下架/删除</button>
+        </div>
+      </div>
+
+      <section class="panel" id="dashboardPanel" style="margin-bottom:18px">
+        <h3>门店经营看板</h3>
+        <div class="status">登录后展示当前发布范围的今日订单、营收、状态和热销项目。</div>
+      </section>
+
+      <section class="panel" id="accountPanel" style="margin-bottom:18px">
+        <h3>账号与角色</h3>
+        <div class="account-layout">
+          <div>
+            <div class="account-list" id="accountList"></div>
+          </div>
+          <div>
+            <div class="form-grid">
+              <label>账号<input class="field" id="accountUsername" placeholder="如 yb-manager"></label>
+              <label>显示名<input class="field" id="accountDisplayName" placeholder="如 迎宾店店长"></label>
+              <label>角色<select class="field" id="accountRole"></select></label>
+              <label>绑定门店<select class="field" id="accountStoreId"></select></label>
+              <label>区域<input class="field" id="accountRegion" placeholder="如 安阳一区"></label>
+              <label>状态<select class="field" id="accountStatus"><option value="active">启用</option><option value="inactive">停用</option></select></label>
+              <label class="wide">密码<input class="field" id="accountPassword" type="password" autocomplete="new-password" placeholder="新账号必填；编辑时留空表示不改密码"></label>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:12px">
+              <button class="btn" id="newAccount" type="button">新账号</button>
+              <button class="btn primary" id="saveAccount" type="button">保存账号</button>
+            </div>
+            <p class="status" id="accountMsg" style="margin:8px 0 0">总部管理员可维护账号。</p>
+          </div>
+        </div>
+      </section>
+
+      <div class="grid">
+        <section class="panel">
+          <h3>基础信息</h3>
+          <div class="form-grid">
+            <label>项目名称<input class="field" id="name"></label>
+            <label>分类<select class="field" id="categoryId"></select></label>
+            <label>副标题<input class="field" id="subtitle"></label>
+            <label>封面图 URL<input class="field" id="coverImage"></label>
+            <label>现价<input class="field" id="price" type="number"></label>
+            <label>原价<input class="field" id="originalPrice" type="number"></label>
+            <label>时长/分钟<input class="field" id="durationMinutes" type="number"></label>
+            <label>状态<select class="field" id="statusField"><option value="active">上架</option><option value="inactive">下架</option></select></label>
+            <label>推荐<select class="field" id="featured"><option value="false">不推荐</option><option value="true">推荐</option></select></label>
+            <label>推荐排序<input class="field" id="recommendRank" type="number"></label>
+            <label class="wide">推荐理由<input class="field" id="recommendationReason" placeholder="例如：首次到店不知道怎么选，先做这项更稳"></label>
+            <label class="wide">适用人群/场景<input class="field" id="recommendFor" placeholder="例如：首次到店、久坐肩颈紧、晚间放松"></label>
+            <label class="wide">标签（逗号分隔）<input class="field" id="tags"></label>
+            <label class="wide">功效卖点（逗号分隔）<input class="field" id="benefits"></label>
+            <label>清<input class="field" id="qClear"></label>
+            <label>泡<input class="field" id="qSoak"></label>
+            <label>调<input class="field" id="qTune"></label>
+            <label>补<input class="field" id="qNourish"></label>
+            <label class="wide">养<input class="field" id="qCare"></label>
+            <label class="wide">服务流程（每行一步）<textarea class="field" id="serviceSteps"></textarea></label>
+            <label class="wide">技师说明<textarea class="field" id="technicianNotes"></textarea></label>
+            <label class="wide">推荐话术<textarea class="field" id="recommendScript"></textarea></label>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h3>前端预览</h3>
+          <div class="preview-card">
+            <img id="previewImage" alt="">
+            <div class="preview-body">
+              <h4 id="previewName">-</h4>
+              <div class="chips" id="previewTags"></div>
+              <div><strong style="color:var(--primary);font-size:24px" id="previewPrice">¥0</strong> <del id="previewOriginal" style="color:#9aa4b2"></del></div>
+              <p id="previewSubtitle" style="color:#667085"></p>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <section class="panel" style="margin-top:18px">
+        <h3>选项与小项</h3>
+        <p class="status">用表单维护二级页面选项。选项之间用逗号分隔；如需给选项加说明，可写成“老姜暖身=适合手脚凉”。</p>
+        <div class="option-editor" id="optionEditor"></div>
+      </section>
+
+      <section class="panel" style="margin-top:18px">
+        <h3>完整 Catalog JSON</h3>
+        <p class="status">这里可以修改任意前端字段。保存时会校验 JSON 格式，并发布到用户端/技师端。</p>
+        <textarea class="field json" id="jsonEditor"></textarea>
+        <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
+          <button class="btn" id="saveDraftJson" type="button">保存草稿</button>
+          <button class="btn primary" id="saveJson" type="button">发布上线</button>
+          <button class="btn" id="loadDraft" type="button">读取草稿</button>
+          <button class="btn" id="reload" type="button">重新加载</button>
+        </div>
+      </section>
+
+      <section class="panel" style="margin-top:18px">
+        <h3>版本记录与回滚</h3>
+        <p class="status">当前发布范围最近 30 个版本。回滚会生成一条新的 rollback 版本记录。</p>
+        <div class="version-list" id="versionPanel"></div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const API = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') && location.port === '18888' ? 'http://localhost:8000' : '';
+    const LEGACY_TOKEN = 'hxy2024';
+    const ADMIN_TOKEN_KEY = 'hxy_admin_token';
+    const ADMIN_SESSION_KEY = 'hxy_admin_session_token';
+    const ADMIN_ACCOUNT_KEY = 'hxy_admin_account';
+    const params = new URLSearchParams(location.search);
+    let activeStoreId = params.get('store_id') || sessionStorage.getItem('hxy_admin_store_id') || 'default';
+    let stores = [];
+    let versions = [];
+    let dashboard = null;
+    let accounts = [];
+    let selectedAccountId = '';
+    let catalog = { brand:{}, categories:[], projects:[] };
+    let selectedId = '';
+    const fields = ['name','categoryId','subtitle','coverImage','price','originalPrice','durationMinutes','statusField','featured','recommendRank','recommendationReason','recommendFor','tags','benefits','qClear','qSoak','qTune','qNourish','qCare','serviceSteps','technicianNotes','recommendScript'];
+    const optionKinds = [
+      { key: 'requiredOptions', title: '必选项', help: '用于必须选择的项目，例如泡脚液、茶饮温度。' },
+      { key: 'optionalOptions', title: '单选偏好', help: '用于力度、甜度、服务方式等只能选一个的偏好。' },
+      { key: 'multiOptions', title: '多选偏好', help: '用于专项加强部位、忌口、搭配需求等可多选偏好。' },
+      { key: 'addOns', title: '可选小项', help: '用于带走产品、加购包、延长服务等有价格的小项。' },
+    ];
+    const storeFields = ['storeId','storeName','storeCity','storeRegion','storeStatus','storeSort'];
+    const roleLabels = {
+      hq_admin: '总部管理员',
+      region_manager: '区域经理',
+      store_manager: '店长',
+      frontdesk: '前台',
+      technician: '技师',
+      operator: '运营',
+      readonly: '只读观察者',
+    };
+
+    if (sessionStorage.getItem(ADMIN_SESSION_KEY) || sessionStorage.getItem('hxy_admin') === '1') {
+      document.getElementById('auth').classList.add('hidden');
+    }
+    document.getElementById('pass').addEventListener('keydown', event => { if (event.key === 'Enter') login(); });
+    document.getElementById('login').onclick = login;
+
+    async function login() {
+      const username = document.getElementById('username').value.trim() || 'admin';
+      const password = document.getElementById('pass').value;
+      document.getElementById('authMsg').textContent = '';
+      try {
+        const res = await fetch(API + '/api/v1/wellness/auth/login', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({username, password}),
+        });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || '账号或密码错误');
+        const payload = await res.json();
+        sessionStorage.setItem('hxy_admin', '1');
+        sessionStorage.setItem(ADMIN_SESSION_KEY, payload.token);
+        sessionStorage.setItem(ADMIN_ACCOUNT_KEY, JSON.stringify(payload.account || {}));
+        sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+        document.getElementById('auth').classList.add('hidden');
+        loadVersions().catch(() => renderVersionPanel());
+        loadStoreDashboard().catch(() => renderDashboard());
+        loadAccounts().catch(() => renderAccountPanel());
+      } catch (error) {
+        if (username === 'admin' && password === LEGACY_TOKEN) {
+          // Temporary compatibility for old deployments while staff accounts roll out.
+          sessionStorage.setItem('hxy_admin', '1');
+          sessionStorage.setItem(ADMIN_TOKEN_KEY, password);
+          sessionStorage.removeItem(ADMIN_SESSION_KEY);
+          document.getElementById('auth').classList.add('hidden');
+          loadVersions().catch(() => renderVersionPanel());
+          loadStoreDashboard().catch(() => renderDashboard());
+          loadAccounts().catch(() => renderAccountPanel());
+          return;
+        }
+        document.getElementById('authMsg').textContent = error.message || '登录失败';
+      }
+    }
+
+    function authHeaders() {
+      const sessionToken = sessionStorage.getItem(ADMIN_SESSION_KEY);
+      if (sessionToken) return {'X-Wellness-Session-Token': sessionToken};
+      const legacyToken = sessionStorage.getItem(ADMIN_TOKEN_KEY) || (sessionStorage.getItem('hxy_admin') === '1' ? LEGACY_TOKEN : '');
+      return legacyToken ? {'X-Wellness-Admin-Token': legacyToken} : {};
+    }
+
+    function legacyLoginFallback() {
+      if (sessionStorage.getItem('hxy_admin') === '1' && !sessionStorage.getItem(ADMIN_SESSION_KEY) && !sessionStorage.getItem(ADMIN_TOKEN_KEY)) {
+        sessionStorage.setItem(ADMIN_TOKEN_KEY, LEGACY_TOKEN);
+      }
+    }
+
+    legacyLoginFallback();
+
+    const list = value => String(value || '').split(/[，,]/).map(x => x.trim()).filter(Boolean);
+    const lines = value => String(value || '').split('\n').map(x => x.trim()).filter(Boolean);
+    const current = () => catalog.projects.find(p => p.id === selectedId) || catalog.projects[0];
+    const catalogQuery = () => activeStoreId && activeStoreId !== 'default' ? `?store_id=${encodeURIComponent(activeStoreId)}` : '';
+
+    async function loadStores() {
+      try {
+        const res = await fetch(API + '/api/v1/wellness/stores');
+        stores = await res.json();
+      } catch (error) {
+        stores = [];
+      }
+      renderStoreSelector();
+    }
+
+    function renderStoreSelector() {
+      const options = [`<option value="default">总部默认菜单</option>`]
+        .concat((stores || []).map(store => `<option value="${store.store_id}">${store.name}</option>`))
+        .join('');
+      document.getElementById('storeSelector').innerHTML = options;
+      document.getElementById('storeSelector').value = activeStoreId;
+      renderStoreEditor();
+      renderAccountStoreOptions();
+    }
+
+    function currentStoreRecord() {
+      return (stores || []).find(store => store.store_id === activeStoreId);
+    }
+
+    function renderStoreEditor() {
+      const store = currentStoreRecord();
+      document.getElementById('storeId').value = store?.store_id || '';
+      document.getElementById('storeName').value = store?.name || '';
+      document.getElementById('storeCity').value = store?.city || '';
+      document.getElementById('storeRegion').value = store?.region || '';
+      document.getElementById('storeContactPhone').value = store?.contact_phone || '';
+      document.getElementById('storeOpeningHours').value = store?.opening_hours || '';
+      document.getElementById('storeAddress').value = store?.address || '';
+      document.getElementById('storeOrderUrl').value = store?.order_url || (store?.store_id ? buildStoreOrderUrl(store.store_id) : '');
+      document.getElementById('storeQrCodeUrl').value = store?.qr_code_url || '/wellness-menu/qrcode.png';
+      document.getElementById('storeStatus').value = store?.status || 'active';
+      document.getElementById('storeSort').value = Number(store?.sort || 0);
+      document.getElementById('storeMsg').textContent = store ? '正在编辑：' + store.name : '可新建门店；总部默认菜单不属于门店。';
+    }
+
+    function buildStoreOrderUrl(storeId) {
+      if (!storeId) return '';
+      return `${location.origin}/wellness-menu/order.html?store_id=${encodeURIComponent(storeId)}`;
+    }
+
+    function newStoreDraft() {
+      const nextSort = Math.max(0, ...(stores || []).map(store => Number(store.sort || 0))) + 10;
+      const nextStoreId = 'store-' + Date.now();
+      document.getElementById('storeId').value = nextStoreId;
+      document.getElementById('storeName').value = '';
+      document.getElementById('storeCity').value = '';
+      document.getElementById('storeRegion').value = '';
+      document.getElementById('storeContactPhone').value = '';
+      document.getElementById('storeOpeningHours').value = '11:30-02:00';
+      document.getElementById('storeAddress').value = '';
+      document.getElementById('storeOrderUrl').value = buildStoreOrderUrl(nextStoreId);
+      document.getElementById('storeQrCodeUrl').value = '/wellness-menu/qrcode.png';
+      document.getElementById('storeStatus').value = 'active';
+      document.getElementById('storeSort').value = nextSort;
+      document.getElementById('storeMsg').textContent = '填写门店名称后保存。';
+    }
+
+    function storePayloadFromForm() {
+      return {
+        store_id: document.getElementById('storeId').value.trim(),
+        name: document.getElementById('storeName').value.trim(),
+        city: document.getElementById('storeCity').value.trim(),
+        region: document.getElementById('storeRegion').value.trim(),
+        contact_phone: document.getElementById('storeContactPhone').value.trim(),
+        opening_hours: document.getElementById('storeOpeningHours').value.trim(),
+        address: document.getElementById('storeAddress').value.trim(),
+        order_url: document.getElementById('storeOrderUrl').value.trim() || buildStoreOrderUrl(document.getElementById('storeId').value.trim()),
+        qr_code_url: document.getElementById('storeQrCodeUrl').value.trim(),
+        status: document.getElementById('storeStatus').value,
+        sort: Number(document.getElementById('storeSort').value || 0),
+      };
+    }
+
+    async function saveStore() {
+      const payload = storePayloadFromForm();
+      if (!payload.store_id || !payload.name) {
+        document.getElementById('storeMsg').textContent = '请填写门店ID和门店名称。';
+        return;
+      }
+      const exists = (stores || []).some(store => store.store_id === payload.store_id);
+      const url = exists
+        ? API + '/api/v1/wellness/stores/' + encodeURIComponent(payload.store_id)
+        : API + '/api/v1/wellness/stores';
+      const res = await fetch(url, {
+        method: exists ? 'PUT' : 'POST',
+        headers: {'Content-Type':'application/json', ...authHeaders()},
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const detail = (await res.json().catch(() => ({}))).detail || '保存失败';
+        document.getElementById('storeMsg').textContent = detail;
+        return;
+      }
+      const saved = await res.json();
+      activeStoreId = saved.store_id;
+      sessionStorage.setItem('hxy_admin_store_id', activeStoreId);
+      await loadStores();
+      await loadCatalog();
+      await loadStoreDashboard();
+      document.getElementById('storeMsg').textContent = '已保存：' + saved.name;
+    }
+
+    async function loadAccounts() {
+      const res = await fetch(API + '/api/v1/wellness/accounts', {
+        headers: authHeaders(),
+      });
+      accounts = res.ok ? await res.json() : [];
+      if (!selectedAccountId && accounts.length) selectedAccountId = String(accounts[0].id);
+      renderAccountPanel();
+    }
+
+    function renderAccountPanel() {
+      renderAccountStoreOptions();
+      renderAccountList();
+      fillAccountForm();
+    }
+
+    function renderAccountStoreOptions() {
+      const selector = document.getElementById('accountStoreId');
+      if (!selector) return;
+      const currentValue = selector.value;
+      selector.innerHTML = '<option value="">总部/不绑定门店</option>' + (stores || [])
+        .map(store => `<option value="${store.store_id}">${store.name}</option>`)
+        .join('');
+      selector.value = currentValue;
+    }
+
+    function renderAccountList() {
+      const list = document.getElementById('accountList');
+      if (!list) return;
+      if (!accounts.length) {
+        list.innerHTML = '<div class="option-empty">暂无账号，或当前账号无权限查看。</div>';
+        return;
+      }
+      list.innerHTML = accounts.map(account => `<button class="account-row ${String(account.id)===String(selectedAccountId)?'active':''}" type="button" data-account-id="${account.id}">
+        <strong>${escapeText(account.display_name || account.username)}</strong>
+        <span>${account.username} · ${roleLabels[account.role] || account.role} · ${account.status === 'inactive' ? '停用' : '启用'}</span>
+      </button>`).join('');
+      document.querySelectorAll('[data-account-id]').forEach(button => {
+        button.onclick = () => {
+          selectedAccountId = button.dataset.accountId;
+          renderAccountPanel();
+        };
+      });
+    }
+
+    function currentAccount() {
+      return accounts.find(account => String(account.id) === String(selectedAccountId));
+    }
+
+    function fillAccountForm() {
+      const account = currentAccount();
+      const roleOptions = Object.entries(roleLabels).map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
+      document.getElementById('accountRole').innerHTML = roleOptions;
+      document.getElementById('accountUsername').value = account?.username || '';
+      document.getElementById('accountDisplayName').value = account?.display_name || '';
+      document.getElementById('accountRole').value = account?.role || 'store_manager';
+      document.getElementById('accountStoreId').value = account?.store_id || '';
+      document.getElementById('accountRegion').value = account?.region || '';
+      document.getElementById('accountStatus').value = account?.status || 'active';
+      document.getElementById('accountPassword').value = '';
+      document.getElementById('accountMsg').textContent = account ? '正在编辑：' + (account.display_name || account.username) : '填写信息后创建新账号。';
+    }
+
+    function newAccountDraft() {
+      selectedAccountId = '';
+      renderAccountPanel();
+    }
+
+    function accountPayloadFromForm() {
+      return {
+        username: document.getElementById('accountUsername').value.trim(),
+        display_name: document.getElementById('accountDisplayName').value.trim(),
+        password: document.getElementById('accountPassword').value,
+        role: document.getElementById('accountRole').value,
+        store_id: document.getElementById('accountStoreId').value,
+        region: document.getElementById('accountRegion').value.trim(),
+        status: document.getElementById('accountStatus').value,
+      };
+    }
+
+    async function saveAccount() {
+      const payload = accountPayloadFromForm();
+      if (!payload.username) {
+        document.getElementById('accountMsg').textContent = '请填写账号。';
+        return;
+      }
+      if (!selectedAccountId && !payload.password) {
+        document.getElementById('accountMsg').textContent = '新账号必须设置密码。';
+        return;
+      }
+      const url = selectedAccountId
+        ? API + '/api/v1/wellness/accounts/' + encodeURIComponent(selectedAccountId)
+        : API + '/api/v1/wellness/accounts';
+      const res = await fetch(url, {
+        method: selectedAccountId ? 'PUT' : 'POST',
+        headers: {'Content-Type':'application/json', ...authHeaders()},
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const detail = (await res.json().catch(() => ({}))).detail || '保存账号失败';
+        document.getElementById('accountMsg').textContent = detail;
+        return;
+      }
+      const saved = await res.json();
+      selectedAccountId = String(saved.id);
+      await loadAccounts();
+      document.getElementById('accountMsg').textContent = '已保存：' + (saved.display_name || saved.username);
+    }
+
+    async function loadCatalog() {
+      setStatus('正在加载 catalog...');
+      const res = await fetch(API + '/api/v1/wellness/catalog' + catalogQuery());
+      catalog = await res.json();
+      selectedId = catalog.projects?.[0]?.id || '';
+      renderAll();
+      const fallback = catalog._fallback_catalog ? '，当前使用总部默认菜单' : '';
+      setStatus('已加载：' + (activeStoreId === 'default' ? '总部默认菜单' : activeStoreId) + fallback);
+      loadVersions().catch(() => renderVersionPanel());
+      loadStoreDashboard().catch(() => renderDashboard());
+    }
+
+    function renderAll() {
+      renderCategoryOptions();
+      renderProjectList();
+      fillForm();
+      renderOptionEditor();
+      syncJson();
+    }
+
+    function renderCategoryOptions() {
+      const options = (catalog.categories || []).map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+      document.getElementById('categoryId').innerHTML = options;
+      document.getElementById('categoryFilter').innerHTML = `<option value="">全部分类</option>${options}`;
+    }
+
+    function renderProjectList() {
+      const filter = document.getElementById('categoryFilter').value;
+      const projects = [...(catalog.projects || [])].filter(p => !filter || p.categoryId === filter).sort((a,b)=>(a.sort||0)-(b.sort||0));
+      document.getElementById('projectList').innerHTML = projects.map(p => `<button class="project-item ${p.id===selectedId?'active':''}" type="button" data-id="${p.id}">
+        <strong>${p.name || '未命名项目'}</strong>
+        <span>${p.featured ? '推荐 · ' : ''}${p.status === 'inactive' ? '已下架' : '上架'} · ¥${p.price || 0} · ${adminDurationLabel(p)}</span>
+      </button>`).join('');
+      document.querySelectorAll('.project-item').forEach(btn => btn.onclick = () => { saveFormToCurrent(); selectedId = btn.dataset.id; renderAll(); });
+    }
+
+    function adminDurationLabel(project) {
+      if (project.categoryId === 'qing') return '茶饮';
+      if (project.categoryId === 'bu') return '膳食';
+      if (project.categoryId === 'yang') return '带走';
+      return `${project.durationMinutes || 0}分钟`;
+    }
+
+    function fillForm() {
+      const p = current();
+      if (!p) return;
+      document.getElementById('editorTitle').textContent = p.name || '项目编辑';
+      document.getElementById('name').value = p.name || '';
+      document.getElementById('categoryId').value = p.categoryId || catalog.categories?.[0]?.id || '';
+      document.getElementById('subtitle').value = p.subtitle || '';
+      document.getElementById('coverImage').value = p.coverImage || '';
+      document.getElementById('price').value = p.price || 0;
+      document.getElementById('originalPrice').value = p.originalPrice || 0;
+      document.getElementById('durationMinutes').value = p.durationMinutes || 0;
+      document.getElementById('statusField').value = p.status || 'active';
+      document.getElementById('featured').value = p.featured ? 'true' : 'false';
+      document.getElementById('recommendRank').value = Number(p.recommendRank || 0);
+      document.getElementById('recommendationReason').value = p.recommendationReason || '';
+      document.getElementById('recommendFor').value = p.recommendFor || '';
+      document.getElementById('tags').value = (p.tags || []).join('，');
+      document.getElementById('benefits').value = (p.benefits || []).join('，');
+      const q = p.qingPaoTiaoBuYang || {};
+      document.getElementById('qClear').value = (q['清'] || []).join('，');
+      document.getElementById('qSoak').value = (q['泡'] || []).join('，');
+      document.getElementById('qTune').value = (q['调'] || []).join('，');
+      document.getElementById('qNourish').value = (q['补'] || []).join('，');
+      document.getElementById('qCare').value = (q['养'] || []).join('，');
+      document.getElementById('serviceSteps').value = (p.serviceSteps || []).join('\n');
+      document.getElementById('technicianNotes').value = p.technicianNotes || '';
+      document.getElementById('recommendScript').value = p.recommendScript || '';
+      renderPreview();
+      renderOptionEditor();
+    }
+
+    function saveFormToCurrent() {
+      const p = current();
+      if (!p) return;
+      p.name = document.getElementById('name').value.trim();
+      p.categoryId = document.getElementById('categoryId').value;
+      p.subtitle = document.getElementById('subtitle').value.trim();
+      p.coverImage = document.getElementById('coverImage').value.trim();
+      p.price = Number(document.getElementById('price').value || 0);
+      p.originalPrice = Number(document.getElementById('originalPrice').value || 0);
+      p.durationMinutes = Number(document.getElementById('durationMinutes').value || 0);
+      p.status = document.getElementById('statusField').value;
+      p.featured = document.getElementById('featured').value === 'true';
+      p.recommendRank = Number(document.getElementById('recommendRank').value || 0);
+      p.recommendationReason = document.getElementById('recommendationReason').value.trim();
+      p.recommendFor = document.getElementById('recommendFor').value.trim();
+      p.tags = list(document.getElementById('tags').value);
+      p.benefits = list(document.getElementById('benefits').value);
+      p.qingPaoTiaoBuYang = {
+        '清': list(document.getElementById('qClear').value),
+        '泡': list(document.getElementById('qSoak').value),
+        '调': list(document.getElementById('qTune').value),
+        '补': list(document.getElementById('qNourish').value),
+        '养': list(document.getElementById('qCare').value),
+      };
+      p.serviceSteps = lines(document.getElementById('serviceSteps').value);
+      p.technicianNotes = document.getElementById('technicianNotes').value.trim();
+      p.recommendScript = document.getElementById('recommendScript').value.trim();
+      saveOptionsToCurrent();
+      syncJson();
+      renderPreview();
+      renderProjectList();
+    }
+
+    function renderPreview() {
+      const p = current();
+      if (!p) return;
+      document.getElementById('previewImage').src = p.coverImage || '';
+      document.getElementById('previewName').textContent = p.name || '-';
+      document.getElementById('previewSubtitle').textContent = p.subtitle || '';
+      document.getElementById('previewPrice').textContent = '¥' + (p.price || 0);
+      document.getElementById('previewOriginal').textContent = p.originalPrice ? '¥' + p.originalPrice : '';
+      document.getElementById('previewTags').innerHTML = (p.tags || []).map(t => `<span class="chip">${t}</span>`).join('');
+    }
+
+    function syncJson() {
+      document.getElementById('jsonEditor').value = JSON.stringify(catalog, null, 2);
+    }
+
+    function renderOptionEditor() {
+      const p = current();
+      if (!p) return;
+      document.getElementById('optionEditor').innerHTML = optionKinds.map(kind => `
+        <div class="option-block">
+          <div class="option-head">
+            <h4>${kind.title}</h4>
+            <button class="btn" type="button" data-option-action="add" data-option-kind="${kind.key}">新增</button>
+          </div>
+          <p class="option-help">${kind.help}</p>
+          <div class="option-rows" id="option-${kind.key}">
+            ${renderOptionRows(kind.key, p[kind.key] || [])}
+          </div>
+        </div>
+      `).join('');
+      document.querySelectorAll('[data-option-input]').forEach(field => field.addEventListener('input', () => {
+        saveOptionsToCurrent();
+        syncJson();
+      }));
+      document.querySelectorAll('[data-option-action]').forEach(button => {
+        button.onclick = () => {
+          if (button.dataset.optionAction === 'add') addOptionRow(button.dataset.optionKind);
+          if (button.dataset.optionAction === 'remove') removeOptionRow(button.dataset.optionKind, Number(button.dataset.optionIndex || 0));
+        };
+      });
+    }
+
+    function renderOptionRows(kind, rows) {
+      if (!rows.length) return '<div class="option-empty">暂无选项，点击“新增”添加。</div>';
+      if (kind === 'addOns') {
+        return rows.map((item, index) => `
+          <div class="option-row addon" data-option-row="${kind}" data-index="${index}">
+            <label>名称<input class="field" data-option-input data-field="name" value="${escapeText(item.name || '')}"></label>
+            <label>价格<input class="field" type="number" data-option-input data-field="price" value="${Number(item.price || 0)}"></label>
+            <label>时长/说明<input class="field" data-option-input data-field="duration" value="${escapeText(item.duration || '')}"></label>
+            <button class="btn danger" type="button" data-option-action="remove" data-option-kind="${kind}" data-option-index="${index}">删除</button>
+          </div>
+        `).join('');
+      }
+      return rows.map((group, index) => `
+        <div class="option-row" data-option-row="${kind}" data-index="${index}">
+          <label>组名<input class="field" data-option-input data-field="name" value="${escapeText(group.name || '')}"></label>
+          <label>选项<input class="field" data-option-input data-field="choices" value="${escapeText(formatChoices(group.choices || []))}"></label>
+          <label>默认值<input class="field" data-option-input data-field="default" value="${escapeText(formatDefaultValue(group.default))}"></label>
+          <button class="btn danger" type="button" data-option-action="remove" data-option-kind="${kind}" data-option-index="${index}">删除</button>
+        </div>
+      `).join('');
+    }
+
+    function addOptionRow(kind) {
+      saveOptionsToCurrent();
+      const p = current();
+      if (!p) return;
+      p[kind] = p[kind] || [];
+      p[kind].push(emptyOptionRow(kind));
+      renderOptionEditor();
+      syncJson();
+    }
+
+    function removeOptionRow(kind, index) {
+      saveOptionsToCurrent();
+      const p = current();
+      if (!p || !Array.isArray(p[kind])) return;
+      p[kind].splice(index, 1);
+      renderOptionEditor();
+      syncJson();
+    }
+
+    function emptyOptionRow(kind) {
+      if (kind === 'addOns') return { name: '', price: 0, duration: '' };
+      return { name: '', choices: [], default: kind === 'multiOptions' ? [] : '' };
+    }
+
+    function formatChoices(choices) {
+      return (choices || []).map(choice => {
+        if (choice && typeof choice === 'object') {
+          return `${choice.label || choice.name || choice.value || ''}${choice.description ? '=' + choice.description : ''}`;
+        }
+        return String(choice || '');
+      }).join('，');
+    }
+
+    function formatDefaultValue(value) {
+      return Array.isArray(value) ? value.join('，') : (value || '');
+    }
+
+    function optionInput(row, field) {
+      return row.querySelector(`[data-field="${field}"]`)?.value.trim() || '';
+    }
+
+    function readOptionRows(kind) {
+      return [...document.querySelectorAll(`[data-option-row="${kind}"]`)];
+    }
+
+    function readOptionRow(row, kind) {
+      if (kind === 'addOns') {
+        return {
+          name: optionInput(row, 'name'),
+          price: Number(optionInput(row, 'price') || 0),
+          duration: optionInput(row, 'duration'),
+        };
+      }
+      const defaultValue = optionInput(row, 'default');
+      return {
+        name: optionInput(row, 'name'),
+        choices: list(optionInput(row, 'choices')).map(parseChoice),
+        default: kind === 'multiOptions' ? list(defaultValue) : defaultValue,
+      };
+    }
+
+    function optionRowHasContent(row) {
+      return Boolean(optionInput(row, 'name'));
+    }
+
+    function saveOptionsToCurrent() {
+      const p = current();
+      if (!p) return;
+      for (const kind of optionKinds) {
+        p[kind.key] = readOptionRows(kind.key)
+          .filter(optionRowHasContent)
+          .map(row => readOptionRow(row, kind.key));
+      }
+    }
+
+    function parseChoice(text) {
+      const [label, description] = String(text || '').split('=').map(part => part.trim());
+      if (description) return { label, description };
+      return label;
+    }
+
+    function escapeText(value) {
+      return String(value || '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+    }
+
+    function readCatalogForSubmit(sourceJson = false) {
+      if (sourceJson) {
+        try { catalog = JSON.parse(document.getElementById('jsonEditor').value); }
+        catch (error) { alert('JSON 格式错误：' + error.message); return null; }
+      } else {
+        saveFormToCurrent();
+      }
+      return catalog;
+    }
+
+    async function saveDraft(sourceJson = false) {
+      const content = readCatalogForSubmit(sourceJson);
+      if (!content) return;
+      setStatus('正在保存草稿...');
+      const res = await fetch(API + '/api/v1/wellness/catalog/draft' + catalogQuery(), {
+        method: 'PUT',
+        headers: {
+          'Content-Type':'application/json',
+          ...authHeaders(),
+        },
+        body: JSON.stringify({content, note: 'admin draft'}),
+      });
+      if (!res.ok) {
+        const detail = (await res.json().catch(() => ({}))).detail || '保存草稿失败';
+        alert(detail);
+        setStatus('保存草稿失败');
+        return;
+      }
+      const payload = await res.json();
+      setStatus('草稿已保存：' + (payload.catalog_key || activeStoreId) + ' · v' + (payload.version_no || '-'));
+      await loadVersions();
+    }
+
+    async function publishCatalog(sourceJson = false) {
+      const content = readCatalogForSubmit(sourceJson);
+      if (!content) return;
+      if (!confirm('确认发布到用户端和技师端？')) return;
+      setStatus('正在发布...');
+      const res = await fetch(API + '/api/v1/wellness/catalog/publish' + catalogQuery(), {
+        method: 'POST',
+        headers: {
+          'Content-Type':'application/json',
+          ...authHeaders(),
+        },
+        body: JSON.stringify({content, note: 'admin publish'}),
+      });
+      if (!res.ok) {
+        const detail = (await res.json().catch(() => ({}))).detail || '发布失败';
+        alert(detail);
+        setStatus('发布失败');
+        return;
+      }
+      const payload = await res.json();
+      setStatus('已发布：' + (payload.catalog_key || activeStoreId) + ' · ' + (payload.updated_at || ''));
+      await loadVersions();
+    }
+
+    async function loadDraft() {
+      const res = await fetch(API + '/api/v1/wellness/catalog/draft' + catalogQuery(), {
+        headers: authHeaders(),
+      });
+      if (!res.ok) {
+        const detail = (await res.json().catch(() => ({}))).detail || '读取草稿失败';
+        alert(detail);
+        return;
+      }
+      const payload = await res.json();
+      if (!payload.has_draft || !payload.content) {
+        alert('当前发布范围没有草稿。');
+        return;
+      }
+      catalog = payload.content;
+      selectedId = catalog.projects?.[0]?.id || '';
+      renderAll();
+      setStatus('已读取草稿：' + (payload.updated_at || ''));
+    }
+
+    async function loadVersions() {
+      const res = await fetch(API + '/api/v1/wellness/catalog/versions' + catalogQuery(), {
+        headers: authHeaders(),
+      });
+      versions = res.ok ? await res.json() : [];
+      renderVersionPanel();
+    }
+
+    async function loadStoreDashboard() {
+      const dashboardStoreId = activeStoreId || 'default';
+      const res = await fetch(API + '/api/v1/wellness/stores/' + encodeURIComponent(dashboardStoreId) + '/dashboard', {
+        headers: authHeaders(),
+      });
+      dashboard = res.ok ? await res.json() : null;
+      renderDashboard();
+    }
+
+    function renderDashboard() {
+      const panel = document.getElementById('dashboardPanel');
+      if (!panel) return;
+      if (!dashboard) {
+        panel.innerHTML = '<h3>门店经营看板</h3><div class="status">登录后展示当前发布范围的今日订单、营收、状态和热销项目。</div>';
+        return;
+      }
+      const counts = dashboard.status_counts || {};
+      const scope = dashboard.scope === 'all_stores' ? '全部门店' : activeStoreId;
+      const metrics = [
+        ['今日订单', dashboard.order_count || 0],
+        ['今日营收', '¥' + (dashboard.revenue_total || 0)],
+        ['待确认', counts.pending || 0],
+        ['服务中', counts.confirmed || 0],
+        ['异常', counts.exception || 0],
+      ];
+      const topRows = (dashboard.top_projects || []).length
+        ? dashboard.top_projects.map(item => `<div class="top-project-row"><strong>${escapeText(item.name)}</strong><span>${item.count} 单</span><span>¥${item.revenue || 0}</span></div>`).join('')
+        : '<div class="status" style="margin-top:12px">今日暂无项目排行。</div>';
+      panel.innerHTML = `
+        <h3>门店经营看板</h3>
+        <div class="status" style="margin-bottom:12px">${scope} · ${dashboard.date || ''} · 客单 ¥${dashboard.average_order_value || 0}</div>
+        <div class="metric-grid">${metrics.map(([label, value]) => `<div class="metric-card"><b>${value}</b><span>${label}</span></div>`).join('')}</div>
+        <div class="top-projects">${topRows}</div>`;
+    }
+
+    function renderVersionPanel() {
+      const panel = document.getElementById('versionPanel');
+      if (!panel) return;
+      if (!versions.length) {
+        panel.innerHTML = '<div class="option-empty">暂无版本记录。首次发布后会自动生成版本。</div>';
+        return;
+      }
+      panel.innerHTML = versions.map(version => `
+        <div class="version-row">
+          <div>
+            <strong>v${version.version_no} · ${version.action || 'publish'} · ${version.project_count || 0} 项</strong>
+            <span>${version.created_at || ''} · ${version.catalog_key || ''}${version.note ? ' · ' + version.note : ''}</span>
+          </div>
+          <button class="btn" type="button" data-rollback-version="${version.id}">回滚</button>
+        </div>
+      `).join('');
+      document.querySelectorAll('[data-rollback-version]').forEach(button => {
+        button.onclick = () => rollbackCatalogVersion(Number(button.dataset.rollbackVersion || 0));
+      });
+    }
+
+    async function rollbackCatalogVersion(versionId) {
+      if (!versionId) return;
+      if (!confirm('确认回滚到这个版本？当前菜单会被该版本覆盖，并生成新的回滚记录。')) return;
+      setStatus('正在回滚...');
+      const res = await fetch(API + '/api/v1/wellness/catalog/rollback' + catalogQuery(), {
+        method: 'POST',
+        headers: {
+          'Content-Type':'application/json',
+          ...authHeaders(),
+        },
+        body: JSON.stringify({ version_id: versionId, actor: 'admin', note: 'admin rollback' }),
+      });
+      if (!res.ok) { alert('回滚失败'); setStatus('回滚失败'); return; }
+      await loadCatalog();
+      setStatus('已回滚');
+    }
+
+    function addProject() {
+      saveFormToCurrent();
+      const id = 'svc-' + Date.now();
+      catalog.projects.unshift({
+        id,
+        categoryId: catalog.categories?.[0]?.id || 'top',
+        status: 'active',
+        name: '新项目',
+        subtitle: '60分钟 · 请填写项目说明',
+        coverImage: '',
+        price: 0,
+        originalPrice: 0,
+        durationMinutes: 60,
+        tags: [],
+        benefits: [],
+        featured: false,
+        recommendRank: 0,
+        recommendationReason: '',
+        recommendFor: '',
+        qingPaoTiaoBuYang: {'清':[], '泡':[], '调':[], '补':[], '养':[]},
+        requiredOptions: [],
+        optionalOptions: [],
+        multiOptions: [],
+        addOns: [],
+        serviceSteps: [],
+        technicianNotes: '',
+        recommendScript: '',
+        sort: 0,
+      });
+      selectedId = id;
+      renderAll();
+    }
+
+    function duplicateProject() {
+      saveFormToCurrent();
+      const p = current();
+      if (!p) return;
+      const copy = JSON.parse(JSON.stringify(p));
+      copy.id = 'svc-' + Date.now();
+      copy.name = copy.name + ' 复制';
+      catalog.projects.unshift(copy);
+      selectedId = copy.id;
+      renderAll();
+    }
+
+    function deleteProject() {
+      const p = current();
+      if (!p) return;
+      if (!confirm('确认下架/删除这个项目？')) return;
+      p.status = 'inactive';
+      renderAll();
+    }
+
+    function setStatus(text) { document.getElementById('status').textContent = text; }
+
+    fields.forEach(id => document.getElementById(id)?.addEventListener('input', saveFormToCurrent));
+    document.getElementById('categoryId').addEventListener('change', saveFormToCurrent);
+    document.getElementById('statusField').addEventListener('change', saveFormToCurrent);
+    document.getElementById('featured').addEventListener('change', saveFormToCurrent);
+    document.getElementById('categoryFilter').onchange = renderProjectList;
+    document.getElementById('storeSelector').onchange = () => {
+      saveFormToCurrent();
+      activeStoreId = document.getElementById('storeSelector').value || 'default';
+      sessionStorage.setItem('hxy_admin_store_id', activeStoreId);
+      renderStoreEditor();
+      loadCatalog().catch(error => setStatus('加载失败：' + error.message));
+      loadStoreDashboard().catch(() => renderDashboard());
+    };
+    document.getElementById('storeId').addEventListener('input', () => {
+      const orderUrl = document.getElementById('storeOrderUrl');
+      const value = orderUrl.value.trim();
+      if (!value || value.includes('/wellness-menu/order.html?store_id=')) {
+        orderUrl.value = buildStoreOrderUrl(document.getElementById('storeId').value.trim());
+      }
+    });
+    document.getElementById('newStore').onclick = newStoreDraft;
+    document.getElementById('saveStore').onclick = () => saveStore().catch(error => {
+      document.getElementById('storeMsg').textContent = error.message || '保存失败';
+    });
+    document.getElementById('newAccount').onclick = newAccountDraft;
+    document.getElementById('saveAccount').onclick = () => saveAccount().catch(error => {
+      document.getElementById('accountMsg').textContent = error.message || '保存账号失败';
+    });
+    document.getElementById('saveDraftTop').onclick = () => saveDraft(false);
+    document.getElementById('saveTop').onclick = () => publishCatalog(false);
+    document.getElementById('saveDraftJson').onclick = () => saveDraft(true);
+    document.getElementById('saveJson').onclick = () => publishCatalog(true);
+    document.getElementById('loadDraft').onclick = loadDraft;
+    document.getElementById('reload').onclick = loadCatalog;
+    document.getElementById('addProject').onclick = addProject;
+    document.getElementById('duplicateProject').onclick = duplicateProject;
+    document.getElementById('deleteProject').onclick = deleteProject;
+
+    loadStores()
+      .then(loadCatalog)
+      .then(() => loadAccounts().catch(() => renderAccountPanel()))
+      .catch(error => setStatus('加载失败：' + error.message));
+  </script>
+</body>
+</html>

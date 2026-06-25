@@ -1,0 +1,19 @@
+services:
+  hxy-postgres:
+    image: postgres:16
+    container_name: hxy-postgres
+    restart: unless-stopped
+    network_mode: host
+    command: ["postgres", "-p", "${HXY_PG_HOST_PORT:-55433}", "-c", "listen_addresses=127.0.0.1"]
+    env_file:
+      - ../env/hxy-postgres.env
+    volumes:
+      - hxy-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p \"$${HXY_PG_HOST_PORT:-55433}\" -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  hxy-postgres-data:

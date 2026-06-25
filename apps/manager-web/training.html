@@ -1,0 +1,868 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>荷小悦店长训练看板</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      --bg: #f4f2ed;
+      --panel: #fffdf8;
+      --accent: #0f6f5d;
+      --accent-dark: #084c41;
+      --soft: #e5f0e9;
+      --ink: #20251f;
+      --muted: #687267;
+      --line: rgba(89, 111, 93, 0.18);
+      --danger: #9d382e;
+      --warn: #8a5b13;
+      --shadow: 0 18px 42px rgba(77, 87, 72, 0.1);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      height: 100%;
+      overflow: hidden;
+    }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 10% 0%, rgba(246, 226, 232, 0.68), transparent 30%),
+        radial-gradient(circle at 100% 12%, rgba(220, 240, 231, 0.82), transparent 34%),
+        var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      letter-spacing: 0;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    .app {
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr);
+      gap: 10px;
+      width: 100%;
+      max-width: 560px;
+      height: 100dvh;
+      overflow: hidden;
+      margin: 0 auto;
+      padding: 10px 12px 12px;
+    }
+
+    .hero,
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: rgba(255, 253, 248, 0.88);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
+    }
+
+    .hero {
+      display: grid;
+      gap: 10px;
+      padding: 14px;
+    }
+
+    .hero-head {
+      display: flex;
+      align-items: start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 22px;
+      line-height: 1.18;
+    }
+
+    h2 {
+      font-size: 18px;
+      line-height: 1.25;
+    }
+
+    h3 {
+      font-size: 15px;
+      line-height: 1.3;
+    }
+
+    p,
+    label,
+    li {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      border: 1px solid rgba(15, 111, 93, 0.24);
+      border-radius: 999px;
+      background: var(--soft);
+      color: var(--accent-dark);
+      padding: 0 10px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: end;
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+    }
+
+    input {
+      width: 100%;
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--ink);
+      outline: none;
+      padding: 0 12px;
+    }
+
+    .button {
+      min-height: 40px;
+      border: 0;
+      border-radius: 999px;
+      background: var(--accent);
+      color: #fff;
+      padding: 0 18px;
+      cursor: pointer;
+      box-shadow: 0 14px 28px rgba(15, 111, 93, 0.2);
+      white-space: nowrap;
+    }
+
+    .secondary {
+      min-height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.68);
+      color: var(--accent-dark);
+      padding: 0 12px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .button:active {
+      transform: translateY(1px);
+    }
+
+    .secondary:active {
+      transform: translateY(1px);
+    }
+
+    .button:disabled {
+      cursor: progress;
+      opacity: 0.72;
+    }
+
+    .panel {
+      display: grid;
+      gap: 10px;
+      padding: 14px;
+      min-height: 0;
+    }
+
+    .action-strip {
+      gap: 10px;
+      padding: 12px 14px;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .metric {
+      display: grid;
+      gap: 4px;
+      min-height: 64px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.68);
+      padding: 10px;
+      min-width: 0;
+    }
+
+    .metric strong {
+      color: var(--accent-dark);
+      font-size: 22px;
+      line-height: 1;
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-size: 12px;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .item {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.68);
+      padding: 12px;
+    }
+
+    .task-workbench {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 10px;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .task-toolbar {
+      display: grid;
+      gap: 10px;
+    }
+
+    .task-toolbar-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .task-filters {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255, 253, 248, 0.72);
+      padding: 5px;
+    }
+
+    .filter {
+      min-height: 34px;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .filter.is-active {
+      background: var(--accent);
+      color: #fff;
+      box-shadow: 0 10px 20px rgba(15, 111, 93, 0.18);
+    }
+
+    .task-list {
+      display: grid;
+      align-content: start;
+      gap: 8px;
+      min-height: 0;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: thin;
+    }
+
+    .task-card {
+      display: grid;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.7);
+      padding: 12px;
+    }
+
+    .task-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .support-data {
+      display: none;
+    }
+
+    .item strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 14px;
+    }
+
+    .actions-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .check-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .check-row input {
+      width: 18px;
+      min-height: 18px;
+      padding: 0;
+    }
+
+    .danger {
+      color: var(--danger);
+    }
+
+    .warn {
+      color: var(--warn);
+    }
+
+    .status {
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.62);
+      color: var(--muted);
+      padding: 9px 11px;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .empty {
+      color: var(--muted);
+    }
+
+    @media (max-width: 420px) {
+      .app {
+        padding: 8px 10px 10px;
+      }
+
+      .hero {
+        padding: 12px;
+      }
+
+      .hero-head p {
+        display: none;
+      }
+
+      h1 {
+        font-size: 21px;
+      }
+
+      label {
+        font-size: 12px;
+      }
+
+      .status {
+        min-height: 32px;
+        padding: 7px 10px;
+      }
+
+      .metric {
+        min-height: 58px;
+        padding: 9px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <section class="hero">
+      <div class="hero-head">
+        <div>
+          <h1>荷小悦店长训练看板</h1>
+          <p>看今天谁要复训、错在哪、班前会先练什么，必要时升级成经营议题。</p>
+        </div>
+        <span class="pill">店长复训</span>
+      </div>
+      <div class="controls">
+        <label>门店ID
+          <input id="managerStoreId" value="pilot-store">
+        </label>
+        <button id="refreshButton" class="button" type="button">刷新</button>
+      </div>
+      <div id="status" class="status" role="status" aria-live="polite">输入门店ID后刷新训练看板。</div>
+    </section>
+
+    <section class="panel action-strip">
+      <h2>今日动作</h2>
+      <div class="metrics">
+        <div class="metric">
+          <strong id="averageScore">0</strong>
+          <span>平均分</span>
+        </div>
+        <div class="metric">
+          <strong id="retrainCount">0</strong>
+          <span>需复训</span>
+        </div>
+        <div class="metric">
+          <strong id="activeCount">0</strong>
+          <span>参与员工</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel task-workbench">
+      <div class="task-toolbar">
+        <div class="task-toolbar-head">
+          <h2>今日任务单</h2>
+          <span class="pill">按优先级处理</span>
+        </div>
+        <div class="task-filters" aria-label="任务筛选">
+          <button class="filter is-active" type="button" data-task-filter="all">全部</button>
+          <button class="filter" type="button" data-task-filter="retrain">复训</button>
+          <button class="filter" type="button" data-task-filter="impact">经营</button>
+          <button class="filter" type="button" data-task-filter="acceptance">验收</button>
+        </div>
+      </div>
+      <div id="managerTaskQueue" class="task-list"></div>
+      <div class="support-data" hidden>
+        <h2>今天先做</h2>
+        <div id="actions" class="list"></div>
+        <h2>班前会复训清单</h2>
+        <div id="briefingTaskList" class="list"></div>
+        <h2>复训优先级</h2>
+        <div id="priorityList" class="list"></div>
+        <h2>常见错误</h2>
+        <div id="mistakeList" class="list"></div>
+        <h2>经营结果关联</h2>
+        <p>把训练问题翻译成店长要盯的经营风险，只作为训练影响信号，不替代真实经营数据。</p>
+        <div id="operatingImpactList" class="list"></div>
+        <h2>经营议题</h2>
+        <div id="issueSignal" class="list"></div>
+        <h2>店长验收</h2>
+        <p>系统会校验验收资格：现场复述通过，并且同一训练项目连续 2 次达标后，才允许通过验收。</p>
+        <h2>员工能力档案</h2>
+        <div id="capabilityList" class="list"></div>
+        <h2>最近训练</h2>
+        <div id="sessionList" class="list"></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const managerStoreId = document.querySelector("#managerStoreId");
+    const refreshButton = document.querySelector("#refreshButton");
+    const statusBox = document.querySelector("#status");
+    const averageScore = document.querySelector("#averageScore");
+    const retrainCount = document.querySelector("#retrainCount");
+    const activeCount = document.querySelector("#activeCount");
+    const actions = document.querySelector("#actions");
+    const priorityList = document.querySelector("#priorityList");
+    const briefingTaskList = document.querySelector("#briefingTaskList");
+    const operatingImpactList = document.querySelector("#operatingImpactList");
+    const mistakeList = document.querySelector("#mistakeList");
+    const issueSignal = document.querySelector("#issueSignal");
+    const capabilityList = document.querySelector("#capabilityList");
+    const sessionList = document.querySelector("#sessionList");
+    const managerTaskQueue = document.querySelector("#managerTaskQueue");
+    const taskFilterButtons = Array.from(document.querySelectorAll("[data-task-filter]"));
+    let currentTaskFilter = "all";
+    let latestSummary = null;
+    let latestSessions = null;
+    let latestCapabilities = null;
+    const operatingMetricLinks = [
+      { metric: "客单价", direction: "negative", reason: "员工不会升级推荐会拖低客单价。" },
+      { metric: "调补养占比", direction: "negative", reason: "员工只讲清泡会降低调补养占比。" },
+    ];
+
+    function setStatus(message, type = "") {
+      statusBox.textContent = message;
+      statusBox.className = `status ${type}`.trim();
+    }
+
+    function saveStore() {
+      localStorage.setItem("hxy-manager-training-store", managerStoreId.value.trim());
+    }
+
+    function loadStore() {
+      const saved = localStorage.getItem("hxy-manager-training-store");
+      if (saved) managerStoreId.value = saved;
+    }
+
+    function listItems(container, items, renderer, emptyText) {
+      container.innerHTML = "";
+      if (!items || !items.length) {
+        const empty = document.createElement("p");
+        empty.className = "empty";
+        empty.textContent = emptyText;
+        container.appendChild(empty);
+        return;
+      }
+      items.forEach((item) => {
+        const node = document.createElement("div");
+        node.className = "item";
+        node.innerHTML = renderer(item);
+        container.appendChild(node);
+      });
+    }
+
+    function buildManagerTasks(summary = {}, sessions = {}, capabilities = {}) {
+      const tasks = [];
+      (summary.suggested_actions || []).forEach((action, index) => {
+        tasks.push({
+          type: "retrain",
+          typeLabel: "复训",
+          priority: index + 1,
+          title: "今天先做",
+          body: action,
+          nextAction: "班前会明确执行人，收班前检查完成情况。",
+        });
+      });
+      (summary.briefing_tasks || []).forEach((task, index) => {
+        tasks.push({
+          type: "retrain",
+          typeLabel: "复训",
+          priority: 10 + index,
+          title: `${task.employee_name || "员工"} · ${task.training_focus || "班前会复训"}`,
+          body: task.practice_question || "按当前短板继续练。",
+          detail: task.correction_focus || "先问状态，再合规表达。",
+          nextAction: task.acceptance_standard || "现场复述通过。",
+        });
+      });
+      (summary.operating_impact_signals || []).forEach((signal, index) => {
+        tasks.push({
+          type: "impact",
+          typeLabel: "经营",
+          priority: 40 + index,
+          title: `${signal.metric || "经营指标"} · ${signal.risk_level || "low"}`,
+          body: signal.training_signal || signal.reason || "训练影响需要继续观察。",
+          detail: signal.reason || "",
+          nextAction: signal.next_action || "店长继续抽查真实服务现场。",
+        });
+      });
+      (sessions.items || []).slice(0, 8).forEach((session, index) => {
+        const needsRetrain = Boolean(session.needs_retrain);
+        tasks.push({
+          type: needsRetrain ? "retrain" : "acceptance",
+          typeLabel: needsRetrain ? "复训" : "验收",
+          priority: needsRetrain ? 20 + index : 60 + index,
+          title: `${session.employee_name || "门店员工"} · ${session.score || 0} 分`,
+          body: session.customer_question || session.training_item || "训练记录",
+          detail: needsRetrain ? "需要继续复训。" : "可由店长现场复述验收。",
+          nextAction: renderSessionOperatingImpact(session),
+          sessionId: session.session_id || "",
+        });
+      });
+      (capabilities.items || []).slice(0, 3).forEach((item, index) => {
+        tasks.push({
+          type: "acceptance",
+          typeLabel: "验收",
+          priority: 80 + index,
+          title: `${item.employee_id || "员工"} · 能力档案`,
+          body: `${item.training_item || "训练项目"} 当前等级 ${item.current_level || "newbie"}`,
+          detail: `已达标 ${item.accepted_count || 0} 次。`,
+          nextAction: "继续用真实服务场景抽查，避免只会背题。",
+        });
+      });
+      return tasks.sort((left, right) => left.priority - right.priority);
+    }
+
+    function renderManagerTaskQueue(summary = latestSummary || {}, sessions = latestSessions || {}, capabilities = latestCapabilities || {}) {
+      const tasks = buildManagerTasks(summary, sessions, capabilities);
+      const visibleTasks = currentTaskFilter === "all"
+        ? tasks
+        : tasks.filter((task) => task.type === currentTaskFilter);
+      listItems(
+        managerTaskQueue,
+        visibleTasks,
+        (task) => `
+          <div class="task-meta">
+            <span class="pill">${task.typeLabel || "任务"}</span>
+            <span>${task.type === "impact" ? "训练影响" : "今日任务"}</span>
+          </div>
+          <strong>${task.title || "待处理任务"}</strong>
+          <p>${task.body || "暂无任务内容。"}</p>
+          ${task.detail ? `<p><strong>任务详情</strong> ${task.detail}</p>` : ""}
+          <p><strong>下一步</strong> ${task.nextAction || "店长确认处理结果。"}</p>
+          ${task.sessionId ? `
+            <label class="check-row">
+              <input type="checkbox" data-onsite-verified="${task.sessionId}">
+              <span>现场复述通过</span>
+            </label>
+            <div class="actions-row">
+              <button class="secondary" type="button" data-accept-session="${task.sessionId}">通过验收</button>
+              <button class="secondary" type="button" data-reject-session="${task.sessionId}">打回复训</button>
+            </div>
+          ` : ""}
+        `,
+        "暂无今日任务。"
+      );
+    }
+
+    function setTaskFilter(filter) {
+      currentTaskFilter = filter || "all";
+      taskFilterButtons.forEach((button) => {
+        button.classList.toggle("is-active", button.dataset.taskFilter === currentTaskFilter);
+      });
+      renderManagerTaskQueue();
+    }
+
+    function renderSummary(summary) {
+      averageScore.textContent = summary.average_score || 0;
+      retrainCount.textContent = summary.retrain_count || 0;
+      activeCount.textContent = summary.active_employee_count || 0;
+      retrainCount.className = summary.retrain_count ? "danger" : "";
+
+      listItems(
+        actions,
+        summary.suggested_actions || [],
+        (item) => `<strong>今天先做</strong><p>${item}</p>`,
+        "暂无紧急动作，继续保持每日训练。"
+      );
+      listItems(
+        priorityList,
+        summary.low_score_employees || [],
+        (item) => `<strong>${item.employee_name || "未命名员工"}</strong><p>平均 ${item.average_score || 0} 分，${item.retrain_count || 0} 次复训，先由店长一对一复盘。</p>`,
+        "暂无复训员工。"
+      );
+      renderBriefingTasks(summary.briefing_tasks || []);
+      renderOperatingImpactSignals(summary.operating_impact_signals || []);
+      listItems(
+        mistakeList,
+        summary.top_mistakes || [],
+        (item) => `<strong>${item.count || 0} 次</strong><p>${item.mistake || "未识别错误"}</p>`,
+        "暂无高频错误。"
+      );
+
+      const signal = summary.operating_issue_signal || {};
+      issueSignal.innerHTML = "";
+      const issue = document.createElement("div");
+      issue.className = "item";
+      issue.innerHTML = signal.should_create_issue
+        ? `<strong class="warn">${signal.title || "训练风险"}</strong><p>${signal.reason || "训练问题需要跟进。"}</p><p>${signal.recommended_action || "店长先处理复训员工。"}</p>`
+        : `<strong>${signal.title || "训练稳定"}</strong><p>${signal.reason || "暂无需要升级的经营议题。"}</p>`;
+      issueSignal.appendChild(issue);
+    }
+
+    function renderOperatingImpactSignals(items) {
+      listItems(
+        operatingImpactList,
+        items,
+        (item) => `
+          <strong>${item.metric || "经营指标"} · ${item.risk_level || "low"}</strong>
+          <p><strong>训练影响</strong> ${item.training_signal || "当前训练记录暂无明显风险。"}</p>
+          <p><strong>原因</strong> ${item.reason || "需要结合门店经营数据继续观察。"}</p>
+          <p><strong>下一步</strong> ${item.next_action || "店长继续抽查真实服务现场。"}</p>
+        `,
+        "暂无训练影响信号。"
+      );
+    }
+
+    function renderBriefingTasks(items) {
+      listItems(
+        briefingTaskList,
+        items,
+        (item) => `
+          <strong>${item.employee_name || "员工"} · ${item.training_focus || "复训任务"}</strong>
+          <p><strong>练习题</strong> ${item.practice_question || "按当前短板继续练。"}</p>
+          <p><strong>纠偏重点</strong> ${item.correction_focus || "先问状态，再合规表达。"}</p>
+          <p><strong>验收标准</strong> ${item.acceptance_standard || "现场复述通过。"}</p>
+          <p><strong>经营影响</strong> ${item.operating_metric || "训练通过率"}</p>
+        `,
+        "暂无班前会复训任务。"
+      );
+    }
+
+    function renderCapabilityLevels(result) {
+      listItems(
+        capabilityList,
+        result.items || [],
+        (item) => `
+          <strong>${item.employee_id || "未命名员工"} · ${item.training_item || "训练项目"}</strong>
+          <p><strong>当前等级</strong> ${item.current_level || "newbie"}</p>
+          <p><strong>已达标次数</strong> ${item.accepted_count || 0}</p>
+        `,
+        "暂无已验收通过的员工能力档案。"
+      );
+    }
+
+    function textList(items, mapper, emptyText = "暂无") {
+      if (!items || !items.length) return emptyText;
+      return items.map(mapper).filter(Boolean).join(" / ") || emptyText;
+    }
+
+    function renderSessionTrainingContext(item) {
+      const profile = item.capability_profile_json || {};
+      const plan = item.adaptive_retrain_plan_json || {};
+      const weakText = profile.summary
+        || textList(profile.weak_modules || [], (module) => module, "暂未识别");
+      const nextQuestion = plan.next_questions && plan.next_questions[0];
+      const nextQuestionText = nextQuestion
+        ? (nextQuestion.customer_question || nextQuestion.title || "继续同类题")
+        : "暂无下一题";
+      return `
+        <p><strong>能力短板</strong> ${weakText}</p>
+        <p><strong>下一题</strong> ${nextQuestionText}</p>
+      `;
+    }
+
+    function renderSessionOperatingImpact(item) {
+      return textList(
+        item.operating_metric_links_json || [],
+        (link) => `${link.metric || "经营指标"}：${link.reason || "需要店长复盘"}`,
+        "暂无经营影响"
+      );
+    }
+
+    function renderSessions(result) {
+      listItems(
+        sessionList,
+        result.items || [],
+        (item) => `
+          <strong>${item.employee_name || "门店员工"} · ${item.score || 0} 分</strong>
+          <p>${item.customer_question || item.training_item || "训练记录"}</p>
+          <p>${item.needs_retrain ? "需要复训" : "已通过"}</p>
+          ${renderSessionTrainingContext(item)}
+          <p><strong>经营影响</strong> ${renderSessionOperatingImpact(item)}</p>
+          <label class="check-row">
+            <input type="checkbox" data-onsite-verified="${item.session_id || ""}">
+            <span>现场复述通过</span>
+          </label>
+          <div class="actions-row">
+            <button class="secondary" type="button" data-accept-session="${item.session_id || ""}">通过验收</button>
+            <button class="secondary" type="button" data-reject-session="${item.session_id || ""}">打回复训</button>
+          </div>
+        `,
+        "暂无训练记录。"
+      );
+    }
+
+    function renderAcceptanceStatus(result) {
+      const acceptanceRule = result.acceptance_rule || {};
+      const ruleText = acceptanceRule.required_pass_count
+        ? `连续达标 ${acceptanceRule.consecutive_pass_count || 0}/${acceptanceRule.required_pass_count} 次。`
+        : "";
+      const nextActionText = textList(result.next_actions || [], (item) => item, "");
+      if (result.accepted) {
+        const upgradeText = result.capability_upgrade
+          ? `能力档案已更新：${result.capability_upgrade.current_level || "standard"}。`
+          : "验收通过。";
+        return `验收通过：${result.operating_summary || ""} ${upgradeText} ${ruleText}`.trim();
+      }
+      if (result.requires_retrain) {
+        return `验收未通过：${result.operating_summary || ""} ${ruleText} ${nextActionText}`.trim();
+      }
+      return `验收已记录：${result.operating_summary || ""} ${ruleText}`.trim();
+    }
+
+    async function submitManagerAcceptance(sessionId, accepted, onsiteVerified = false) {
+      if (!sessionId) {
+        setStatus("缺少训练记录ID，无法验收。", "error");
+        return;
+      }
+      try {
+        setStatus(accepted ? "正在提交通过验收..." : "正在提交打回复训...");
+        const response = await fetch("/api/operating-brain/training/manager-acceptance", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: sessionId,
+            manager_id: "manager-local",
+            manager_name: "店长",
+            accepted,
+            onsite_verified: onsiteVerified,
+            score: accepted ? 85 : 60,
+            note: accepted ? "现场复述通过。" : "仍需按自适应复训题继续练。",
+            operating_metric_links: operatingMetricLinks,
+          }),
+        });
+        if (!response.ok) throw new Error(`验收提交失败：${response.status}`);
+        const result = await response.json();
+        setStatus(renderAcceptanceStatus(result));
+        refreshDashboard({ preserveStatus: true });
+      } catch (error) {
+        setStatus(error.message, "error");
+      }
+    }
+
+    function renderAcceptanceActions() {
+      const handleClick = (event) => {
+        const accept = event.target.closest("[data-accept-session]");
+        const reject = event.target.closest("[data-reject-session]");
+        if (accept) {
+          const onsite = document.querySelector(`[data-onsite-verified="${accept.dataset.acceptSession}"]`);
+          submitManagerAcceptance(accept.dataset.acceptSession, true, Boolean(onsite && onsite.checked));
+        }
+        if (reject) submitManagerAcceptance(reject.dataset.rejectSession, false, false);
+      };
+      sessionList.addEventListener("click", handleClick);
+      managerTaskQueue.addEventListener("click", handleClick);
+    }
+
+    async function refreshDashboard({ preserveStatus = false } = {}) {
+      const storeId = managerStoreId.value.trim() || "pilot-store";
+      saveStore();
+      refreshButton.disabled = true;
+      refreshButton.textContent = "加载中";
+      if (!preserveStatus) setStatus("正在读取训练记录和复训建议...");
+      try {
+        const [summaryResponse, sessionsResponse, capabilityResponse] = await Promise.all([
+          fetch(`/api/operating-brain/training/manager-summary?store_id=${encodeURIComponent(storeId)}&days=7`),
+          fetch(`/api/operating-brain/training/sessions?store_id=${encodeURIComponent(storeId)}&limit=10`),
+          fetch(`/api/operating-brain/training/capability-levels?store_id=${encodeURIComponent(storeId)}&limit=20`),
+        ]);
+        if (!summaryResponse.ok) throw new Error(`训练汇总读取失败：${summaryResponse.status}`);
+        if (!sessionsResponse.ok) throw new Error(`训练记录读取失败：${sessionsResponse.status}`);
+        if (!capabilityResponse.ok) throw new Error(`员工能力档案读取失败：${capabilityResponse.status}`);
+        const summary = await summaryResponse.json();
+        const sessions = await sessionsResponse.json();
+        const capabilities = await capabilityResponse.json();
+        latestSummary = summary;
+        latestSessions = sessions;
+        latestCapabilities = capabilities;
+        renderSummary(summary);
+        renderSessions(sessions);
+        renderCapabilityLevels(capabilities);
+        renderManagerTaskQueue(summary, sessions, capabilities);
+        if (!preserveStatus) setStatus(`已读取 ${summary.days || 7} 天训练记录，共 ${summary.total_sessions || 0} 次。`);
+      } catch (error) {
+        setStatus(error.message, "error");
+      } finally {
+        refreshButton.disabled = false;
+        refreshButton.textContent = "刷新";
+      }
+    }
+
+    loadStore();
+    managerStoreId.addEventListener("change", saveStore);
+    refreshButton.addEventListener("click", refreshDashboard);
+    taskFilterButtons.forEach((button) => button.addEventListener("click", () => setTaskFilter(button.dataset.taskFilter)));
+    renderAcceptanceActions();
+    refreshDashboard();
+  </script>
+</body>
+</html>

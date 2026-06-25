@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HXY Knowledge Claim",
+  "type": "object",
+  "required": ["claim_id", "claim_type", "claim", "status", "evidence_ids"],
+  "properties": {
+    "claim_id": { "type": "string" },
+    "claim_type": {
+      "type": "string",
+      "enum": [
+        "brand_positioning",
+        "customer_segment",
+        "pain_point",
+        "product_service",
+        "store_model",
+        "financial_assumption",
+        "brand_asset",
+        "purchase_reason",
+        "super_symbol",
+        "risk",
+        "action_recipe",
+        "validation_metric"
+      ]
+    },
+    "claim": { "type": "string" },
+    "stage": {
+      "type": "string",
+      "enum": ["preparation", "pilot_store", "replication", "regional_scale", "national_scale"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "current_candidate", "confirmed", "validated", "deprecated", "conflicted"]
+    },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "evidence_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "conflict_claim_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "needs_validation": { "type": "boolean" }
+  }
+}
+

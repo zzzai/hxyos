@@ -1,0 +1,3316 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>荷小悦经营大脑</title>
+  <style>
+    :root {
+      --bg: #f7f4ee;
+      --bg-rose: #f7eef1;
+      --bg-lotus: #edf4ee;
+      --panel: rgba(255, 255, 255, 0.82);
+      --panel-solid: #fffdf8;
+      --panel-soft: #fbf8f2;
+      --surface-glow: rgba(255, 255, 255, 0.72);
+      --ink: #20251f;
+      --muted: #697268;
+      --line: rgba(117, 133, 113, 0.18);
+      --line-strong: rgba(82, 105, 88, 0.32);
+      --soft: #edf4ee;
+      --accent: #0f6f5d;
+      --accent-strong: #084c41;
+      --accent-soft: #e3f1eb;
+      --herb-gold: #b58a36;
+      --danger: #9d382e;
+      --warning: #8a5a18;
+      --shadow: 0 18px 45px rgba(81, 91, 73, 0.12);
+      --shadow-float: 0 24px 70px rgba(78, 82, 67, 0.16);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      height: 100%;
+      overflow: hidden;
+    }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 8% 6%, rgba(247, 238, 241, 0.95), transparent 30%),
+        radial-gradient(circle at 88% 0%, rgba(237, 244, 238, 0.95), transparent 34%),
+        linear-gradient(135deg, var(--bg), #f5f0e8 46%, #f8f3ef);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      letter-spacing: 0;
+    }
+
+    button,
+    input,
+    textarea {
+      font: inherit;
+    }
+
+    button {
+      min-height: 36px;
+      border: 0;
+      border-radius: 999px;
+      padding: 0 14px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 180ms ease, border-color 180ms ease, color 180ms ease, box-shadow 180ms ease, transform 120ms ease;
+    }
+
+    button:focus-visible,
+    input:focus-visible,
+    textarea:focus-visible {
+      outline: 3px solid rgba(17, 116, 95, 0.18);
+      outline-offset: 2px;
+    }
+
+    button:active {
+      transform: translateY(1px);
+    }
+
+    .primary {
+      background: var(--accent);
+      color: #fff;
+      box-shadow: 0 10px 24px rgba(15, 111, 93, 0.18);
+    }
+
+    .primary:hover {
+      background: var(--accent-strong);
+      box-shadow: 0 14px 30px rgba(8, 76, 65, 0.22);
+    }
+
+    .secondary {
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.66);
+      color: var(--ink);
+    }
+
+    .secondary:hover,
+    .segmented button:hover,
+    .brain-nav button:hover {
+      border-color: var(--line-strong);
+      background: var(--panel-soft);
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: 216px minmax(0, 1fr);
+      gap: 14px;
+      width: min(1500px, calc(100vw - 24px));
+      height: calc(100dvh - 32px);
+      max-height: calc(100dvh - 32px);
+      margin: 0 auto;
+      padding: 16px 0;
+      overflow: hidden;
+    }
+
+    .workspace.inspector-open {
+      grid-template-columns: 216px minmax(0, 1fr) 340px;
+    }
+
+    .control-panel,
+    .decision-panel,
+    .answer-detail {
+      min-height: 0;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--panel);
+      box-shadow: var(--shadow-float);
+      backdrop-filter: blur(18px);
+    }
+
+    .control-panel,
+    .answer-detail {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .control-panel {
+      overflow-y: auto;
+      box-shadow: 0 10px 26px rgba(81, 91, 73, 0.06);
+    }
+
+    .compact-status .brand,
+    .compact-status .panel-block {
+      padding: 14px;
+    }
+
+    .compact-status h1 {
+      font-size: 18px;
+      line-height: 1.28;
+    }
+
+    .compact-status .panel-disclosure {
+      display: none;
+    }
+
+    .compact-status .hint {
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .status-rail {
+      gap: 9px;
+      background: rgba(255, 253, 248, 0.36);
+    }
+
+    .status-rail .panel-title {
+      display: grid;
+      gap: 4px;
+    }
+
+    .decision-panel {
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+      overflow: hidden;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(255, 253, 248, 0.9)),
+        var(--panel);
+    }
+
+    .inspector-panel {
+      display: none;
+    }
+
+    .workspace.inspector-open .inspector-panel {
+      display: flex;
+    }
+
+    .brand,
+    .panel-block,
+    .detail-head,
+    .detail-body {
+      padding: 16px;
+    }
+
+    .brand {
+      display: grid;
+      gap: 10px;
+      background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.66), rgba(237, 244, 238, 0.72)),
+        var(--surface-glow);
+    }
+
+    .brand-row {
+      display: flex;
+      align-items: start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .status-close {
+      display: none;
+    }
+
+    .brand,
+    .panel-block,
+    .detail-head {
+      border-bottom: 1px solid var(--line);
+    }
+
+    h1,
+    h2,
+    h3,
+    h4,
+    p {
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 24px;
+      line-height: 1.25;
+      font-weight: 720;
+    }
+
+    h2 {
+      font-size: 20px;
+      line-height: 1.3;
+      font-weight: 700;
+    }
+
+    h3 {
+      font-size: 14px;
+      line-height: 1.35;
+    }
+
+    h4 {
+      font-size: 12px;
+      line-height: 1.35;
+      color: var(--muted);
+    }
+
+    .hint {
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .panel-block {
+      display: grid;
+      gap: 10px;
+    }
+
+    .knowledge-status {
+      background: rgba(255, 253, 248, 0.44);
+    }
+
+    .team-nav {
+      display: grid;
+      gap: 6px;
+    }
+
+    .team-nav button {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 38px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--ink);
+      padding: 0 10px;
+      text-align: left;
+      font-size: 13px;
+    }
+
+    .team-nav button::after {
+      content: "›";
+      color: var(--muted);
+      font-size: 18px;
+      font-weight: 300;
+    }
+
+    .team-nav button:hover,
+    .team-nav button.active {
+      border-color: var(--line);
+      background: rgba(255, 255, 255, 0.64);
+      color: var(--accent-strong);
+    }
+
+    .panel-disclosure {
+      display: grid;
+      gap: 10px;
+      border-bottom: 1px solid var(--line);
+      padding: 0;
+    }
+
+    .panel-disclosure summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 48px;
+      padding: 0 16px;
+      color: var(--ink);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 650;
+      list-style: none;
+    }
+
+    .panel-disclosure summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .panel-disclosure summary::after {
+      content: "+";
+      color: var(--muted);
+      font-size: 16px;
+      font-weight: 400;
+    }
+
+    .panel-disclosure[open] summary::after {
+      content: "-";
+    }
+
+    .panel-disclosure-body {
+      display: grid;
+      gap: 10px;
+      padding: 0 16px 16px;
+    }
+
+    .panel-title {
+      display: flex;
+      align-items: start;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    input,
+    textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--ink);
+      outline: none;
+    }
+
+    input {
+      min-height: 40px;
+      padding: 0 11px;
+    }
+
+    textarea {
+      min-height: 58px;
+      max-height: 160px;
+      resize: vertical;
+      padding: 12px;
+      line-height: 1.5;
+    }
+
+    .status {
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(237, 244, 238, 0.72);
+      color: var(--muted);
+      padding: 9px 11px;
+      font-size: 12px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+
+    .status.ok {
+      border-color: rgba(17, 116, 95, 0.25);
+      color: var(--accent-strong);
+      background: var(--accent-soft);
+    }
+
+    .status.error {
+      border-color: rgba(157, 56, 46, 0.25);
+      background: #fff4f1;
+      color: var(--danger);
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255, 253, 248, 0.74);
+      padding: 10px;
+      box-shadow: 0 10px 24px rgba(81, 91, 73, 0.06);
+    }
+
+    .metric strong {
+      display: block;
+      font-size: 18px;
+      line-height: 1.2;
+    }
+
+    .metric span {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .daily-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .daily-grid label:first-child,
+    .daily-grid label:nth-child(2) {
+      grid-column: span 2;
+    }
+
+    .review-list {
+      display: grid;
+      gap: 8px;
+      max-height: 210px;
+      overflow: auto;
+      padding-right: 3px;
+    }
+
+    .review-task {
+      display: grid;
+      gap: 6px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255, 253, 248, 0.78);
+      padding: 10px;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .review-task b {
+      font-size: 13px;
+    }
+
+    .operating-issue-board {
+      display: grid;
+      gap: 12px;
+      width: min(920px, 100%);
+      border: 1px solid rgba(17, 116, 95, 0.16);
+      border-radius: 18px;
+      background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.82), rgba(237, 244, 238, 0.62)),
+        var(--panel-solid);
+      padding: 16px;
+      box-shadow: 0 16px 38px rgba(81, 91, 73, 0.1);
+    }
+
+    .issue-board-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: start;
+    }
+
+    .issue-taxonomy,
+    .issue-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .issue-list {
+      display: grid;
+    }
+
+    .issue-item {
+      display: grid;
+      gap: 6px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255, 253, 248, 0.82);
+      padding: 12px;
+      line-height: 1.45;
+    }
+
+    .issue-item strong {
+      font-size: 14px;
+      line-height: 1.35;
+    }
+
+    .review-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 2px;
+    }
+
+    .review-actions button {
+      min-height: 30px;
+      font-size: 12px;
+    }
+
+    .muted-line {
+      color: var(--muted);
+      overflow-wrap: anywhere;
+    }
+
+    code {
+      overflow-wrap: anywhere;
+      color: #39443e;
+      font-size: 12px;
+    }
+
+    .decision-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 68px;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+      background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.62), rgba(247, 238, 241, 0.48)),
+        var(--surface-glow);
+    }
+
+    .decision-title {
+      min-width: 0;
+    }
+
+    .head-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .mobile-actions {
+      display: none;
+      gap: 8px;
+    }
+
+    .icon-button {
+      min-width: 36px;
+      padding: 0 11px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.64);
+      color: var(--ink);
+    }
+
+    .icon-button:hover,
+    .panel-disclosure summary:hover {
+      border-color: var(--line-strong);
+      background: var(--panel-soft);
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 0 10px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+      background: rgba(255, 255, 255, 0.56);
+    }
+
+    .pill.strong {
+      border-color: rgba(17, 116, 95, 0.28);
+      background: var(--accent-soft);
+      color: var(--accent-strong);
+    }
+
+    .brain-nav {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin: 10px 0 0;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.58);
+      box-shadow: 0 14px 34px rgba(81, 91, 73, 0.08);
+      backdrop-filter: blur(18px);
+    }
+
+    .task-prompt {
+      display: grid;
+      gap: 8px;
+      margin: 12px 18px 0;
+      padding: 14px;
+      border: 1px solid rgba(17, 116, 95, 0.16);
+      border-radius: 18px;
+      background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.76), rgba(237, 244, 238, 0.52)),
+        rgba(255, 255, 255, 0.58);
+      box-shadow: 0 12px 30px rgba(81, 91, 73, 0.08);
+    }
+
+    .task-prompt-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .task-prompt .hint {
+      margin-top: 3px;
+    }
+
+    .brain-nav button {
+      display: grid;
+      gap: 5px;
+      align-content: start;
+      min-height: 86px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--ink);
+      padding: 12px;
+      text-align: left;
+      font-size: 13px;
+      white-space: normal;
+      line-height: 1.35;
+    }
+
+    .brain-nav strong {
+      font-size: 13px;
+      line-height: 1.3;
+    }
+
+    .brain-nav span {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .brain-nav button.active {
+      border-color: rgba(17, 116, 95, 0.3);
+      background: var(--accent-soft);
+      color: var(--accent-strong);
+    }
+
+    .segmented {
+      display: none;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 10px 18px 0;
+      padding: 8px;
+      border-bottom: 1px solid var(--line);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.54);
+      backdrop-filter: blur(18px);
+    }
+
+    .segmented button {
+      min-height: 32px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .segmented button.active {
+      border-color: rgba(17, 116, 95, 0.35);
+      background: var(--accent-soft);
+      color: var(--accent-strong);
+    }
+
+    .messages {
+      display: grid;
+      align-content: start;
+      gap: 14px;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 18px;
+      background:
+        radial-gradient(circle at 0% 10%, rgba(247, 238, 241, 0.5), transparent 32%),
+        linear-gradient(#fffdf8, #f7f4ee);
+    }
+
+    .msg {
+      width: min(860px, 100%);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.78);
+      padding: 16px;
+      line-height: 1.62;
+      white-space: normal;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
+    }
+
+    .msg.user {
+      justify-self: end;
+      width: auto;
+      max-width: min(620px, 88%);
+      border-color: rgba(17, 116, 95, 0.24);
+      background: rgba(227, 241, 235, 0.86);
+    }
+
+    .msg.assistant {
+      justify-self: stretch;
+    }
+
+    .welcome {
+      display: grid;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .answer-card {
+      display: grid;
+      gap: 10px;
+    }
+
+    .answer-main {
+      display: grid;
+      gap: 8px;
+    }
+
+    .answer-main p {
+      margin: 0;
+      color: var(--ink);
+      font-size: 15px;
+      line-height: 1.78;
+    }
+
+    .answer-foot {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-start;
+      border-top: 1px solid var(--line);
+      padding-top: 8px;
+    }
+
+    .answer-foot button {
+      min-height: 30px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      padding: 0 2px;
+      font-size: 12px;
+    }
+
+    .answer-foot button:hover {
+      color: var(--accent-strong);
+    }
+
+    .training-coach-card {
+      display: grid;
+      gap: 12px;
+    }
+
+    .training-coach-head {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 14px;
+      align-items: center;
+      border-radius: 16px;
+      background:
+        linear-gradient(135deg, rgba(227, 241, 235, 0.92), rgba(255, 253, 248, 0.82));
+      padding: 14px;
+    }
+
+    .training-score {
+      display: grid;
+      place-items: center;
+      width: 72px;
+      height: 72px;
+      border: 1px solid rgba(17, 116, 95, 0.24);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.76);
+      color: var(--accent-strong);
+      font-size: 28px;
+      font-weight: 760;
+      line-height: 1;
+    }
+
+    .training-score span {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .training-coach-title {
+      display: grid;
+      gap: 5px;
+    }
+
+    .training-coach-title strong {
+      font-size: 16px;
+      line-height: 1.35;
+    }
+
+    .training-coach-title p {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .training-coach-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+      gap: 10px;
+    }
+
+    .training-coach-panel {
+      display: grid;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.68);
+      padding: 12px;
+    }
+
+    .training-coach-panel strong {
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .training-coach-panel p,
+    .training-coach-panel li {
+      color: var(--ink);
+      font-size: 14px;
+      line-height: 1.62;
+    }
+
+    .training-coach-panel ul {
+      display: grid;
+      gap: 6px;
+      margin: 0;
+      padding-left: 18px;
+    }
+
+    .training-next {
+      border-color: rgba(17, 116, 95, 0.22);
+      background: rgba(237, 244, 238, 0.66);
+    }
+
+    .daily-diagnosis-card {
+      display: grid;
+      gap: 12px;
+    }
+
+    .daily-diagnosis-head {
+      display: grid;
+      gap: 8px;
+      border-radius: 16px;
+      background:
+        linear-gradient(135deg, rgba(227, 241, 235, 0.9), rgba(255, 253, 248, 0.82));
+      padding: 14px;
+    }
+
+    .daily-diagnosis-head strong {
+      font-size: 16px;
+      line-height: 1.45;
+    }
+
+    .daily-diagnosis-head p {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    @media (max-width: 780px) {
+      .training-coach-grid,
+      .training-coach-head {
+        grid-template-columns: 1fr;
+      }
+
+      .training-score {
+        width: 64px;
+        height: 64px;
+      }
+    }
+
+    .answer-meta,
+    .feedback,
+    .card-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .answer-section {
+      display: grid;
+      gap: 7px;
+      border-top: 1px solid var(--line);
+      padding-top: 10px;
+    }
+
+    .answer-section:first-child,
+    .answer-meta + .answer-section {
+      border-top: 0;
+      padding-top: 0;
+    }
+
+    .answer-lead {
+      border-radius: 16px;
+      background:
+        linear-gradient(135deg, rgba(237, 244, 238, 0.9), rgba(255, 253, 248, 0.78));
+      padding: 14px;
+    }
+
+    .answer-lead p {
+      font-size: 15px;
+      line-height: 1.75;
+    }
+
+    .answer-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .answer-note {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.72);
+      padding: 12px;
+    }
+
+    .answer-note p,
+    .answer-section p,
+    .answer-section li,
+    .detail-body p,
+    .detail-body li {
+      color: var(--ink);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .action-list {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .action-list li {
+      display: grid;
+      grid-template-columns: 22px 1fr;
+      gap: 8px;
+      align-items: start;
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    .action-index {
+      display: inline-grid;
+      place-items: center;
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      background: var(--soft);
+      color: var(--accent-strong);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .internal-review {
+      border-top: 1px solid var(--line);
+      padding-top: 10px;
+    }
+
+    .internal-review summary {
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .internal-review summary:hover {
+      color: var(--accent-strong);
+    }
+
+    .internal-grid {
+      display: grid;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .internal-block {
+      display: grid;
+      gap: 6px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(251, 248, 242, 0.78);
+      padding: 10px;
+    }
+
+    .internal-block ul,
+    .detail-body ul {
+      display: grid;
+      gap: 5px;
+      margin: 0;
+      padding-left: 18px;
+    }
+
+    .source {
+      border-top: 1px solid var(--line);
+      padding-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+
+    .source:first-child {
+      border-top: 0;
+      padding-top: 0;
+    }
+
+    .feedback button,
+    .card-actions button {
+      min-height: 32px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.66);
+      color: var(--ink);
+      font-size: 12px;
+    }
+
+    .feedback-form {
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .feedback-form textarea {
+      min-height: 84px;
+      max-height: 140px;
+    }
+
+    .feedback button.primary,
+    .card-actions button.primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .feedback button:disabled,
+    .card-actions button:disabled {
+      cursor: not-allowed;
+      opacity: 0.58;
+      transform: none;
+    }
+
+    .composer {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      padding: 14px 18px;
+      border-top: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.64);
+      backdrop-filter: blur(18px);
+    }
+
+    .super-composer {
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+
+    .composer-shell {
+      display: grid;
+      gap: 10px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255, 253, 248, 0.72);
+      padding: 10px;
+      box-shadow: 0 12px 32px rgba(81, 91, 73, 0.08);
+    }
+
+    .composer-shell.is-dragging {
+      border-color: rgba(17, 116, 95, 0.42);
+      background: rgba(227, 241, 235, 0.74);
+    }
+
+    .composer-tools,
+    .composer-actions,
+    .attachment-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .composer-tools button,
+    .composer-actions button,
+    .attachment-chip {
+      min-height: 30px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.62);
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .composer-tools button.active,
+    .composer-tools button:hover,
+    .composer-actions button:hover {
+      border-color: rgba(17, 116, 95, 0.34);
+      background: var(--accent-soft);
+      color: var(--accent-strong);
+    }
+
+    .attachment-chip {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 0 10px;
+      overflow-wrap: anywhere;
+    }
+
+    .composer-main {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: end;
+    }
+
+    .composer-main textarea {
+      min-height: 74px;
+      border: 0;
+      background: transparent;
+      padding: 4px;
+      resize: none;
+    }
+
+    .composer-help {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .detail-head {
+      display: flex;
+      align-items: start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .detail-head-copy {
+      display: grid;
+      gap: 8px;
+    }
+
+    .detail-body {
+      display: grid;
+      align-content: start;
+      gap: 12px;
+      min-height: 0;
+      overflow: auto;
+    }
+
+    .detail-empty {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .detail-block {
+      display: grid;
+      gap: 7px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 12px;
+    }
+
+    .detail-block:last-child {
+      border-bottom: 0;
+      padding-bottom: 0;
+    }
+
+    .warning {
+      border-color: rgba(138, 90, 24, 0.25);
+      background: #fff8ea;
+    }
+
+    @media (max-width: 1180px) {
+      .workspace {
+        grid-template-columns: 216px minmax(0, 1fr);
+      }
+
+      .workspace.inspector-open {
+        grid-template-columns: 216px minmax(0, 1fr);
+      }
+
+      .answer-detail {
+        position: fixed;
+        top: 16px;
+        right: 12px;
+        bottom: 16px;
+        z-index: 30;
+        width: min(420px, calc(100vw - 24px));
+        box-shadow: var(--shadow-float);
+      }
+    }
+
+    @media (max-width: 820px) {
+      .workspace {
+        grid-template-columns: 1fr;
+        width: min(100vw - 18px, 760px);
+      }
+
+      .workspace.inspector-open {
+        grid-template-columns: 1fr;
+      }
+
+      .control-panel {
+        position: fixed;
+        top: 10px;
+        left: 9px;
+        bottom: 10px;
+        z-index: 28;
+        width: min(340px, calc(100vw - 18px));
+        transform: translateX(calc(-100% - 18px));
+        transition: transform 180ms ease;
+      }
+
+      .workspace.status-open .control-panel {
+        transform: translateX(0);
+      }
+
+      .decision-panel {
+        grid-template-rows: auto auto minmax(170px, 1fr) auto;
+        min-height: 0;
+      }
+
+      .decision-head {
+        align-items: start;
+        min-height: 0;
+        padding: 14px;
+      }
+
+      .task-prompt {
+        gap: 6px;
+        margin: 10px 14px 0;
+        padding: 10px;
+        border-radius: 16px;
+      }
+
+      .task-prompt-head {
+        align-items: start;
+      }
+
+      .task-prompt-head .hint {
+        display: none;
+      }
+
+      .task-prompt .pill {
+        min-height: 28px;
+      }
+
+      .decision-title .hint {
+        display: none;
+      }
+
+      .mobile-actions {
+        display: flex;
+      }
+
+      .status-close {
+        display: inline-flex;
+      }
+
+      #summaryPill {
+        display: none;
+      }
+
+      .outcome-launcher {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 6px;
+        margin: 8px 0 0;
+        overflow-x: visible;
+        border-radius: 18px;
+        padding: 6px;
+      }
+
+      .outcome-launcher button {
+        min-width: 0;
+        min-height: 48px;
+        padding: 8px;
+        border-radius: 14px;
+      }
+
+      .outcome-launcher span {
+        display: none;
+      }
+
+      .outcome-launcher strong {
+        font-size: 12px;
+        line-height: 1.25;
+      }
+
+      .segmented {
+        display: none;
+      }
+
+      .segmented button {
+        flex: 0 0 auto;
+      }
+
+      .messages {
+        min-height: 170px;
+        padding: 14px;
+      }
+
+      .operating-issue-board {
+        width: 100%;
+        gap: 10px;
+        border-radius: 16px;
+        padding: 12px;
+        box-shadow: 0 10px 24px rgba(81, 91, 73, 0.08);
+      }
+
+      .issue-board-head {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }
+
+      .issue-board-head .hint {
+        display: none;
+      }
+
+      .issue-board-head .pill {
+        justify-self: start;
+        min-height: 28px;
+        white-space: normal;
+        line-height: 1.35;
+        padding: 4px 10px;
+      }
+
+      .issue-taxonomy {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        padding-bottom: 2px;
+      }
+
+      .issue-taxonomy .pill {
+        flex: 0 0 auto;
+      }
+
+      .issue-list {
+        gap: 8px;
+      }
+
+      .issue-item {
+        gap: 4px;
+        padding: 10px;
+      }
+
+      .issue-item strong {
+        font-size: 13px;
+      }
+
+      .issue-item .muted-line {
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .answer-grid,
+      .composer,
+      .composer-main {
+        grid-template-columns: 1fr;
+      }
+
+      .composer {
+        padding: 8px 14px;
+      }
+
+      .composer-shell {
+        gap: 7px;
+        padding: 8px;
+      }
+
+      .composer-main {
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: end;
+      }
+
+      .composer-tools {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        padding-bottom: 1px;
+      }
+
+      .composer-tools button,
+      .composer-actions button,
+      .attachment-chip {
+        min-height: 28px;
+        padding: 0 11px;
+      }
+
+      .composer-main textarea {
+        min-height: 50px;
+      }
+
+      .composer-help {
+        display: none;
+      }
+
+      .answer-detail {
+        top: 10px;
+        right: 9px;
+        bottom: 10px;
+        width: min(360px, calc(100vw - 18px));
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        transition-duration: 1ms !important;
+        animation-duration: 1ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="workspace chat-first">
+    <aside class="control-panel compact-status">
+      <div class="brand">
+        <div class="brand-row">
+          <h1>荷小悦经营大脑</h1>
+          <button class="icon-button status-close" type="button" data-close-status aria-label="关闭状态栏">关闭</button>
+        </div>
+        <p class="hint">一个输入框处理问答、资料、训练和纠偏。后台状态不抢主工作区。</p>
+      </div>
+
+      <details class="panel-disclosure">
+        <summary>团队入口</summary>
+        <div class="panel-disclosure-body">
+          <p class="hint">选择团队场景。后台信息已折叠。</p>
+          <nav class="team-nav" aria-label="团队工作入口">
+            <button type="button" class="active" data-nav-scenario="经营问答" data-quick-question="荷小悦现在最需要统一的经营口径是什么？">经营问答</button>
+            <button type="button" data-nav-scenario="门店员工培训" data-quick-question="门店员工如何练习清泡调补养话术？">门店培训</button>
+            <button type="button" data-nav-scenario="招商话术" data-quick-question="招商话术怎么讲荷小悦的单店模型？">招商话术</button>
+            <button type="button" data-nav-scenario="产品体系" data-quick-question="清泡调补养产品体系怎么讲？">产品体系</button>
+            <button type="button" data-nav-scenario="SOP" data-quick-question="门店服务 SOP 需要沉淀哪些标准动作？">SOP</button>
+            <button type="button" data-nav-scenario="权威答案" data-quick-question="哪些高频问题应该沉淀为权威答案？">权威答案</button>
+            <button type="button" data-nav-scenario="资料记忆" data-quick-question="这批资料应该如何识别、分类并进入组织记忆？">资料记忆</button>
+            <button type="button" data-nav-scenario="复核任务" data-quick-question="当前哪些答案需要纠偏和复核？">复核任务</button>
+          </nav>
+        </div>
+      </details>
+
+      <div class="panel-block knowledge-status status-rail">
+        <div class="panel-title">
+          <div>
+            <h3>知识与记忆状态</h3>
+            <p class="hint">后台状态不抢主工作区。</p>
+          </div>
+        </div>
+        <div class="metric-grid">
+          <div class="metric"><strong id="assetMetric">-</strong><span>知识流入</span></div>
+          <div class="metric"><strong id="chunkMetric">-</strong><span>记忆演进</span></div>
+          <div class="metric"><strong id="reviewMetric">-</strong><span>待复核</span></div>
+        </div>
+        <div id="knowledge_quality" class="status">等待读取知识质检状态</div>
+      </div>
+
+      <details class="panel-disclosure">
+        <summary>连接</summary>
+        <div class="panel-disclosure-body">
+          <label>
+            API 地址
+            <input id="apiBase" type="url">
+          </label>
+          <button id="saveApi" class="secondary" type="button">保存并连接</button>
+          <div id="serviceStatus" class="status">等待连接</div>
+        </div>
+      </details>
+
+      <details class="panel-disclosure">
+        <summary>资料上传</summary>
+        <div class="panel-disclosure-body">
+          <label>
+            上传资料
+            <input id="fileInput" type="file">
+          </label>
+          <button id="uploadBtn" class="primary" type="button">上传到知识库 inbox</button>
+          <button id="importBtn" class="secondary" type="button">导入并质检资料</button>
+          <div id="uploadStatus" class="status">上传后点击导入，资料才会进入问答和知识质检流程。</div>
+        </div>
+      </details>
+
+      <details class="panel-disclosure">
+        <summary>门店日报</summary>
+        <div class="panel-disclosure-body">
+          <div class="panel-title">
+            <div>
+              <h3>今日经营数据</h3>
+              <p class="hint">录入关键结果，系统判断主要矛盾和今日动作。</p>
+            </div>
+          </div>
+          <div class="daily-grid">
+            <label>
+              门店
+              <input id="dailyStoreName" type="text" value="荷小悦试点店">
+            </label>
+            <label>
+              日期
+              <input id="dailyBusinessDate" type="date">
+            </label>
+            <label>
+              营业额
+              <input id="dailyRevenue" type="number" min="0" step="1" value="3800">
+            </label>
+            <label>
+              目标营业额
+              <input id="dailyTargetRevenue" type="number" min="0" step="1" value="6000">
+            </label>
+            <label>
+              客单价
+              <input id="dailyAverageTicket" type="number" min="0" step="1" value="79">
+            </label>
+            <label>
+              目标客单价
+              <input id="dailyTargetAverageTicket" type="number" min="0" step="1" value="118">
+            </label>
+            <label>
+              复购率
+              <input id="dailyRepeatRate" type="number" min="0" max="1" step="0.01" value="0.24">
+            </label>
+            <label>
+              目标复购率
+              <input id="dailyTargetRepeatRate" type="number" min="0" max="1" step="0.01" value="0.42">
+            </label>
+            <label>
+              订单数
+              <input id="dailyOrders" type="number" min="0" step="1" value="48">
+            </label>
+            <label>
+              清泡占比
+              <input id="dailyClearMix" type="number" min="0" max="1" step="0.01" value="0.68">
+            </label>
+            <label>
+              调泡占比
+              <input id="dailyTiaoMix" type="number" min="0" max="1" step="0.01" value="0.18">
+            </label>
+            <label>
+              补泡占比
+              <input id="dailyBuMix" type="number" min="0" max="1" step="0.01" value="0.09">
+            </label>
+            <label>
+              养泡占比
+              <input id="dailyYangMix" type="number" min="0" max="1" step="0.01" value="0.05">
+            </label>
+            <label>
+              复训次数
+              <input id="dailyRetrainCount" type="number" min="0" step="1" value="3">
+            </label>
+            <label>
+              投诉数
+              <input id="dailyComplaintCount" type="number" min="0" step="1" value="2">
+            </label>
+          </div>
+          <button id="diagnoseDailyMetrics" class="primary" type="button">提交诊断</button>
+          <div id="dailyMetricsStatus" class="status">提交后会生成门店主要矛盾、经营异常和今日动作。</div>
+        </div>
+      </details>
+
+      <details class="panel-disclosure">
+        <summary>品牌资产</summary>
+        <div class="panel-disclosure-body">
+          <div class="panel-title">
+            <div>
+              <h3>品牌资产中心</h3>
+              <p class="hint">开店前先做品牌资产，客户消费数据开店后再接入。</p>
+            </div>
+          </div>
+          <div id="brandAssetStatus" class="status">等待读取</div>
+          <div id="brandAssetModules" class="review-list"></div>
+          <div id="brandAssetQuestions" class="status">黄金问题待载入</div>
+          <div id="brandAnswerCardStatus" class="status">品牌答案卡待载入</div>
+          <div id="brandAnswerCards" class="review-list"></div>
+          <div id="brandAssetBuildOrder" class="review-list"></div>
+        </div>
+      </details>
+
+      <details class="panel-disclosure">
+        <summary>黄金评测</summary>
+        <div class="panel-disclosure-body">
+          <div class="panel-title">
+            <div>
+              <h3>黄金问题</h3>
+              <p class="hint">检查最高频问题是否能稳定命中权威答案。</p>
+            </div>
+            <button id="refreshGoldenEval" class="secondary" type="button">刷新</button>
+          </div>
+          <div id="goldenEvalStatus" class="status">等待读取</div>
+          <div id="goldenEvalCases" class="review-list"></div>
+        </div>
+      </details>
+
+      <details class="panel-disclosure">
+        <summary>答案卡</summary>
+        <div class="panel-disclosure-body">
+          <div class="panel-title">
+            <div>
+              <h3>权威答案卡</h3>
+              <p class="hint">团队可复用口径先走答案卡，没有再走资料检索。</p>
+            </div>
+            <button id="refreshAnswerCards" class="secondary" type="button">刷新</button>
+          </div>
+          <div id="answerCardStatus" class="status">等待读取</div>
+          <div id="answerCards" class="review-list"></div>
+        </div>
+      </details>
+
+      <details class="panel-disclosure">
+        <summary>复核任务</summary>
+        <div class="panel-disclosure-body">
+          <div class="panel-title">
+            <div>
+              <h3>待复核任务</h3>
+              <p class="hint">不准确、需完善和答案卡草稿进入这里。</p>
+            </div>
+            <button id="refreshReviews" class="secondary" type="button">刷新</button>
+          </div>
+          <div id="reviewStatus" class="status">等待读取</div>
+          <div id="reviewTasks" class="review-list"></div>
+        </div>
+      </details>
+
+      <details class="panel-disclosure">
+        <summary>资料位置</summary>
+        <div class="panel-disclosure-body">
+          <div class="hint">资料入口</div>
+          <code>/root/hxy/knowledge/raw/inbox</code>
+          <div class="hint">管理后台</div>
+          <code id="knowledgeUrl">/knowledge.html</code>
+        </div>
+      </details>
+    </aside>
+
+    <section class="decision-panel">
+      <header class="decision-head">
+        <div class="decision-title">
+          <h2>0-1 阶段先做三件事</h2>
+          <p class="hint">直接输入问题、资料、员工话术或纠偏意见。系统会自动判断任务类型，当前优先服务定位验证、清泡调补养口径和品牌资料沉淀。</p>
+        </div>
+        <div class="head-actions">
+          <div class="mobile-actions">
+            <button class="icon-button" type="button" data-toggle-status aria-label="打开状态栏">状态</button>
+            <button class="icon-button" type="button" data-toggle-inspector aria-label="打开答案详情">详情</button>
+          </div>
+          <span id="summaryPill" class="pill">读取知识库状态</span>
+        </div>
+      </header>
+
+      <section class="task-prompt">
+        <div class="task-prompt-head">
+          <div>
+            <h3>推荐先处理</h3>
+            <p class="hint">不用先选功能。点一下只是填入建议问题，AI 仍会先判断意图和证据是否足够。</p>
+          </div>
+          <span class="pill strong">先看结论</span>
+        </div>
+        <nav class="brain-nav outcome-launcher" aria-label="经营任务入口">
+          <button type="button" class="active" data-workflow="ask" data-set-mode="ask" data-set-scenario="统一口径" data-quick-question="判断荷小悦当前核爆点定位是否足够清楚：一句话定位、目标用户、替代方案、证据缺口和本周验证动作。">
+            <strong>验证核爆点定位</strong>
+            <span>问经营：判断、口径、复盘</span>
+          </button>
+          <button type="button" data-workflow="train" data-set-mode="training" data-set-scenario="门店员工培训" data-quick-question="我会先问您最近睡眠、疲劳、手脚凉和压力情况。清泡适合基础放松，调泡根据近期状态做针对性调理表达，补泡强调疲劳后的恢复感，养泡适合长期保养。我们只讲放松和状态建议，不承诺治疗效果。">
+            <strong>固化清泡调补养口径</strong>
+            <span>练员工：打分、纠错、复训任务</span>
+          </button>
+          <button type="button" data-workflow="memory" data-set-mode="upload" data-set-scenario="资料记忆" data-quick-question="把这份品牌资料整理成可复用资产：核心结论、适用场景、禁用表达、证据缺口和下一步复核任务。">
+            <strong>整理品牌资料</strong>
+            <span>传资料：上传、识别、分类、记忆</span>
+          </button>
+        </nav>
+      </section>
+
+      <div class="segmented" aria-label="回答场景">
+        <button type="button" class="active" data-scenario="统一口径">统一口径</button>
+        <button type="button" data-scenario="招商话术">招商话术</button>
+        <button type="button" data-scenario="门店复盘">门店复盘</button>
+        <button type="button" data-scenario="产品体系">产品体系</button>
+        <button type="button" data-scenario="SOP">SOP</button>
+        <button type="button" data-scenario="用户宣传">用户宣传</button>
+      </div>
+
+      <div id="messages" class="messages">
+        <div class="msg assistant">
+          <div class="welcome">
+            <div class="operating-issue-board">
+              <div class="issue-board-head">
+                <div>
+                  <h3>当前最重要的经营议题</h3>
+                  <p class="hint">聊天只是输入方式。系统把资料、纠偏、员工话术和复盘转成经营议题，再沉淀为答案卡、训练卡、SOP 或决策日志。</p>
+                </div>
+                <span id="okfLifecycleStatus" class="pill strong">OKF 生命周期读取中</span>
+              </div>
+              <div class="issue-taxonomy" aria-label="议题类型">
+                <span class="pill strong">口径冲突</span>
+                <span class="pill">证据不足</span>
+                <span class="pill">待决策</span>
+                <span class="pill">知识过期</span>
+              </div>
+              <div id="issueQueue" class="issue-list">
+                <div class="issue-item">
+                  <strong>正在读取动态经营记忆</strong>
+                  <span class="muted-line">OKF 知识底座会把生命周期异常转成待处理经营议题。</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <form id="composer" class="composer super-composer">
+        <div class="super-composer">
+        <div id="composerShell" class="composer-shell">
+          <div class="composer-tools" aria-label="输入模式">
+            <button type="button" class="active" data-mode="ask">AI 自动判断</button>
+            <button type="button" data-mode="upload">资料</button>
+            <button type="button" data-mode="correction">纠偏</button>
+            <button type="button" data-mode="training">训练</button>
+          </div>
+          <div class="composer-main">
+            <textarea id="questionInput" placeholder="输入问题、粘贴资料、员工话术或纠偏意见，系统会自动判断任务类型。"></textarea>
+            <button class="primary" type="submit">发送</button>
+          </div>
+          <div class="composer-actions">
+            <input id="chatFileInput" type="file" multiple hidden>
+            <button type="button" class="secondary" id="attachBtn">上传文件</button>
+            <span class="composer-help">支持拖图片、粘贴截图、上传项目文件；系统会自动识别问题、资料、纠偏、训练或经营任务。</span>
+          </div>
+          <div id="attachmentList" class="attachment-list" aria-live="polite"></div>
+        </div>
+        </div>
+      </form>
+    </section>
+
+    <aside class="answer-detail inspector-panel is-hidden" aria-hidden="true">
+      <div class="detail-head">
+        <div class="detail-head-copy">
+          <h3>答案详情</h3>
+          <p class="hint">Inspector 只在需要时展开：当前理解、分类、主要矛盾、缺失资料、纠偏和记忆动作都放这里。</p>
+        </div>
+        <button class="icon-button" type="button" data-close-inspector aria-label="关闭答案详情">关闭</button>
+      </div>
+      <div id="currentDetail" class="detail-body">
+        <p class="detail-empty">还没有选中答案。发送问题后，这里会显示当前理解、自动分类结果、主要矛盾、缺失资料、风险边界、纠偏任务和记忆动作。</p>
+      </div>
+    </aside>
+  </main>
+
+  <script>
+    const workspace = document.querySelector(".workspace");
+    const inspectorPanel = document.querySelector(".inspector-panel");
+    const apiInput = document.querySelector("#apiBase");
+    const serviceStatus = document.querySelector("#serviceStatus");
+    const uploadStatus = document.querySelector("#uploadStatus");
+    const messages = document.querySelector("#messages");
+    const summaryPill = document.querySelector("#summaryPill");
+    const questionInput = document.querySelector("#questionInput");
+    const goldenEvalStatus = document.querySelector("#goldenEvalStatus");
+    const goldenEvalCases = document.querySelector("#goldenEvalCases");
+    const brandAssetStatus = document.querySelector("#brandAssetStatus");
+    const brandAssetModules = document.querySelector("#brandAssetModules");
+    const brandAssetQuestions = document.querySelector("#brandAssetQuestions");
+    const brandAnswerCardStatus = document.querySelector("#brandAnswerCardStatus");
+    const brandAnswerCards = document.querySelector("#brandAnswerCards");
+    const brandAssetBuildOrder = document.querySelector("#brandAssetBuildOrder");
+    const answerCardStatus = document.querySelector("#answerCardStatus");
+    const answerCards = document.querySelector("#answerCards");
+    const reviewStatus = document.querySelector("#reviewStatus");
+    const reviewTasks = document.querySelector("#reviewTasks");
+    const okfLifecycleStatus = document.querySelector("#okfLifecycleStatus");
+    const issueQueue = document.querySelector("#issueQueue");
+    const knowledgeUrl = document.querySelector("#knowledgeUrl");
+    const dailyMetricsStatus = document.querySelector("#dailyMetricsStatus");
+    const assetMetric = document.querySelector("#assetMetric");
+    const chunkMetric = document.querySelector("#chunkMetric");
+    const reviewMetric = document.querySelector("#reviewMetric");
+    const knowledgeQuality = document.querySelector("#knowledge_quality");
+    const currentDetail = document.querySelector("#currentDetail");
+    const composerShell = document.querySelector("#composerShell");
+    const chatFileInput = document.querySelector("#chatFileInput");
+    const attachmentList = document.querySelector("#attachmentList");
+    const answerStore = new Map();
+    let selectedScenario = "统一口径";
+    let selectedMode = "ask";
+    let attachedFiles = [];
+    let activeAnswerId = "";
+
+    function defaultApiBase() {
+      return window.location.origin;
+    }
+
+    apiInput.value = localStorage.getItem("hxyBrainApiBase") || defaultApiBase();
+    knowledgeUrl.textContent = `${window.location.origin}/knowledge.html`;
+    document.querySelector("#dailyBusinessDate").value = new Date().toISOString().slice(0, 10);
+
+    function apiBase() {
+      return apiInput.value.replace(/\/+$/, "");
+    }
+
+    function formatRequestError(error, url) {
+      if (error && error.name === "TypeError") {
+        return `网络请求失败：无法连接 API 地址 ${url}。请确认 API 地址填写正确，且 hxy-knowledge-api 正在 18081 端口运行。`;
+      }
+      return error && error.message ? error.message : `请求失败：${url}`;
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    async function requestJson(path, options = {}) {
+      const url = `${apiBase()}${path}`;
+      let response;
+      try {
+        response = await fetch(url, options);
+      } catch (error) {
+        throw new Error(formatRequestError(error, url));
+      }
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(body.detail || `HTTP ${response.status}：${url}`);
+      }
+      return body;
+    }
+
+    function setStatus(node, text, type = "") {
+      node.textContent = text;
+      node.className = `status ${type}`;
+    }
+
+    function openInspector() {
+      workspace.classList.toggle("inspector-open", true);
+      workspace.classList.toggle("status-open", false);
+      inspectorPanel.classList.remove("is-hidden");
+      inspectorPanel.setAttribute("aria-hidden", "false");
+    }
+
+    function closeInspector() {
+      workspace.classList.toggle("inspector-open", false);
+      inspectorPanel.classList.add("is-hidden");
+      inspectorPanel.setAttribute("aria-hidden", "true");
+    }
+
+    function closeStatusPanel() {
+      workspace.classList.toggle("status-open", false);
+    }
+
+    function toggleStatusPanel() {
+      workspace.classList.toggle("status-open");
+      if (workspace.classList.contains("status-open")) {
+        closeInspector();
+      }
+    }
+
+    function addMessage(role, text) {
+      const item = document.createElement("div");
+      item.className = `msg ${role}`;
+      item.innerHTML = escapeHtml(text);
+      messages.appendChild(item);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    function listHtml(items) {
+      if (!items || !items.length) return `<p>无</p>`;
+      return `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+    }
+
+    function attachmentMeta() {
+      return attachedFiles.map((file) => ({
+        name: file.name,
+        type: file.type || "application/octet-stream",
+        size: file.size || 0,
+      }));
+    }
+
+    function renderAttachedFiles() {
+      if (!attachmentList) return;
+      if (!attachedFiles.length) {
+        attachmentList.innerHTML = "";
+        return;
+      }
+      attachmentList.innerHTML = attachedFiles.map((file) => `
+        <span class="attachment-chip">${escapeHtml(file.name)} · ${Math.ceil((file.size || 0) / 1024)}KB</span>
+      `).join("");
+    }
+
+    function handleComposerFiles(files) {
+      const nextFiles = Array.from(files || []);
+      if (!nextFiles.length) return;
+      attachedFiles = attachedFiles.concat(nextFiles).slice(0, 8);
+      renderAttachedFiles();
+      setStatus(serviceStatus, `已加入 ${attachedFiles.length} 个附件。发送后系统会先识别分类，再决定是否进入资料记忆。`, "ok");
+    }
+
+    function modePrefix() {
+      if (selectedMode === "upload") return "资料识别：";
+      if (selectedMode === "correction") return "纠偏：";
+      if (selectedMode === "training") return "训练：";
+      if (selectedMode === "task") return "经营任务：";
+      return "";
+    }
+
+    async function uploadAttachedFiles(input) {
+      if (!attachedFiles.length) return null;
+      return submitWorkbench(input);
+    }
+
+    async function submitWorkbench(input) {
+      const form = new FormData();
+      form.append("input", input);
+      form.append("scenario", selectedScenario);
+      form.append("role", selectedScenario === "门店员工培训" ? "门店员工" : "team");
+      attachedFiles.forEach((file) => form.append("files", file));
+      return requestJson("/api/operating-brain/workbench-submit", { method: "POST", body: form });
+    }
+
+    function actionListHtml(items) {
+      if (!items || !items.length) return `<p>暂无明确动作。</p>`;
+      return `
+        <ol class="action-list">
+          ${items.slice(0, 4).map((item, index) => `
+            <li><span class="action-index">${index + 1}</span><span>${escapeHtml(item)}</span></li>
+          `).join("")}
+        </ol>
+      `;
+    }
+
+    function resultCardFor(result) {
+      return result.result_card || {
+        result_type: result.intent || "经营判断结果卡",
+        usable_answer: result.answer || "",
+        business_result: applicableScenario(result),
+        risk_boundary: result.needs_review ? "当前结果需要人工复核后再使用。" : "用于当前场景，外部发布前按业务口径复核。",
+        quality_gates: [],
+        review_owner: "业务负责人",
+        stability_level: result.needs_review ? "review_required" : "stable",
+      };
+    }
+
+    function qualityGateListHtml(gates) {
+      if (!gates || !gates.length) return `<p>暂无质量闸口。</p>`;
+      return `
+        <ol class="action-list">
+          ${gates.map((gate, index) => `
+            <li>
+              <span class="action-index">${gate.passed ? "✓" : "!"}</span>
+              <span><b>${escapeHtml(gate.name || `闸口 ${index + 1}`)}</b><br>${escapeHtml(gate.detail || "")}</span>
+            </li>
+          `).join("")}
+        </ol>
+      `;
+    }
+
+    function feedbackStatusHtml() {
+      return `<div id="feedbackStatus" class="status">标记后会生成复核任务，团队补资料、复核口径，再更新答案卡草稿。</div>`;
+    }
+
+    function setFeedbackStatus(text, type = "") {
+      const node = document.querySelector("#feedbackStatus");
+      if (node) setStatus(node, text, type);
+    }
+
+    function renderEvidence(items) {
+      if (!items || !items.length) return `<p>暂无可引用来源。</p>`;
+      return `${items.map((source, index) => `
+        <div class="source">
+          资料 ${index + 1}<br>
+          资料标题：${escapeHtml(source.title || "已入库资料")}<br>
+          强度：${escapeHtml(source.strength || "")} · 领域：${escapeHtml(source.domain || "")} · 阶段：${escapeHtml(source.stage || "")}<br>
+          ${escapeHtml(source.excerpt || "")}
+        </div>
+      `).join("")}`;
+    }
+
+    async function workbenchIntake(input) {
+      return requestJson("/api/operating-brain/workbench-intake", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          input,
+          scenario: selectedScenario,
+          role: selectedScenario === "门店员工培训" ? "门店员工" : "team",
+          attachments: attachmentMeta(),
+        }),
+      });
+    }
+
+    async function sourceBrief(input) {
+      return requestJson("/api/operating-brain/source-brief", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question: input,
+          scenario: selectedScenario,
+          limit: 8,
+        }),
+      });
+    }
+
+    function buildSourceBriefResult(brief) {
+      const deliverables = brief.deliverables || [];
+      const findings = brief.key_findings || [];
+      const conflicts = brief.conflict_signals || [];
+      const transformations = brief.transformations || [];
+      const contextPlan = brief.context_plan || [];
+      const usable = findings[0] || "当前资料还不足以生成稳定研读结论，请先补充或导入资料。";
+      const nextActions = brief.next_actions || [];
+      return {
+        version: "hxy-source-brief-answer.v1",
+        question: brief.question || brief.query || "",
+        intent: "source_brief",
+        audience: "team",
+        scenario: brief.scenario || selectedScenario,
+        answer: usable,
+        usage: "用于资料研读：把资料转成答案卡、训练卡、招商话术或复盘动作。",
+        answer_status: conflicts.length ? "待复核" : "研读结果",
+        confidence: contextPlan.some((item) => item.context_level === "full") ? "medium" : "low",
+        needs_review: conflicts.length > 0,
+        applicable_scenarios: ["资料记忆", "统一口径", "门店员工培训", "招商话术"],
+        corrections: conflicts,
+        next_actions: nextActions,
+        evidence: [],
+        sources: [],
+        source_brief: brief,
+        result_card: {
+          result_type: "资料研读包",
+          usable_answer: `已完成资料研读。关键结论：${usable}`,
+          business_result: `可转成：${deliverables.join("、") || "答案卡"}。${conflicts.length ? "存在需复核风险。" : "可进入下一步沉淀。"}`,
+          risk_boundary: conflicts.join("；") || "研读结果需经业务负责人复核后再作为权威口径。",
+          quality_gates: [
+            {
+              name: "上下文策略",
+              passed: contextPlan.some((item) => item.context_level === "full"),
+              detail: `${contextPlan.length} 份资料已生成引用、背景、排除策略。`,
+            },
+            {
+              name: "转换模板",
+              passed: transformations.length > 0,
+              detail: transformations.map((item) => item.name).join(" / ") || "暂无转换模板。",
+            },
+            {
+              name: "冲突扫描",
+              passed: conflicts.length === 0,
+              detail: conflicts.join("；") || "未发现明显高风险冲突。",
+            },
+          ],
+          review_owner: "业务负责人",
+          stability_level: conflicts.length ? "review_required" : "candidate",
+        },
+        workbench_intake: {
+          input_type: "source_brief",
+          primary_workflow: "source_brief",
+          scenario: brief.scenario || selectedScenario,
+          team_value: ["资料研读", "资料变成果", "统一口径"],
+          next_actions: nextActions,
+          memory_action: "已把资料按研读、转换、冲突扫描三步处理，稳定结果可沉淀为答案卡、训练卡或招商话术。",
+        },
+      };
+    }
+
+    async function evaluateTraining(employeeAnswer) {
+      const result = await requestJson("/api/operating-brain/training/evaluate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          training_item: "清泡调补养门店推荐话术",
+          customer_question: "顾客问：清泡调补养有什么区别？",
+          employee_answer: employeeAnswer,
+          scenario: selectedScenario || "门店员工培训",
+          role: "门店员工",
+        }),
+      });
+      result.question = result.customer_question || "顾客问：清泡调补养有什么区别？";
+      result.workbench_intake = result.workbench_intake || {
+        input_type: "training_script",
+        primary_workflow: "training_evaluation",
+        scenario: selectedScenario || "门店员工培训",
+        team_value: ["训练团队", "统一话术", "纠偏复训"],
+        next_actions: result.next_actions || [],
+        memory_action: result.needs_retrain
+          ? "低分话术已进入复训任务。"
+          : "优秀话术已进入答案卡候选复核。",
+      };
+      return result;
+    }
+
+    function dailyNumber(id) {
+      const value = Number(document.querySelector(id).value || 0);
+      return Number.isFinite(value) ? value : 0;
+    }
+
+    function storeDailyMetricsPayload() {
+      return {
+        store_id: "pilot-store",
+        store_name: document.querySelector("#dailyStoreName").value.trim() || "荷小悦试点店",
+        business_date: document.querySelector("#dailyBusinessDate").value || new Date().toISOString().slice(0, 10),
+        revenue: dailyNumber("#dailyRevenue"),
+        target_revenue: dailyNumber("#dailyTargetRevenue"),
+        orders: Math.round(dailyNumber("#dailyOrders")),
+        average_ticket: dailyNumber("#dailyAverageTicket"),
+        target_average_ticket: dailyNumber("#dailyTargetAverageTicket"),
+        repeat_rate: dailyNumber("#dailyRepeatRate"),
+        target_repeat_rate: dailyNumber("#dailyTargetRepeatRate"),
+        product_mix: {
+          "清泡": dailyNumber("#dailyClearMix"),
+          "调泡": dailyNumber("#dailyTiaoMix"),
+          "补泡": dailyNumber("#dailyBuMix"),
+          "养泡": dailyNumber("#dailyYangMix"),
+        },
+        training_retrain_count: Math.round(dailyNumber("#dailyRetrainCount")),
+        customer_complaints: Math.round(dailyNumber("#dailyComplaintCount")),
+      };
+    }
+
+    function normalizeStoreDailyDiagnosis(result, payload) {
+      const anomalies = result.anomalies || [];
+      const highRiskCount = anomalies.filter((item) => item.severity === "high").length;
+      return {
+        ...result,
+        question: `${payload.store_name} ${payload.business_date} 门店日报`,
+        intent: "operations",
+        audience: "store_manager",
+        scenario: "门店复盘",
+        answer: result.main_conflict || result.summary || "",
+        next_actions: result.today_actions || [],
+        corrections: anomalies.map((item) => `${item.title}：${item.action_hint}`),
+        result_card: {
+          result_type: "门店经营诊断",
+          usable_answer: result.main_conflict || result.summary || "",
+          business_result: result.summary || "",
+          risk_boundary: result.should_create_issue
+            ? "已触发经营议题候选，店长需要当天复盘并回填执行结果。"
+            : "当前只作为日报观察，不升级为经营议题。",
+          quality_gates: [
+            {
+              name: "经营异常识别",
+              passed: anomalies.length > 0,
+              detail: `${anomalies.length} 个异常，${highRiskCount} 个高风险。`,
+            },
+            {
+              name: "主要矛盾",
+              passed: Boolean(result.main_conflict),
+              detail: result.main_conflict || "未识别到明确主要矛盾。",
+            },
+            {
+              name: "今日动作",
+              passed: (result.today_actions || []).length >= 3,
+              detail: `已生成 ${(result.today_actions || []).length} 个当天动作。`,
+            },
+          ],
+          review_owner: result.owner || "店长",
+          stability_level: result.should_create_issue ? "active_issue" : "daily_watch",
+        },
+        workbench_intake: {
+          input_type: "operating_task",
+          primary_workflow: "execute",
+          scenario: "门店复盘",
+          team_value: ["门店日报", "异常诊断", "今日动作"],
+          next_actions: result.today_actions || [],
+          memory_action: "日报结果已进入本地经营指标表，可用于后续门店复盘和异常追踪。",
+        },
+      };
+    }
+
+    async function diagnoseStoreDailyMetrics() {
+      const payload = storeDailyMetricsPayload();
+      try {
+        setStatus(dailyMetricsStatus, "正在诊断今日经营数据...");
+        addMessage("user", `门店日报：${payload.store_name} ${payload.business_date}\n营业额 ${payload.revenue}/${payload.target_revenue}，客单价 ${payload.average_ticket}/${payload.target_average_ticket}，清泡占比 ${payload.product_mix["清泡"]}`);
+        const result = await requestJson("/api/operating-brain/store-daily-metrics", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const normalized = normalizeStoreDailyDiagnosis(result, payload);
+        addAnswer(normalized);
+        setStatus(dailyMetricsStatus, `${result.priority === "high" ? "高优先级" : "已完成"}：${result.main_conflict}`, result.priority === "high" ? "error" : "ok");
+      } catch (error) {
+        setStatus(dailyMetricsStatus, error.message, "error");
+      }
+    }
+
+    function normalizeQuestionPattern(question) {
+      return String(question || "")
+        .replace(/[，。！？?；;：:、（）()\[\]【】"“”‘’']/g, "")
+        .replace(/\s+/g, "")
+        .trim();
+    }
+
+    function scenarioHint(result) {
+      if (result.usage) return result.usage;
+      const intent = result.intent || "unknown";
+      if (selectedScenario === "招商话术") return "用于招商沟通时，先讲确定性，再讲收益、风险和反对意见。";
+      if (selectedScenario === "门店员工培训") return "用于门店培训时，改写成标准话术、服务动作和禁用表达。";
+      if (selectedScenario === "用户宣传" || selectedScenario === "用户端宣传") return "用于用户宣传时，只保留能外讲、好理解、不过度承诺的表达。";
+      if (intent === "brand_positioning") return "用于内部决策时，先统一一句话定位，再拆分外部话术和内部经营判断。";
+      if (intent === "product_system") return "用于产品工作时，沉淀结构、适用人群、价格带和复购逻辑。";
+      return "用于经营决策时，先固化结论，再分配复核和沉淀动作。";
+    }
+
+    function applicableScenario(result) {
+      if (result.applicable_scenarios && result.applicable_scenarios.length) {
+        return result.applicable_scenarios.join(" · ");
+      }
+      const audience = result.audience || "general";
+      return `${selectedScenario} · ${audience}`;
+    }
+
+    function answerStatus(result) {
+      if (result.answer_status) return result.answer_status;
+      if (result.from_answer_card) return "已批准";
+      if (result.needs_review) return "待复核";
+      return "AI 草稿";
+    }
+
+    function renderTrainingCoachCard(result) {
+      const failedDimensions = (result.dimensions || []).filter((dimension) => !dimension.passed);
+      const correctionPoints = result.correction_points && result.correction_points.length
+        ? result.correction_points
+        : failedDimensions.map((dimension) => dimension.detail).filter(Boolean);
+      const standardScript = ((result.correction_package || {}).answer_card_draft || result.answer_card_draft || {}).answer
+        || "先问顾客最近睡眠、疲劳、手脚凉和压力状态。清泡讲基础放松，调泡讲根据近期状态做针对性调理表达，补泡讲疲劳后的恢复感，养泡讲长期保养。只讲放松、体验和状态建议，不承诺治疗效果。";
+      const nextPractice = (result.follow_up_questions || [])[0]
+        || "顾客问：清泡调补养有什么区别？请用 30 秒重新回答，先问状态，再推荐。";
+      const levelText = result.level === "excellent"
+        ? "优秀，可沉淀"
+        : result.level === "pass"
+        ? "通过，继续打磨"
+        : "需要复训";
+      return `
+        <div class="training-coach-card">
+          <div class="training-coach-head">
+            <div class="training-score">${escapeHtml(result.score ?? "-")}<span>分</span></div>
+            <div class="training-coach-title">
+              <strong>${escapeHtml(levelText)}</strong>
+              <p>${escapeHtml(result.needs_retrain ? "这段话术现在不能给员工直接使用，先按下面版本重练。" : "这段话术结构可用，复核后可沉淀为标准答案卡。")}</p>
+            </div>
+          </div>
+          <div class="training-coach-grid">
+            <div class="training-coach-panel">
+              <strong>关键错误</strong>
+              ${listHtml(correctionPoints.slice(0, 3))}
+            </div>
+            <div class="training-coach-panel">
+              <strong>改成这样说</strong>
+              <p>${escapeHtml(standardScript)}</p>
+            </div>
+          </div>
+          <div class="training-coach-panel training-next">
+            <strong>下一轮练习</strong>
+            <p>${escapeHtml(nextPractice)}</p>
+          </div>
+          <div class="answer-foot">
+            <button type="button" data-show-detail="1">详情</button>
+            <button type="button" data-rating="needs_work">纠偏</button>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderStoreDailyDiagnosisCard(result) {
+      const actions = result.today_actions || result.next_actions || [];
+      return `
+        <div class="daily-diagnosis-card">
+          <div class="daily-diagnosis-head">
+            <span class="pill strong">${escapeHtml(result.priority === "high" ? "高优先级" : "门店日报")}</span>
+            <strong>主要矛盾：${escapeHtml(result.main_conflict || result.summary || "")}</strong>
+            <p>${escapeHtml(result.summary || "已完成今日经营诊断。")}</p>
+          </div>
+          <div class="training-coach-panel training-next">
+            <strong>今日动作</strong>
+            ${actionListHtml(actions)}
+          </div>
+          <div class="answer-foot">
+            <button type="button" data-show-detail="1">详情</button>
+            <button type="button" data-rating="needs_work">纠偏</button>
+          </div>
+        </div>
+      `;
+    }
+
+    function scrollTrainingResultIntoView(item) {
+      requestAnimationFrame(() => {
+        const top = Math.max(0, item.offsetTop - messages.offsetTop - 8);
+        messages.scrollTop = top;
+      });
+    }
+
+    function addAnswer(result) {
+      const item = document.createElement("div");
+      item.className = "msg assistant";
+      const answerKey = result.answer_id || result.card_id || `local-${Date.now()}`;
+      const resultCard = resultCardFor(result);
+      activeAnswerId = answerKey;
+      answerStore.set(answerKey, result);
+      item.dataset.answerId = answerKey;
+      item.dataset.question = result.question || "";
+      if (result.version === "hxy-training-evaluation.v1") {
+        item.innerHTML = renderTrainingCoachCard(result);
+      } else if (result.version === "hxy-store-daily-diagnosis.v1") {
+        item.innerHTML = renderStoreDailyDiagnosisCard(result);
+      } else {
+        item.innerHTML = `
+          <div class="answer-card">
+            <div class="answer-main">
+              <p>${escapeHtml(resultCard.usable_answer || result.answer || resultCard.business_result || "")}</p>
+            </div>
+            <div class="answer-foot">
+              <button type="button" data-show-detail="1">详情</button>
+              <button type="button" data-rating="needs_work">纠偏</button>
+            </div>
+          </div>
+        `;
+      }
+      messages.appendChild(item);
+      updateCurrentDetail(answerKey, result);
+      if (result.version === "hxy-training-evaluation.v1") {
+        scrollTrainingResultIntoView(item);
+      } else {
+        messages.scrollTop = messages.scrollHeight;
+      }
+    }
+
+    function renderSourceBriefDetail(brief) {
+      if (!brief) return "";
+      const patternLabels = {
+        ask: "自动研读",
+        transformations: "资料转成果",
+        context_control: "上下文控制",
+      };
+      return `
+        <div class="detail-block">
+          <h3>资料研读能力</h3>
+          ${listHtml((brief.open_notebook_patterns || []).map((item) => `${patternLabels[item.key] || item.key}：${item.adaptation}`))}
+        </div>
+        <div class="detail-block">
+          <h3>上下文策略</h3>
+          ${listHtml((brief.context_plan || []).map((item) => `${escapePlainSource(item.source)} · ${contextLevelLabel(item.context_level)} · ${domainLabel(item.domain)} · ${stageLabel(item.stage)} · ${item.reason}`))}
+        </div>
+        <div class="detail-block">
+          <h3>转换模板</h3>
+          ${listHtml((brief.transformations || []).map((item) => `${item.name}：${item.output}`))}
+        </div>
+        <div class="detail-block">
+          <h3>资料冲突</h3>
+          ${listHtml(brief.conflict_signals || [])}
+        </div>
+      `;
+    }
+
+    function escapePlainSource(value) {
+      return value && value !== "Desktop" ? value : "已入库资料";
+    }
+
+    function contextLevelLabel(value) {
+      return {
+        full: "可完整引用",
+        summary: "只作背景",
+        exclude: "不进入默认回答",
+      }[value] || "待判断";
+    }
+
+    function domainLabel(value) {
+      return {
+        product: "产品体系",
+        brand: "品牌定位",
+        store_model: "门店模型",
+        operations: "门店运营",
+        franchise: "招商加盟",
+        finance: "经营测算",
+        competitor: "竞品资料",
+        external: "外部资料",
+      }[value] || "未分类资料";
+    }
+
+    function stageLabel(value) {
+      return {
+        approved: "已批准",
+        final: "定稿",
+        production: "执行中",
+        pilot: "试点",
+        draft: "草稿",
+        preparation: "待整理",
+      }[value] || "待确认";
+    }
+
+    function workflowLabel(value) {
+      return {
+        ask: "问经营",
+        source_brief: "资料研读",
+        training_evaluation: "训练评估",
+        train: "练员工",
+        ingest: "资料记忆",
+        correct: "纠偏复核",
+        execute: "经营任务",
+      }[value] || "问经营";
+    }
+
+    function inputTypeLabel(value) {
+      return {
+        question: "问题",
+        source_brief: "资料研读",
+        training_script: "员工话术",
+        knowledge_intake: "资料输入",
+        correction: "纠偏反馈",
+        task: "经营任务",
+      }[value] || "问题";
+    }
+
+    function detailPillsHtml(primaryLabel, secondaryLabel) {
+      const secondary = secondaryLabel && secondaryLabel !== primaryLabel
+        ? `<span class="pill">${escapeHtml(secondaryLabel)}</span>`
+        : "";
+      return `
+        <div class="answer-meta">
+          <span class="pill strong">${escapeHtml(primaryLabel)}</span>
+          ${secondary}
+        </div>
+      `;
+    }
+
+    function updateCurrentDetail(answerKey, result) {
+      const resultCard = resultCardFor(result);
+      const intake = result.workbench_intake || {};
+      const memoryResult = intake.memory_result || {};
+      const currentWorkflowLabel = workflowLabel(intake.primary_workflow);
+      const currentInputTypeLabel = inputTypeLabel(intake.input_type);
+      currentDetail.innerHTML = `
+        <div class="detail-block">
+          ${detailPillsHtml(currentWorkflowLabel, currentInputTypeLabel)}
+          <h3>当前理解</h3>
+          <p>${escapeHtml((intake.team_value || []).join(" · ") || "先作为经营问答处理。")}</p>
+        </div>
+        <div class="detail-block">
+          <h3>自动分类结果</h3>
+          <p>输入类型：${escapeHtml(currentInputTypeLabel)} · 工作流：${escapeHtml(currentWorkflowLabel)} · 场景：${escapeHtml(intake.scenario || selectedScenario)}</p>
+        </div>
+        <div class="detail-block">
+          <h3>主要矛盾</h3>
+          <p>${escapeHtml((((result.understanding || {}).depth || {}).D5_judgment || {}).main_conflict || resultCard.business_result || "等待更多业务上下文。")}</p>
+        </div>
+        <div class="detail-block">
+          <h3>缺失资料</h3>
+          ${listHtml((intake.next_actions || []).slice(0, 3))}
+        </div>
+        <div class="detail-block">
+          <div class="answer-meta">
+            <span class="pill strong">${escapeHtml(resultCard.result_type || "经营结果卡")}</span>
+            <span class="pill">${escapeHtml(answerStatus(result))}</span>
+          </div>
+          <h3>默认简洁回答</h3>
+          <p>${escapeHtml(resultCard.business_result || "")}</p>
+        </div>
+        ${result.answer_pipeline && result.answer_pipeline.loop_contract ? `
+          <div class="detail-block">
+            <h3>Loop Contract</h3>
+            <div class="internal-grid">
+              <div class="internal-block">
+                <h4>目标</h4>
+                <p>${escapeHtml((result.answer_pipeline.loop_contract.goal || {}).text || "")}</p>
+                <p class="muted-line">${escapeHtml((result.answer_pipeline.loop_contract.goal || {}).measurable_target || "")}</p>
+              </div>
+              <div class="internal-block">
+                <h4>上下文预算</h4>
+                <p>${escapeHtml(`证据 ${result.answer_pipeline.loop_contract.context_budget.evidence_items || 0} 项 · ${result.answer_pipeline.loop_contract.context_budget.intent || ""} · ${result.answer_pipeline.loop_contract.context_budget.scenario || ""}`)}</p>
+                <p class="muted-line">${escapeHtml(result.answer_pipeline.loop_contract.context_budget.role || "")}</p>
+              </div>
+              <div class="internal-block">
+                <h4>评估</h4>
+                <p>${escapeHtml(`${result.answer_pipeline.loop_contract.evaluation.policy_action || ""} · ${result.answer_pipeline.loop_contract.evaluation.guardrail_passed ? "通过" : "需复核"}`)}</p>
+              </div>
+              <div class="internal-block">
+                <h4>停止条件</h4>
+                <p>${escapeHtml(result.answer_pipeline.loop_contract.stop_condition.stop_reason || "")}</p>
+                <p class="muted-line">${escapeHtml(`hard limit ${result.answer_pipeline.loop_contract.stop_condition.hard_iteration_limit} · overflow ${result.answer_pipeline.loop_contract.stop_condition.context_overflow ? "yes" : "no"}`)}</p>
+              </div>
+            </div>
+          </div>
+        ` : ""}
+        <div class="detail-block">
+          <h3>可直接使用版本</h3>
+          <p>${escapeHtml(resultCard.usable_answer || result.answer || "")}</p>
+        </div>
+        ${result.source_brief ? `
+          <div class="detail-block">
+            <h3>资料研读</h3>
+            <p>已完成资料研读：上下文策略、转换模板、冲突扫描和可交付成果进入下方详情。</p>
+          </div>
+        ` : ""}
+        ${renderSourceBriefDetail(result.source_brief)}
+        ${result.anomalies ? `
+          <div class="detail-block">
+            <h3>经营异常</h3>
+            ${listHtml((result.anomalies || []).map((item) => `${item.title}：${item.detail} 下一步：${item.action_hint}`))}
+          </div>
+        ` : ""}
+        <details class="detail-block">
+          <summary>查看风险、质量和动作</summary>
+          <div class="internal-grid">
+            <div class="internal-block">
+              <h4>风险边界</h4>
+              <p>${escapeHtml(resultCard.risk_boundary || "")}</p>
+            </div>
+            <div class="internal-block">
+              <h4>质量闸口</h4>
+              ${qualityGateListHtml(resultCard.quality_gates || [])}
+            </div>
+            <div class="internal-block">
+              <h4>复核人</h4>
+              <p>${escapeHtml(resultCard.review_owner || "业务负责人")}</p>
+            </div>
+            <div class="internal-block">
+              <h4>可执行动作</h4>
+              ${actionListHtml(result.today_actions || result.next_actions || [])}
+            </div>
+          </div>
+        </details>
+        <details class="detail-block">
+          <summary>查看依据和纠偏</summary>
+          <div class="internal-grid">
+            <div class="internal-block">
+              <h4>判断依据</h4>
+              ${listHtml(result.reasoning || [])}
+            </div>
+            <div class="internal-block">
+              <h4>证据来源</h4>
+              ${renderEvidence(result.evidence || result.sources || [])}
+            </div>
+            <div class="internal-block">
+              <h4>纠偏建议</h4>
+              ${listHtml(result.corrections || [])}
+            </div>
+          </div>
+        </details>
+        <details class="detail-block">
+          <summary>查看 Answer Pipeline</summary>
+          ${renderAnswerPipeline(result.answer_pipeline || {})}
+        </details>
+        <div class="detail-block">
+          <h3>纠偏任务</h3>
+          <p>${escapeHtml((result.corrections || []).join("；") || "用户标记不准确或需完善后，会生成复核任务。")}</p>
+        </div>
+        <div class="detail-block">
+          <h3>记忆动作</h3>
+          <p>${escapeHtml(intake.memory_action || "高频稳定问题可沉淀为权威答案卡。")}</p>
+          <p>${escapeHtml(memoryResult.status ? `资料记忆：${memoryResult.status}，${memoryResult.asset_count || 0} 份资料，${memoryResult.chunk_count || 0} 个片段。` : "")}</p>
+          ${renderImageUnderstandingStatus(intake, memoryResult)}
+          <div class="card-actions">
+            <button type="button" data-detail-rating="incorrect">标记不准确</button>
+            <button type="button" class="primary" data-detail-create-card="${escapeHtml(answerKey)}"${result.from_answer_card ? " disabled" : ""}>
+              ${result.from_answer_card ? "已是权威答案" : "沉淀为权威答案"}
+            </button>
+          </div>
+          <div class="feedback-form">
+            <label>
+              哪里需要完善
+              <textarea id="improvementNote" placeholder="例如：缺少适用人群、价格口径、门店话术或权威资料。"></textarea>
+            </label>
+            <button type="button" data-detail-rating="needs_work">提交完善任务</button>
+            ${feedbackStatusHtml()}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderImageUnderstandingStatus(intake, memoryResult) {
+      const imageUnderstandings = intake.image_understandings || [];
+      const imageTasks = intake.image_understanding_tasks || [];
+      const imageUnderstandingCount = memoryResult.image_understanding_count || imageUnderstandings.length || 0;
+      const imageTaskCount = memoryResult.image_understanding_task_count || imageTasks.length || 0;
+      if (!imageUnderstandingCount && !imageTaskCount) return "";
+
+      const understoodBlocks = imageUnderstandings.slice(0, 2).map((item) => {
+        const title = item.file_name || item.relative_path || "图片资料";
+        const summary = item.business_summary || item.visual_summary || "已识别图片中的业务信息，并进入可检索记忆。";
+        const domain = domainLabel(item.business_domain || item.domain || "");
+        return `
+          <div class="internal-block">
+            <h4>${escapeHtml(title)}</h4>
+            <p>${escapeHtml(summary)}</p>
+            <p class="muted-line">${escapeHtml(domain)} · ${item.qa_ready ? "可用于问答" : "需人工确认"}</p>
+          </div>
+        `;
+      }).join("");
+
+      const taskBlocks = imageTasks.slice(0, 2).map((task) => {
+        const title = task.file_name || task.relative_path || "图片资料";
+        const reason = task.reason || "waiting_for_vision_review";
+        return `
+          <div class="internal-block">
+            <h4>${escapeHtml(title)}</h4>
+            <p>待多模态复核</p>
+            <p class="muted-line">${escapeHtml(reason)}</p>
+          </div>
+        `;
+      }).join("");
+
+      return `
+        <div class="internal-grid">
+          <div class="internal-block">
+            <h4>图片理解</h4>
+            <p>${escapeHtml(`已理解 ${imageUnderstandingCount} 张，待复核 ${imageTaskCount} 张。`)}</p>
+            <p class="muted-line">${escapeHtml(`image_understanding_count: ${imageUnderstandingCount}`)}</p>
+          </div>
+          ${understoodBlocks}
+          ${taskBlocks}
+        </div>
+      `;
+    }
+
+    function pipelineListHtml(items) {
+      if (!items || !items.length) return `<p class="muted-line">暂无</p>`;
+      return `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+    }
+
+    function renderAnswerPipeline(pipeline) {
+      if (!pipeline || !pipeline.version) {
+        return `<p class="muted-line">当前答案还没有进入受控 Answer Pipeline。</p>`;
+      }
+      const policy = pipeline.policy_decision || {};
+      const evidence = pipeline.evidence_plan || {};
+      const guardrail = pipeline.guardrail_result || {};
+      const builder = pipeline.answer_builder || {};
+      return `
+        <div class="internal-grid">
+          <div class="internal-block">
+            <h4>Policy Gate</h4>
+            <p>${escapeHtml(policy.action || "unknown")}</p>
+            ${pipelineListHtml(policy.risk_flags || [])}
+          </div>
+          <div class="internal-block">
+            <h4>Evidence Plan</h4>
+            ${pipelineListHtml(evidence.sources || [])}
+            <p class="muted-line">证据数：${escapeHtml(evidence.evidence_count ?? 0)}</p>
+          </div>
+          <div class="internal-block">
+            <h4>Guardrail</h4>
+            <p>${escapeHtml(guardrail.action || "unknown")} · ${guardrail.passed ? "通过" : "需复核"}</p>
+            ${pipelineListHtml(guardrail.findings || [])}
+          </div>
+          <div class="internal-block">
+            <h4>Evolution</h4>
+            ${pipelineListHtml(pipeline.evolution_actions || [])}
+          </div>
+          <div class="internal-block">
+            <h4>Answer Builder</h4>
+            <p>${escapeHtml(builder.answer_type || "unknown")}</p>
+          </div>
+        </div>
+      `;
+    }
+
+    async function sendFeedback(answerId, rating, question, note = "", button = null) {
+      try {
+        if (button) {
+          button.dataset.feedbackSubmitting = "1";
+          button.disabled = true;
+        }
+        setFeedbackStatus(rating === "needs_work" ? "正在生成完善任务..." : "正在记录纠偏任务...");
+        const result = await requestJson("/api/knowledge/feedback", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ answer_id: answerId, question, rating, note }),
+        });
+        if (result.review_task_id) {
+          setStatus(serviceStatus, `反馈已记录，已生成复核任务：${result.review_task_id}`, "ok");
+          const target = result.correction_package && result.correction_package.target
+            ? result.correction_package.target
+            : "补充缺失信息并更新答案卡草稿";
+          setFeedbackStatus(`已生成完善任务：${result.review_task_id}。下一步：${target}。`, "ok");
+          refreshReviewTasks();
+        } else {
+          setStatus(serviceStatus, "反馈已记录", "ok");
+          setFeedbackStatus("反馈已记录。", "ok");
+        }
+      } catch (error) {
+        setStatus(serviceStatus, error.message, "error");
+        setFeedbackStatus(error.message, "error");
+      } finally {
+        if (button) {
+          button.dataset.feedbackSubmitting = "0";
+          button.disabled = false;
+        }
+      }
+    }
+
+    async function createAnswerCard(answerId, button) {
+      const result = answerStore.get(answerId);
+      if (!result) {
+        setStatus(serviceStatus, "找不到当前答案，无法沉淀答案卡", "error");
+        return;
+      }
+      const payload = {
+        question_pattern: normalizeQuestionPattern(result.question || result.query || ""),
+        intent: result.intent || "unknown",
+        audience: result.audience || "general",
+        answer: result.answer || "",
+        reasoning: result.reasoning || [],
+        evidence: result.evidence || result.sources || [],
+        corrections: result.corrections || [],
+        next_actions: result.next_actions || [],
+        status: "approved",
+        source_answer_id: result.answer_id || null,
+      };
+      if (!payload.question_pattern || !payload.answer) {
+        setStatus(serviceStatus, "问题或答案为空，无法沉淀答案卡", "error");
+        return;
+      }
+      try {
+        if (button) button.disabled = true;
+        const created = await requestJson("/api/knowledge/answer-cards", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (button) button.textContent = "已沉淀为权威答案";
+        setStatus(serviceStatus, `已沉淀权威答案卡：${created.card_id}`, "ok");
+      } catch (error) {
+        if (button) button.disabled = false;
+        setStatus(serviceStatus, error.message, "error");
+      }
+    }
+
+    async function createDraftAnswerCardFromReview(taskId, button) {
+      const taskNode = button && button.closest(".review-task");
+      if (!taskNode) return;
+      const rawDraft = taskNode.dataset.answerCardDraft || "";
+      if (!rawDraft) {
+        setStatus(reviewStatus, "当前复核任务没有答案卡草稿", "error");
+        return;
+      }
+      let draft;
+      try {
+        draft = JSON.parse(rawDraft);
+      } catch (_error) {
+        setStatus(reviewStatus, "答案卡草稿解析失败", "error");
+        return;
+      }
+      const payload = {
+        question_pattern: draft.question_pattern || "",
+        intent: draft.intent || "unknown",
+        audience: draft.audience || "general",
+        answer: draft.answer || "待补充：请在复核后填写权威答案。",
+        reasoning: draft.reasoning || [],
+        evidence: draft.evidence || [],
+        corrections: draft.corrections || [],
+        next_actions: draft.next_actions || [],
+        status: "draft",
+        source_answer_id: draft.source_answer_id || null,
+      };
+      try {
+        if (button) button.disabled = true;
+        const created = await requestJson("/api/knowledge/answer-cards", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        setStatus(reviewStatus, `已创建答案卡草稿：${created.card_id}`, "ok");
+      } catch (error) {
+        if (button) button.disabled = false;
+        setStatus(reviewStatus, error.message, "error");
+      }
+    }
+
+    function renderReviewTasks(items) {
+      if (!items || !items.length) {
+        reviewTasks.innerHTML = `<div class="review-task"><b>暂无待复核任务</b><span class="muted-line">差评或需完善反馈会自动进入这里。</span></div>`;
+        return;
+      }
+      reviewTasks.innerHTML = items.map((task) => {
+        const payload = task.payload_json || {};
+        const correctionPackage = payload.correction_package || task.correction_package || {};
+        const answerCardDraft = correctionPackage.answer_card_draft || {};
+        const actions = correctionPackage.recommended_actions || [];
+        const draftJson = JSON.stringify(answerCardDraft);
+        return `
+          <div class="review-task" data-task-id="${escapeHtml(task.task_id || "")}" data-answer-card-draft="${escapeHtml(draftJson)}">
+            <b>${escapeHtml(task.question || "未填写问题")}</b>
+            <span class="muted-line">优先级：${escapeHtml(task.priority || "medium")} · 原因：${escapeHtml(task.reason || "")}</span>
+            <span class="muted-line">纠偏类型：${escapeHtml(correctionPackage.failure_type || "未生成")}</span>
+            <span class="muted-line">纠偏目标：${escapeHtml(correctionPackage.target || "等待人工判断")}</span>
+            <span class="muted-line">建议动作：${escapeHtml(actions.join(" / ") || "复核资料后处理")}</span>
+            <span class="muted-line">答案卡草稿：${escapeHtml(answerCardDraft.question_pattern || "")}</span>
+            <div class="review-actions">
+              <button type="button" class="secondary" data-create-draft-card="${escapeHtml(task.task_id || "")}">按草稿创建答案卡</button>
+              <button type="button" class="secondary" data-resolve-task="${escapeHtml(task.task_id || "")}">标记已处理</button>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    async function resolveReviewTask(taskId, button) {
+      if (!taskId) return;
+      try {
+        if (button) button.disabled = true;
+        await requestJson(`/api/knowledge/review-tasks/${encodeURIComponent(taskId)}/resolve`, { method: "POST" });
+        setStatus(reviewStatus, "复核任务已处理", "ok");
+        refreshReviewTasks();
+      } catch (error) {
+        if (button) button.disabled = false;
+        setStatus(reviewStatus, error.message, "error");
+      }
+    }
+
+    async function refreshReviewTasks() {
+      try {
+        const result = await requestJson("/api/knowledge/review-tasks?status=open&limit=10");
+        renderReviewTasks(result.items || []);
+        setStatus(reviewStatus, `${result.count || 0} 个待复核任务`, "ok");
+      } catch (error) {
+        reviewTasks.innerHTML = "";
+        setStatus(reviewStatus, error.message, "error");
+      }
+    }
+
+    function renderGoldenEval(result) {
+      const cases = result.cases || [];
+      if (!cases.length) {
+        goldenEvalCases.innerHTML = `<div class="review-task"><b>暂无黄金问题</b><span class="muted-line">先建立核心问题测试集。</span></div>`;
+        return;
+      }
+      goldenEvalCases.innerHTML = cases.map((item) => {
+        const dimensions = item.dimensions || [];
+        const failed = dimensions.filter((dimension) => !dimension.passed).map((dimension) => dimension.name);
+        const line = failed.length ? `未通过：${failed.join(" / ")}` : `已通过 · ${escapeHtml(item.card_version || "v1")}`;
+        return `
+          <div class="review-task">
+            <b>${escapeHtml(item.question || "未填写问题")}</b>
+            <span class="muted-line">${item.passed ? "通过" : "需复核"} · ${escapeHtml(line)}</span>
+          </div>
+        `;
+      }).join("");
+    }
+
+    async function refreshGoldenEval() {
+      try {
+        const result = await requestJson("/api/operating-brain/evals/golden");
+        renderGoldenEval(result);
+        setStatus(
+          goldenEvalStatus,
+          `黄金问题 ${result.pass_count || 0}/${result.total || 0} 通过，score ${result.score ?? 0}`,
+          result.fail_count ? "error" : "ok",
+        );
+      } catch (error) {
+        goldenEvalCases.innerHTML = "";
+        setStatus(goldenEvalStatus, error.message, "error");
+      }
+    }
+
+    function renderBrandAssets(result) {
+      const modules = result.modules || [];
+      brandAssetModules.innerHTML = modules.slice(0, 8).map((module) => `
+        <div class="review-task">
+          <b>${escapeHtml(module.name || "未命名模块")}</b>
+          <span class="muted-line">${escapeHtml(module.purpose || "")}</span>
+          <span class="muted-line">${escapeHtml((module.asset_cards || []).slice(0, 4).join(" / "))}</span>
+        </div>
+      `).join("");
+      brandAssetQuestions.textContent = `黄金问题 ${result.golden_questions ? result.golden_questions.length : 0} 个 · ${escapeHtml((result.excluded_now || []).join(" / "))}`;
+      brandAssetBuildOrder.innerHTML = (result.next_build_order || []).map((item, index) => `
+        <div class="review-task">
+          <b>${index + 1}. ${escapeHtml(item)}</b>
+        </div>
+      `).join("");
+    }
+
+    async function refreshBrandAssets() {
+      try {
+        const result = await requestJson("/api/operating-brain/brand-assets");
+        renderBrandAssets(result);
+        setStatus(brandAssetStatus, `${result.modules.length || 0} 类品牌知识模块 · ${result.stage || "pre_open_brand_first"}`, "ok");
+      } catch (error) {
+        brandAssetModules.innerHTML = "";
+        brandAssetBuildOrder.innerHTML = "";
+        setStatus(brandAssetStatus, error.message, "error");
+      }
+    }
+
+    function renderBrandAnswerCards(result) {
+      const items = result.items || [];
+      if (!items.length) {
+        brandAnswerCards.innerHTML = `<div class="review-task"><b>暂无品牌答案卡</b><span class="muted-line">先把品牌黄金问题固化成标准口径。</span></div>`;
+        return;
+      }
+      brandAnswerCards.innerHTML = items.slice(0, 5).map((card) => `
+        <div class="review-task">
+          <b>${escapeHtml(card.question_pattern || "未命名品牌答案卡")}</b>
+          <span class="muted-line">${escapeHtml(card.review_status || "待复核")} · ${escapeHtml(card.version || "v1.0")} · ${escapeHtml(card.module || card.intent || "品牌")}</span>
+        </div>
+      `).join("");
+    }
+
+    async function refreshBrandAnswerCards() {
+      try {
+        const result = await requestJson("/api/operating-brain/brand-answer-cards");
+        renderBrandAnswerCards(result);
+        setStatus(brandAnswerCardStatus, `品牌答案卡 ${result.count || 0} 张 · 已批准 v1`, "ok");
+      } catch (error) {
+        brandAnswerCards.innerHTML = "";
+        setStatus(brandAnswerCardStatus, error.message, "error");
+      }
+    }
+
+    function renderAnswerCards(items) {
+      if (!items || !items.length) {
+        answerCards.innerHTML = `<div class="review-task"><b>暂无权威答案卡</b><span class="muted-line">高频问题通过复核后会沉淀到这里。</span></div>`;
+        return;
+      }
+      answerCards.innerHTML = items.map((card) => `
+        <div class="review-task">
+          <b>${escapeHtml(card.question_pattern || "未命名答案卡")}</b>
+          <span class="muted-line">${escapeHtml(card.intent || "unknown")} · ${escapeHtml(card.version || "v1")} · ${escapeHtml(card.review_status || card.status || "待复核")}</span>
+          <span class="muted-line">${card.builtin ? "内置权威卡" : "团队沉淀卡"} · ${escapeHtml(card.source || "")}</span>
+        </div>
+      `).join("");
+    }
+
+    async function refreshAnswerCards() {
+      try {
+        const result = await requestJson("/api/knowledge/answer-cards?status=approved&limit=30");
+        renderAnswerCards(result.items || []);
+        setStatus(answerCardStatus, `${result.count || 0} 张已批准权威答案卡`, "ok");
+      } catch (error) {
+        answerCards.innerHTML = "";
+        setStatus(answerCardStatus, error.message, "error");
+      }
+    }
+
+    function formatIssuePriority(value) {
+      const labels = {
+        high: "高优先级",
+        medium: "中优先级",
+        low: "低优先级",
+      };
+      return labels[value] || "待判断";
+    }
+
+    function formatIssueDomain(value) {
+      const labels = {
+        brand_positioning: "品牌定位",
+        product_system: "产品体系",
+        training: "员工训练",
+        franchise: "招商加盟",
+        strategy: "战略判断",
+        store_model: "门店模型",
+        operations: "门店运营",
+        general: "综合经营",
+      };
+      return labels[value] || "综合经营";
+    }
+
+    function formatMemoryTarget(value) {
+      const labels = {
+        training_card: "训练卡",
+        franchise_script: "招商话术",
+        answer_card: "权威答案卡",
+        decision_log: "决策日志",
+        operating_memory: "经营记忆",
+      };
+      return labels[value] || "经营记忆";
+    }
+
+    function renderOperatingIssues(items) {
+      if (!items || !items.length) {
+        issueQueue.innerHTML = `
+          <div class="issue-item">
+            <strong>暂无待处理经营议题</strong>
+            <span class="muted-line">资料冲突、证据不足、待决策和知识过期会自动进入这里。</span>
+          </div>
+        `;
+        return;
+      }
+      issueQueue.innerHTML = items.slice(0, 5).map((issue) => `
+        <div class="issue-item">
+          <strong>${escapeHtml(issue.title || "未命名议题")}</strong>
+          <span class="muted-line">${escapeHtml(issue.issue_type || "待处理")} · ${escapeHtml(formatIssuePriority(issue.priority))} · ${escapeHtml(formatIssueDomain(issue.domain))}</span>
+          <span class="muted-line">${escapeHtml((issue.next_actions || []).join(" / ") || issue.evidence_gap || issue.conflict || "等待补充动作")}</span>
+          <span class="muted-line">沉淀方向：${escapeHtml(formatMemoryTarget(issue.memory_target))}</span>
+        </div>
+      `).join("");
+    }
+
+    async function refreshOperatingIssues() {
+      try {
+        const [summary, issues] = await Promise.all([
+          requestJson("/api/operating-brain/okf/summary"),
+          requestJson("/api/operating-brain/issues"),
+        ]);
+        okfLifecycleStatus.textContent = `OKF 生命周期：${summary.total || 0} 条 · ${summary.conflict_count || 0} 冲突 · ${summary.stale_count || 0} 过期`;
+        renderOperatingIssues(issues.items || []);
+      } catch (error) {
+        okfLifecycleStatus.textContent = "OKF 生命周期读取失败";
+        issueQueue.innerHTML = `
+          <div class="issue-item">
+            <strong>经营议题读取失败</strong>
+            <span class="muted-line">${escapeHtml(error.message)}</span>
+          </div>
+        `;
+      }
+    }
+
+    async function refreshStatus() {
+      try {
+        const [health, summary] = await Promise.all([
+          requestJson("/health"),
+          requestJson("/api/knowledge/summary"),
+        ]);
+        const assetCount = summary.asset_count || 0;
+        const chunkCount = summary.chunk_count || 0;
+        const reviewCount = summary.review_count || 0;
+        setStatus(serviceStatus, `${health.service} 已连接`, "ok");
+        assetMetric.textContent = assetCount;
+        chunkMetric.textContent = chunkCount;
+        reviewMetric.textContent = reviewCount;
+        summaryPill.textContent = `${assetCount} 资料 · ${chunkCount} 片段`;
+        setStatus(
+          knowledgeQuality,
+          `已入库 ${assetCount} 份资料，${chunkCount} 个知识片段；${reviewCount} 个问题等待纠偏复核。`,
+          "ok",
+        );
+      } catch (error) {
+        setStatus(serviceStatus, error.message, "error");
+        summaryPill.textContent = "连接失败";
+        setStatus(knowledgeQuality, "知识质检状态读取失败", "error");
+      }
+    }
+
+    async function uploadFile() {
+      const file = document.querySelector("#fileInput").files[0];
+      if (!file) {
+        setStatus(uploadStatus, "请选择文件", "error");
+        return;
+      }
+      const form = new FormData();
+      form.append("file", file);
+      try {
+        setStatus(uploadStatus, `正在连接知识库服务：${apiBase()}`, "");
+        await requestJson("/health");
+        setStatus(uploadStatus, "正在上传资料到知识库 inbox...");
+        const result = await requestJson("/api/knowledge/upload", { method: "POST", body: form });
+        setStatus(uploadStatus, `已上传：${result.relative_path}。下一步点击导入并质检。`, "ok");
+      } catch (error) {
+        setStatus(uploadStatus, formatRequestError(error, `${apiBase()}/api/knowledge/upload`), "error");
+      }
+    }
+
+    async function importKnowledge() {
+      try {
+        setStatus(uploadStatus, `正在连接知识库服务：${apiBase()}`, "");
+        await requestJson("/health");
+        setStatus(uploadStatus, "正在导入、分类、评分并生成问答片段...");
+        const result = await requestJson("/api/knowledge/import", { method: "POST" });
+        setStatus(uploadStatus, `导入完成：${result.assets} 份资料，${result.chunks} 个片段。`, "ok");
+        refreshStatus();
+        refreshOperatingIssues();
+      } catch (error) {
+        setStatus(uploadStatus, formatRequestError(error, `${apiBase()}/api/knowledge/import`), "error");
+      }
+    }
+
+    async function ask(question) {
+      const finalQuestion = `${modePrefix()}${question}`;
+      const hasAttachments = attachedFiles.length > 0;
+      const displayQuestion = selectedMode === "training"
+        ? `员工话术：${question}\n场景：门店员工培训`
+        : `${finalQuestion}\n场景：${selectedScenario}`;
+      addMessage("user", displayQuestion);
+      questionInput.value = "";
+      let intake = null;
+      try {
+        if (selectedMode === "training") {
+          const trainingInput = question.replace(/^训练[：:]/, "").trim() || question;
+          const result = await evaluateTraining(trainingInput);
+          addAnswer(result);
+          setStatus(
+            serviceStatus,
+            result.needs_retrain
+              ? `训练评分 ${result.score} 分，已生成复训任务。`
+              : `训练评分 ${result.score} 分，已提交答案卡候选复核。`,
+            result.needs_retrain ? "error" : "ok",
+          );
+          attachedFiles = [];
+          renderAttachedFiles();
+          refreshReviewTasks();
+          return;
+        }
+        if (selectedMode === "upload" && !hasAttachments) {
+          const brief = await sourceBrief(finalQuestion);
+          addAnswer(buildSourceBriefResult(brief));
+          setStatus(serviceStatus, "已生成资料研读包，可在详情中查看上下文策略和转换模板。", "ok");
+          return;
+        }
+        const submitResult = await uploadAttachedFiles(finalQuestion);
+        if (submitResult) {
+          intake = submitResult.intake || {};
+          intake.uploaded_attachments = submitResult.uploaded_files || [];
+          intake.memory_result = submitResult.memory_result || {};
+          intake.image_understandings = submitResult.image_understandings || [];
+          intake.image_understanding_tasks = submitResult.image_understanding_tasks || [];
+          setStatus(uploadStatus, submitResult.next_message || "资料已进入组织记忆流程。", "ok");
+        } else {
+          intake = await workbenchIntake(finalQuestion);
+        }
+        const result = await requestJson("/api/knowledge/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question: finalQuestion, scenario: selectedScenario, limit: 5 }),
+        });
+        result.workbench_intake = intake;
+        addAnswer(result);
+        attachedFiles = [];
+        renderAttachedFiles();
+        await requestJson("/api/operating-brain/issues/intake", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ input: finalQuestion, scenario: selectedScenario, role: "team" }),
+        });
+        refreshOperatingIssues();
+      } catch (error) {
+        addMessage("assistant", `请求失败：${error.message}`);
+      }
+    }
+
+    document.querySelector("#saveApi").addEventListener("click", () => {
+      localStorage.setItem("hxyBrainApiBase", apiBase());
+      refreshStatus();
+      refreshOperatingIssues();
+      refreshBrandAssets();
+      refreshBrandAnswerCards();
+      refreshGoldenEval();
+      refreshAnswerCards();
+      refreshReviewTasks();
+    });
+    document.querySelector("#uploadBtn").addEventListener("click", uploadFile);
+    document.querySelector("#importBtn").addEventListener("click", importKnowledge);
+    document.querySelector("#attachBtn").addEventListener("click", () => chatFileInput.click());
+    document.querySelector("#diagnoseDailyMetrics").addEventListener("click", diagnoseStoreDailyMetrics);
+    chatFileInput.addEventListener("change", () => handleComposerFiles(chatFileInput.files));
+    document.querySelector("#refreshGoldenEval").addEventListener("click", refreshGoldenEval);
+    document.querySelector("#refreshAnswerCards").addEventListener("click", refreshAnswerCards);
+    document.querySelector("#refreshReviews").addEventListener("click", refreshReviewTasks);
+    document.querySelector("#composer").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const question = questionInput.value.trim();
+      const hasAttachments = attachedFiles.length > 0;
+      const fallbackQuestion = "资料上传：请自动识别分类并进入组织记忆。";
+      if (!question && !hasAttachments) return;
+      ask(question || fallbackQuestion);
+    });
+    document.querySelector(".brain-nav").addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-quick-question]");
+      if (!button) return;
+      if (button.dataset.setMode) {
+        selectedMode = button.dataset.setMode || "ask";
+        document.querySelectorAll("button[data-mode]").forEach((item) => item.classList.toggle("active", item.dataset.mode === selectedMode));
+      }
+      if (button.dataset.setScenario) {
+        selectedScenario = button.dataset.setScenario || "统一口径";
+        document.querySelectorAll("button[data-scenario]").forEach((item) => item.classList.toggle("active", item.dataset.scenario === selectedScenario));
+        document.querySelectorAll(".team-nav button").forEach((item) => item.classList.toggle("active", item.dataset.navScenario === selectedScenario));
+      }
+      document.querySelectorAll(".brain-nav button").forEach((item) => item.classList.toggle("active", item === button));
+      questionInput.value = button.dataset.quickQuestion || "";
+      questionInput.focus();
+    });
+    document.querySelector(".team-nav").addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-nav-scenario]");
+      if (!button) return;
+      selectedScenario = button.dataset.navScenario || "统一口径";
+      document.querySelectorAll(".team-nav button").forEach((item) => item.classList.toggle("active", item === button));
+      document.querySelectorAll("button[data-scenario]").forEach((item) => item.classList.toggle("active", item.dataset.scenario === selectedScenario));
+      questionInput.value = button.dataset.quickQuestion || "";
+      questionInput.focus();
+    });
+    document.querySelector(".segmented").addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-scenario]");
+      if (!button) return;
+      selectedScenario = button.dataset.scenario || "创始人内部决策";
+      document.querySelectorAll("button[data-scenario]").forEach((item) => item.classList.toggle("active", item === button));
+    });
+    document.querySelector(".composer-tools").addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-mode]");
+      if (!button) return;
+      selectedMode = button.dataset.mode || "ask";
+      document.querySelectorAll("button[data-mode]").forEach((item) => item.classList.toggle("active", item === button));
+      questionInput.focus();
+    });
+    composerShell.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      composerShell.classList.add("is-dragging");
+    });
+    composerShell.addEventListener("dragleave", () => {
+      composerShell.classList.remove("is-dragging");
+    });
+    composerShell.addEventListener("drop", (event) => {
+      event.preventDefault();
+      composerShell.classList.remove("is-dragging");
+      handleComposerFiles(event.dataTransfer.files);
+    });
+    composerShell.addEventListener("paste", (event) => {
+      const files = Array.from(event.clipboardData && event.clipboardData.files ? event.clipboardData.files : []);
+      if (files.length) {
+        handleComposerFiles(files);
+      }
+    });
+    reviewTasks.addEventListener("click", (event) => {
+      const resolveButton = event.target.closest("button[data-resolve-task]");
+      const draftButton = event.target.closest("button[data-create-draft-card]");
+      if (draftButton) {
+        createDraftAnswerCardFromReview(draftButton.dataset.createDraftCard, draftButton);
+        return;
+      }
+      if (resolveButton) {
+        resolveReviewTask(resolveButton.dataset.resolveTask, resolveButton);
+      }
+    });
+    messages.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-rating]");
+      const createButton = event.target.closest("button[data-create-card]");
+      const detailButton = event.target.closest("button[data-show-detail]");
+      const card = event.target.closest(".msg");
+      if (!card) return;
+      if (detailButton) {
+        const result = answerStore.get(card.dataset.answerId);
+        if (result) {
+          updateCurrentDetail(card.dataset.answerId, result);
+          openInspector();
+        }
+        return;
+      }
+      if (button) {
+        sendFeedback(card.dataset.answerId, button.dataset.rating, card.dataset.question || "", "", button);
+        return;
+      }
+      if (createButton) {
+        createAnswerCard(card.dataset.answerId, createButton);
+      }
+    });
+    currentDetail.addEventListener("click", (event) => {
+      const ratingButton = event.target.closest("button[data-detail-rating]");
+      const createButton = event.target.closest("button[data-detail-create-card]");
+      if (ratingButton && activeAnswerId) {
+        const result = answerStore.get(activeAnswerId);
+        const noteInput = document.querySelector("#improvementNote");
+        const note = ratingButton.dataset.detailRating === "needs_work" && noteInput
+          ? noteInput.value.trim()
+          : "";
+        sendFeedback(activeAnswerId, ratingButton.dataset.detailRating, (result && result.question) || "", note, ratingButton);
+        return;
+      }
+      if (createButton) {
+        createAnswerCard(createButton.dataset.detailCreateCard, createButton);
+      }
+    });
+    document.querySelectorAll("[data-toggle-status]").forEach((button) => {
+      button.addEventListener("click", toggleStatusPanel);
+    });
+    document.querySelectorAll("[data-close-status]").forEach((button) => {
+      button.addEventListener("click", closeStatusPanel);
+    });
+    document.querySelectorAll("[data-toggle-inspector]").forEach((button) => {
+      button.addEventListener("click", () => {
+        workspace.classList.toggle("status-open", false);
+        if (workspace.classList.contains("inspector-open")) {
+          closeInspector();
+          return;
+        }
+        openInspector();
+      });
+    });
+    document.querySelectorAll("[data-close-inspector]").forEach((button) => {
+      button.addEventListener("click", closeInspector);
+    });
+
+    refreshStatus();
+    refreshOperatingIssues();
+    refreshBrandAssets();
+    refreshBrandAnswerCards();
+    refreshGoldenEval();
+    refreshAnswerCards();
+    refreshReviewTasks();
+  </script>
+</body>
+</html>

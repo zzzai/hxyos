@@ -1,0 +1,1199 @@
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class HxyBrainFrontendTest(unittest.TestCase):
+    def test_admin_default_entry_is_startup_stage_project_advancer(self):
+        page = ROOT / "apps" / "admin-web" / "index.html"
+        self.assertTrue(page.exists(), "admin default entry should exist")
+        html = page.read_text(encoding="utf-8")
+
+        for label in [
+            "<title>荷小悦 0-1 项目推进器</title>",
+            "荷小悦 0-1 项目推进器",
+            "当前阶段主入口",
+            "进入 0-1 验证台",
+            "startup.html",
+        ]:
+            self.assertIn(label, html)
+
+        for label in [
+            "招商",
+            "加盟",
+            "门店日报",
+            "客户消费",
+            "POS",
+            "多店看板",
+        ]:
+            self.assertNotIn(label, html)
+
+    def test_startup_stage_product_focuses_on_positioning_validation_not_full_os(self):
+        page = ROOT / "apps" / "admin-web" / "startup.html"
+        self.assertTrue(page.exists(), "startup stage product page should exist")
+        html = page.read_text(encoding="utf-8")
+
+        for label in [
+            "<title>荷小悦 0-1 验证台</title>",
+            "0-1 项目推进器",
+            "当前唯一主线",
+            "核爆点定位是否成立？",
+            "待验证",
+            "当前结论",
+            "证据缺口",
+            "本周验证任务",
+            "结论版本",
+            "记录证据",
+            "更新结论",
+            "生成下一步",
+            "沉淀为定位卡",
+            "用户访谈",
+            "定位表达测试",
+            "清泡调补养复述测试",
+            "查看依据",
+            "依据与质检",
+            "定位卡",
+            "话术卡",
+            "验证任务",
+            "阶段边界",
+        ]:
+            self.assertIn(label, html)
+
+        for item in [
+            "/api/operating-brain/brand-assets",
+            "/api/operating-brain/brand-answer-cards",
+            "/api/operating-brain/evals/golden",
+            "/api/operating-brain/startup-advance",
+            "loadStartupAssets",
+            "renderBrandAnswerCards",
+            "currentStartupContext",
+            "startupAdvance",
+            "renderStartupAdvance",
+            "startupAdvanceStatus",
+            "startupEvidenceInput",
+            "startupAdvanceResult",
+            "main-thread",
+            "evidence-gap",
+            "validation-board",
+            "version-timeline",
+            "progress-actions",
+            "data-progress-action",
+            "evidence-drawer",
+            "toggleEvidenceDrawer",
+            "overflow: hidden;",
+            "height: 100dvh;",
+            "grid-template-rows: auto minmax(0, 1fr);",
+        ]:
+            self.assertIn(item, html)
+
+        head_start = html.index("<header")
+        head_end = html.index("</header>", head_start)
+        header_html = html[head_start:head_end]
+        self.assertNotIn("stage-pills", header_html)
+        self.assertNotIn("只做当下阶段", header_html)
+        self.assertNotIn("不做招商/加盟", header_html)
+        self.assertNotIn("不开门店数据看板", header_html)
+        self.assertNotIn("不做复杂员工系统", header_html)
+        self.assertNotIn("不做客户消费分析", header_html)
+        self.assertNotIn("stage-pills", html)
+        self.assertNotIn("/api/knowledge/chat", html)
+        self.assertNotIn("startupQuestionInput", html)
+        self.assertNotIn("runStartupQuestion", html)
+        self.assertNotIn("data-startup-question", html)
+        self.assertNotIn("生成判断卡", html)
+        self.assertNotIn("继续追问", html)
+        self.assertNotIn("今天要定哪件事？", html)
+        self.assertNotIn("decision-box", html)
+        self.assertNotIn("decision-card", html)
+        self.assertNotIn('class="workspace"', html)
+        self.assertNotIn('class="rail"', html)
+        self.assertNotIn('class="inspector"', html)
+        self.assertNotIn("今日营业额", html)
+        self.assertNotIn("技师产能", html)
+        self.assertNotIn("客户消费记录", html)
+        self.assertNotIn("招商表达风险", html)
+        self.assertNotIn("招商话术", html)
+        self.assertNotIn("招商看", html)
+        self.assertNotIn("回本周期", html)
+        self.assertNotIn("合伙人", html)
+
+    def test_startup_stage_actions_call_ai_progress_loop_not_static_drawer(self):
+        html = (ROOT / "apps" / "admin-web" / "startup.html").read_text(encoding="utf-8")
+
+        for label in [
+            "AI 推进草稿",
+            "把今天拿到的证据、访谈原话或新判断写在这里。",
+            "证据门槛",
+            "下一步动作",
+            "记忆动作",
+        ]:
+            self.assertIn(label, html)
+
+        for item in [
+            'id="startupEvidenceInput"',
+            'id="startupAdvanceStatus"',
+            'id="startupAdvanceResult"',
+            'data-current-action',
+            "function currentStartupContext",
+            "async function startupAdvance",
+            "function renderStartupAdvance",
+            "/api/operating-brain/startup-advance",
+            "startupAdvance(button.dataset.progressAction)",
+            "button.disabled = true",
+            "button.disabled = false",
+        ]:
+            self.assertIn(item, html)
+
+        listener_start = html.index('document.querySelectorAll("[data-progress-action]")')
+        listener_end = html.index("loadStartupAssets();", listener_start)
+        listener_block = html[listener_start:listener_end]
+        self.assertIn("startupAdvance(button.dataset.progressAction)", listener_block)
+        self.assertNotIn("toggleEvidenceDrawer(true);\n      });", listener_block)
+
+    def test_startup_evidence_drawer_has_local_action_buttons_after_evidence_input(self):
+        html = (ROOT / "apps" / "admin-web" / "startup.html").read_text(encoding="utf-8")
+        drawer_start = html.index('<aside class="evidence-drawer"')
+        drawer_end = html.index("</aside>", drawer_start)
+        drawer_html = html[drawer_start:drawer_end]
+
+        input_index = drawer_html.index('id="startupEvidenceInput"')
+        local_actions_index = drawer_html.index('class="startup-loop-actions"')
+        self.assertGreater(local_actions_index, input_index)
+
+        for action, label in [
+            ("record", "记录证据"),
+            ("revise", "更新结论"),
+            ("next", "生成下一步"),
+            ("card", "沉淀为定位卡"),
+        ]:
+            self.assertIn(f'data-progress-action="{action}"', drawer_html)
+            self.assertIn(label, drawer_html)
+
+    def test_startup_stage_mobile_keeps_result_area_primary(self):
+        html = (ROOT / "apps" / "admin-web" / "startup.html").read_text(encoding="utf-8")
+        mobile_start = html.index("@media (max-width: 900px)")
+        mobile_css = html[mobile_start:]
+
+        self.assertIn("grid-template-rows: auto minmax(0, 1fr);", mobile_css)
+        self.assertIn(".project-shell", mobile_css)
+        self.assertIn(".validation-board", mobile_css)
+        self.assertIn("grid-template-columns: 1fr;", mobile_css)
+        self.assertIn(".progress-actions", mobile_css)
+        self.assertIn("grid-template-columns: repeat(2, minmax(0, 1fr));", mobile_css)
+        self.assertIn(".app-subtitle", mobile_css)
+        self.assertIn("display: none;", mobile_css)
+
+    def test_brain_page_exposes_answer_evolution_controls(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+
+        self.assertIn("/api/knowledge/review-tasks", html)
+        self.assertIn('/resolve', html)
+        self.assertIn("/api/knowledge/answer-cards", html)
+        self.assertIn("/api/knowledge/import", html)
+        self.assertIn('id="reviewTasks"', html)
+        self.assertIn('data-resolve-task', html)
+        self.assertIn('data-create-card', html)
+        self.assertIn('data-create-draft-card', html)
+        self.assertIn("correction_package", html)
+        self.assertIn("answer_card_draft", html)
+        self.assertIn("source_answer_id", html)
+        self.assertIn("defaultApiBase", html)
+        self.assertIn("window.location.origin", html)
+
+    def test_brain_page_is_answer_first_operating_brain(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+
+        self.assertIn("<title>荷小悦经营大脑</title>", html)
+        self.assertIn("<h1>荷小悦经营大脑</h1>", html)
+        self.assertIn("<h2>0-1 阶段先做三件事</h2>", html)
+        self.assertIn("直接输入问题、资料、员工话术或纠偏意见", html)
+        self.assertIn("系统会自动判断任务类型", html)
+        self.assertIn("当前最重要的经营议题", html)
+        self.assertIn("先看结论", html)
+        self.assertIn("可执行动作", html)
+        self.assertIn("internal-review", html)
+        self.assertIn("<summary>查看依据和纠偏", html)
+        self.assertNotIn("<h3>判断依据</h3>", html)
+        self.assertNotIn("<h3>证据来源</h3>", html)
+        self.assertNotIn("<h3>纠偏建议</h3>", html)
+        self.assertNotIn("<h3>下一步动作</h3>", html)
+
+    def test_brain_page_matches_operating_brain_product_shape(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+
+        self.assertIn('class="workspace chat-first"', html)
+        self.assertIn('class="brain-nav outcome-launcher"', html)
+        self.assertIn('class="decision-panel"', html)
+        self.assertIn('class="answer-detail inspector-panel is-hidden"', html)
+        self.assertIn('class="mobile-actions"', html)
+        self.assertIn("data-toggle-status", html)
+        self.assertIn("data-toggle-inspector", html)
+        self.assertIn("data-close-status", html)
+        self.assertIn("data-close-inspector", html)
+        self.assertIn("openInspector", html)
+        self.assertIn("closeInspector", html)
+        self.assertIn("closeStatusPanel", html)
+        self.assertIn('workspace.classList.toggle("inspector-open"', html)
+        for label in ["问经营", "练员工", "传资料", "统一口径", "招商话术", "门店复盘", "产品体系", "SOP", "用户宣传", "权威答案", "资料记忆", "复核任务"]:
+            self.assertIn(label, html)
+        for role in ["创始人内部决策", "招商话术", "门店员工培训", "用户端宣传"]:
+            self.assertIn(role, html)
+        for answer_field in ["经营结果", "可直接使用版本", "风险边界", "质量闸口"]:
+            self.assertIn(answer_field, html)
+        self.assertIn("默认简洁回答", html)
+        self.assertIn("查看依据", html)
+        self.assertIn("knowledge_quality", html)
+        self.assertIn("data-scenario", html)
+        self.assertIn("data-quick-question", html)
+        self.assertIn("currentDetail", html)
+        self.assertIn("scenario: selectedScenario", html)
+        self.assertIn("result.applicable_scenarios", html)
+        self.assertIn("result.answer_status", html)
+        self.assertIn("result.result_card", html)
+
+    def test_brain_page_exposes_outcome_workflow_launcher_not_generic_chat(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+
+        self.assertIn('class="brain-nav outcome-launcher"', html)
+        nav_start = html.index('<nav class="brain-nav outcome-launcher"')
+        nav_end = html.index("</nav>", nav_start)
+        nav_block = html[nav_start:nav_end]
+        for workflow in ["ask", "train", "memory"]:
+            self.assertIn(f'data-workflow="{workflow}"', html)
+        for workflow in ["standardize", "franchise", "review"]:
+            self.assertNotIn(f'data-workflow="{workflow}"', nav_block)
+        for label in ["问经营", "练员工", "传资料"]:
+            self.assertIn(label, html)
+        self.assertIn("判断、口径、复盘", html)
+        self.assertIn("打分、纠错、复训任务", html)
+        self.assertIn("上传、识别、分类、记忆", html)
+        for scene in ["统一口径", "招商话术", "门店复盘", "产品体系", "SOP", "用户宣传"]:
+            self.assertIn(f'data-scenario="{scene}"', html)
+
+    def test_brain_page_primary_surface_respects_pre_open_boundary(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+
+        prompt_start = html.index('<section class="task-prompt"')
+        prompt_end = html.index("</section>", prompt_start)
+        prompt_block = html[prompt_start:prompt_end]
+
+        composer_start = html.index('<div class="composer-tools"')
+        composer_end = html.index("</div>", composer_start)
+        composer_block = html[composer_start:composer_end]
+
+        self.assertIn("0-1 阶段先做三件事", html)
+        for label in [
+            "验证核爆点定位",
+            "固化清泡调补养口径",
+            "整理品牌资料",
+        ]:
+            self.assertIn(label, prompt_block)
+
+        for forbidden in [
+            "招商",
+            "加盟",
+            "门店日报",
+            "今日经营数据",
+            "客户消费数据",
+        ]:
+            self.assertNotIn(forbidden, prompt_block)
+            self.assertNotIn(forbidden, composer_block)
+
+        self.assertIn("AI 自动判断", composer_block)
+        self.assertNotIn('data-mode="task"', composer_block)
+
+    def test_mobile_outcome_launcher_keeps_three_primary_tasks_visible(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+        mobile_start = html.index("@media (max-width: 820px)")
+        reduce_motion_start = html.index("@media (prefers-reduced-motion", mobile_start)
+        mobile_css = html[mobile_start:reduce_motion_start]
+
+        self.assertIn(".outcome-launcher", mobile_css)
+        self.assertIn("grid-template-columns: repeat(3, minmax(0, 1fr));", mobile_css)
+        self.assertIn("overflow-x: visible;", mobile_css)
+        self.assertIn("min-width: 0;", mobile_css)
+        self.assertNotIn(".brain-nav {\n        grid-template-columns: 1fr;", mobile_css)
+
+    def test_mobile_chat_keeps_primary_space_after_launchers(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+        mobile_start = html.index("@media (max-width: 820px)")
+        reduce_motion_start = html.index("@media (prefers-reduced-motion", mobile_start)
+        mobile_css = html[mobile_start:reduce_motion_start]
+
+        self.assertIn("grid-template-rows: auto auto minmax(170px, 1fr) auto;", mobile_css)
+        self.assertIn(".segmented", mobile_css)
+        self.assertIn("display: none;", mobile_css)
+        self.assertIn(".composer-help", mobile_css)
+        self.assertIn("display: none;", mobile_css)
+        self.assertIn(".messages", mobile_css)
+        self.assertIn("min-height: 170px;", mobile_css)
+
+    def test_mobile_operating_issue_queue_stacks_header_and_compresses_rows(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+        mobile_start = html.index("@media (max-width: 820px)")
+        reduce_motion_start = html.index("@media (prefers-reduced-motion", mobile_start)
+        mobile_css = html[mobile_start:reduce_motion_start]
+
+        self.assertIn(".operating-issue-board", mobile_css)
+        self.assertIn(".issue-board-head", mobile_css)
+        self.assertIn("grid-template-columns: 1fr;", mobile_css)
+        self.assertIn(".issue-board-head .hint", mobile_css)
+        self.assertIn("display: none;", mobile_css)
+        self.assertIn(".issue-item", mobile_css)
+        self.assertIn("padding: 10px;", mobile_css)
+
+    def test_operating_issue_queue_maps_internal_fields_to_business_labels(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+        render_start = html.index("function renderOperatingIssues")
+        refresh_start = html.index("async function refreshOperatingIssues", render_start)
+        render_block = html[render_start:refresh_start]
+
+        self.assertIn("function formatIssuePriority", html)
+        self.assertIn("function formatIssueDomain", html)
+        self.assertIn("function formatMemoryTarget", html)
+        self.assertIn("formatIssuePriority(issue.priority)", render_block)
+        self.assertIn("formatIssueDomain(issue.domain)", render_block)
+        self.assertIn("formatMemoryTarget(issue.memory_target)", render_block)
+        self.assertIn("沉淀方向", render_block)
+        self.assertNotIn('记忆目标：${escapeHtml(issue.memory_target', render_block)
+        self.assertNotIn('${escapeHtml(issue.priority || "medium")}', render_block)
+        self.assertNotIn('${escapeHtml(issue.domain || "general")}', render_block)
+
+    def test_mobile_inspector_open_does_not_create_extra_grid_columns(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+        mobile_start = html.index("@media (max-width: 820px)")
+        reduce_motion_start = html.index("@media (prefers-reduced-motion", mobile_start)
+        mobile_css = html[mobile_start:reduce_motion_start]
+
+        self.assertIn(".workspace.inspector-open", mobile_css)
+        self.assertIn("grid-template-columns: 1fr;", mobile_css)
+
+    def test_mobile_header_hides_supporting_copy_instead_of_clipping_it(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+        mobile_start = html.index("@media (max-width: 820px)")
+        reduce_motion_start = html.index("@media (prefers-reduced-motion", mobile_start)
+        mobile_css = html[mobile_start:reduce_motion_start]
+        hint_start = mobile_css.index(".decision-title .hint")
+        hint_end = mobile_css.index("}", hint_start)
+        hint_block = mobile_css[hint_start:hint_end]
+
+        self.assertIn("display: none;", hint_block)
+        self.assertNotIn("max-height", hint_block)
+        self.assertNotIn("overflow: hidden", hint_block)
+
+    def test_brain_page_is_team_operating_brain_workbench_not_strategy_only_gate(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+
+        for label in [
+            "0-1 阶段先做三件事",
+            "系统会自动判断任务类型",
+            "当前优先服务定位验证、清泡调补养口径和品牌资料沉淀",
+            "问经营",
+            "练员工",
+            "传资料",
+            "统一口径",
+            "招商话术",
+            "门店复盘",
+            "产品体系",
+            "SOP",
+            "用户宣传",
+            "权威答案",
+            "资料记忆",
+            "复核任务",
+        ]:
+            self.assertIn(label, html)
+        for inspector_label in [
+            "当前理解",
+            "自动分类结果",
+            "主要矛盾",
+            "缺失资料",
+            "风险边界",
+            "纠偏任务",
+            "记忆动作",
+        ]:
+            self.assertIn(inspector_label, html)
+        self.assertIn("/api/operating-brain/workbench-intake", html)
+        self.assertIn("workbenchIntake", html)
+        self.assertIn("input_type", html)
+        self.assertIn("primary_workflow", html)
+        self.assertNotIn("定位关 → 战略关 → 商业模式关", html)
+
+    def test_brain_v2_centers_operating_issue_queue_and_okf_lifecycle(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+
+        for label in [
+            "动态经营记忆",
+            "OKF 生命周期",
+            "口径冲突",
+            "证据不足",
+            "待决策",
+            "知识过期",
+            "当前最重要的经营议题",
+            "聊天只是输入方式",
+        ]:
+            self.assertIn(label, html)
+        for item in [
+            'id="issueQueue"',
+            'id="okfLifecycleStatus"',
+            "refreshOperatingIssues",
+            "renderOperatingIssues",
+            "/api/operating-brain/issues",
+            "/api/operating-brain/okf/summary",
+            "/api/operating-brain/issues/intake",
+        ]:
+            self.assertIn(item, html)
+
+    def test_training_mode_uses_training_evaluation_endpoint(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+
+        self.assertIn("/api/operating-brain/training/evaluate", html)
+        self.assertIn("function evaluateTraining", html)
+        self.assertIn('if (selectedMode === "training")', html)
+        self.assertIn('data-set-mode="training"', html)
+        self.assertIn('data-set-scenario="门店员工培训"', html)
+
+    def test_training_mode_renders_dedicated_coach_card_not_generic_answer(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+        add_answer_start = html.index("function addAnswer")
+        source_brief_start = html.index("function renderSourceBriefDetail", add_answer_start)
+        add_answer_block = html[add_answer_start:source_brief_start]
+
+        self.assertIn("function renderTrainingCoachCard", html)
+        self.assertIn("training-coach-card", html)
+        self.assertIn("training-score", html)
+        self.assertIn("关键错误", html)
+        self.assertIn("改成这样说", html)
+        self.assertIn("下一轮练习", html)
+        self.assertIn('if (result.version === "hxy-training-evaluation.v1")', add_answer_block)
+        self.assertIn("renderTrainingCoachCard(result)", add_answer_block)
+
+    def test_training_result_scrolls_to_score_first(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+        add_answer_start = html.index("function addAnswer")
+        source_brief_start = html.index("function renderSourceBriefDetail", add_answer_start)
+        add_answer_block = html[add_answer_start:source_brief_start]
+
+        self.assertIn("function scrollTrainingResultIntoView", html)
+        self.assertIn("scrollTrainingResultIntoView(item)", add_answer_block)
+        self.assertIn("messages.scrollTop = messages.scrollHeight", add_answer_block)
+        self.assertIn('result.version === "hxy-training-evaluation.v1"', add_answer_block)
+
+    def test_employee_training_h5_is_mobile_first_ai_training_entry(self):
+        page = ROOT / "apps" / "employee-web" / "training.html"
+        self.assertTrue(page.exists(), "employee training H5 page should exist")
+        html = page.read_text(encoding="utf-8")
+
+        for label in [
+            "荷小悦员工训练",
+            "今日训练",
+            "AI评分",
+            "错误纠偏",
+            "标准话术",
+            "再练一次",
+            "店长复训",
+        ]:
+            self.assertIn(label, html)
+        for item in [
+            "/api/operating-brain/training/evaluate",
+            "employeeId",
+            "employeeName",
+            "storeId",
+            "trainingResult",
+            "submitTraining",
+            "localStorage",
+            "saveIdentity",
+            "submitButton.disabled",
+            "AI评分中",
+            "fetch(",
+            "viewport",
+        ]:
+            self.assertIn(item, html)
+
+    def test_employee_training_h5_uses_question_bank_and_adaptive_retrain(self):
+        page = ROOT / "apps" / "employee-web" / "training.html"
+        html = page.read_text(encoding="utf-8")
+
+        for label in [
+            "能力等级",
+            "训练题库",
+            "自适应复训",
+            "经营影响",
+            "能力短板",
+        ]:
+            self.assertIn(label, html)
+        for item in [
+            "/api/operating-brain/training/question-bank",
+            "loadQuestionBank",
+            "renderQuestionBank",
+            "capabilityProfile",
+            "adaptiveRetrainPlan",
+            "operatingMetricLinks",
+            "data-question-id",
+        ]:
+            self.assertIn(item, html)
+
+    def test_employee_training_h5_defaults_to_recommended_plan(self):
+        page = ROOT / "apps" / "employee-web" / "training.html"
+        html = page.read_text(encoding="utf-8")
+
+        for label in [
+            "系统推荐训练",
+            "按你的能力档案安排下一轮训练",
+        ]:
+            self.assertIn(label, html)
+        for item in [
+            "/api/operating-brain/training/recommended-plan",
+            "loadRecommendedPlan",
+            "renderRecommendedPlan",
+            "recommendedLevel",
+            "recommendedPlan",
+            "adaptive_retrain",
+            "复训优先",
+            "default_new_employee",
+            "loadRecommendedPlan();",
+        ]:
+            self.assertIn(item, html)
+        self.assertNotIn('loadQuestionBank("newbie");', html)
+
+    def test_employee_training_h5_turns_adaptive_retrain_into_next_practice(self):
+        page = ROOT / "apps" / "employee-web" / "training.html"
+        html = page.read_text(encoding="utf-8")
+
+        for label in [
+            "继续练下一题",
+            "下一题已经切换，请直接作答。",
+        ]:
+            self.assertIn(label, html)
+        for item in [
+            "lastAdaptiveRetrainPlan",
+            "useAdaptiveNextQuestion",
+            "next_questions",
+            "customerQuestion.value = nextQuestion.customer_question",
+            "employeeAnswer.value = \"\"",
+        ]:
+            self.assertIn(item, html)
+
+    def test_employee_training_h5_updates_recommended_plan_after_failed_training(self):
+        page = ROOT / "apps" / "employee-web" / "training.html"
+        html = page.read_text(encoding="utf-8")
+
+        for item in [
+            "updateRecommendedPlanFromTrainingResult",
+            "result.needs_retrain",
+            "result.adaptive_retrain_plan",
+            'source: "adaptive_retrain"',
+            "renderRecommendedPlan({",
+            "训练未达标，已切换到复训题。",
+        ]:
+            self.assertIn(item, html)
+
+    def test_manager_training_h5_focuses_retrain_priorities_and_actions(self):
+        page = ROOT / "apps" / "manager-web" / "training.html"
+        self.assertTrue(page.exists(), "manager training H5 page should exist")
+        html = page.read_text(encoding="utf-8")
+
+        for label in [
+            "荷小悦店长训练看板",
+            "复训优先级",
+            "常见错误",
+            "今日动作",
+            "班前会复训清单",
+            "经营议题",
+            "刷新",
+        ]:
+            self.assertIn(label, html)
+        for item in [
+            "/api/operating-brain/training/manager-summary",
+            "/api/operating-brain/training/sessions",
+            "managerStoreId",
+            "renderSummary",
+            "renderBriefingTasks",
+            "briefing_tasks",
+            "briefingTaskList",
+            "renderSessions",
+            "localStorage",
+            "viewport",
+        ]:
+            self.assertIn(item, html)
+
+    def test_manager_training_h5_is_compact_task_queue_not_module_tabs(self):
+        page = ROOT / "apps" / "manager-web" / "training.html"
+        html = page.read_text(encoding="utf-8")
+
+        for item in [
+            "overflow: hidden;",
+            "height: 100dvh;",
+            "width: 100%;",
+            "max-width: 560px;",
+            "grid-template-rows: auto auto minmax(0, 1fr);",
+            "task-workbench",
+            "task-list",
+            "managerTaskQueue",
+            "renderManagerTaskQueue",
+            "buildManagerTasks",
+            "data-task-filter",
+            "currentTaskFilter",
+        ]:
+            self.assertIn(item, html)
+        for label in ["今日任务单", "全部", "复训", "经营", "验收"]:
+            self.assertIn(label, html)
+        self.assertNotIn("manager-tabs", html)
+        self.assertNotIn("data-manager-view", html)
+        self.assertNotIn("data-manager-panel", html)
+
+    def test_manager_training_h5_supports_acceptance_and_metric_links(self):
+        page = ROOT / "apps" / "manager-web" / "training.html"
+        html = page.read_text(encoding="utf-8")
+
+        for label in [
+            "店长验收",
+            "通过验收",
+            "打回复训",
+            "经营结果关联",
+            "客单价",
+            "调补养占比",
+        ]:
+            self.assertIn(label, html)
+        for item in [
+            "/api/operating-brain/training/manager-acceptance",
+            "submitManagerAcceptance",
+            "renderAcceptanceActions",
+            "operatingMetricLinks",
+            "data-accept-session",
+            "data-reject-session",
+        ]:
+            self.assertIn(item, html)
+
+    def test_manager_training_h5_surfaces_capability_next_question_and_operating_impact(self):
+        page = ROOT / "apps" / "manager-web" / "training.html"
+        html = page.read_text(encoding="utf-8")
+
+        for label in [
+            "能力短板",
+            "下一题",
+            "经营影响",
+        ]:
+            self.assertIn(label, html)
+        for item in [
+            "capability_profile_json",
+            "adaptive_retrain_plan_json",
+            "operating_metric_links_json",
+            "renderSessionTrainingContext",
+            "renderSessionOperatingImpact",
+        ]:
+            self.assertIn(item, html)
+
+    def test_manager_training_h5_renders_training_operating_impact_signals(self):
+        page = ROOT / "apps" / "manager-web" / "training.html"
+        html = page.read_text(encoding="utf-8")
+
+        for label in [
+            "经营结果关联",
+            "训练影响",
+        ]:
+            self.assertIn(label, html)
+        for item in [
+            "operatingImpactList",
+            "renderOperatingImpactSignals",
+            "operating_impact_signals",
+            "risk_level",
+            "next_action",
+        ]:
+            self.assertIn(item, html)
+
+    def test_manager_training_h5_requires_onsite_verification_for_acceptance(self):
+        page = ROOT / "apps" / "manager-web" / "training.html"
+        html = page.read_text(encoding="utf-8")
+
+        for label in [
+            "现场复述通过",
+            "连续 2 次达标",
+            "系统会校验验收资格",
+        ]:
+            self.assertIn(label, html)
+        for item in [
+            "onsiteVerified",
+            "onsite_verified",
+            "acceptance_rule",
+            "data-onsite-verified",
+        ]:
+            self.assertIn(item, html)
+
+    def test_manager_training_h5_uses_api_acceptance_result_for_status(self):
+        page = ROOT / "apps" / "manager-web" / "training.html"
+        html = page.read_text(encoding="utf-8")
+
+        for label in [
+            "验收未通过",
+            "能力档案已更新",
+        ]:
+            self.assertIn(label, html)
+        for item in [
+            "renderAcceptanceStatus",
+            "result.accepted",
+            "result.requires_retrain",
+            "result.capability_upgrade",
+            "result.next_actions",
+            "refreshDashboard({ preserveStatus: true })",
+            "preserveStatus",
+            "submitManagerAcceptance",
+        ]:
+            self.assertIn(item, html)
+
+    def test_manager_training_h5_renders_employee_capability_levels(self):
+        page = ROOT / "apps" / "manager-web" / "training.html"
+        html = page.read_text(encoding="utf-8")
+
+        for label in [
+            "员工能力档案",
+            "当前等级",
+            "已达标次数",
+        ]:
+            self.assertIn(label, html)
+        for item in [
+            "/api/operating-brain/training/capability-levels",
+            "capabilityList",
+            "renderCapabilityLevels",
+            "current_level",
+            "accepted_count",
+        ]:
+            self.assertIn(item, html)
+
+    def test_hxy_pages_expose_status_and_error_messages(self):
+        pages = {
+            "employee": (ROOT / "apps" / "employee-web" / "training.html").read_text(encoding="utf-8"),
+            "manager": (ROOT / "apps" / "manager-web" / "training.html").read_text(encoding="utf-8"),
+            "knowledge": (ROOT / "apps" / "admin-web" / "knowledge.html").read_text(encoding="utf-8"),
+            "staff": (ROOT / "apps" / "menu-h5" / "staff.html").read_text(encoding="utf-8"),
+            "technician": (ROOT / "apps" / "menu-h5" / "technician.html").read_text(encoding="utf-8"),
+            "admin": (ROOT / "apps" / "menu-h5" / "admin.html").read_text(encoding="utf-8"),
+        }
+
+        self.assertIn('id="status" class="status" role="status" aria-live="polite"', pages["employee"])
+        self.assertIn('id="status" class="status" role="status" aria-live="polite"', pages["manager"])
+        self.assertIn('id="actionResult" class="result" role="status" aria-live="polite"', pages["knowledge"])
+        self.assertIn('id="authErr" role="alert"', pages["staff"])
+        self.assertIn('id="authMsg" role="alert"', pages["technician"])
+        self.assertIn('id="authMsg" role="alert"', pages["admin"])
+        self.assertIn('id="status" role="status" aria-live="polite"', pages["admin"])
+
+    def test_menu_h5_pages_use_accessible_controls(self):
+        staff_html = (ROOT / "apps" / "menu-h5" / "staff.html").read_text(encoding="utf-8")
+        technician_html = (ROOT / "apps" / "menu-h5" / "technician.html").read_text(encoding="utf-8")
+        order_html = (ROOT / "apps" / "menu-h5" / "order.html").read_text(encoding="utf-8")
+
+        self.assertIn('<button class="filter-btn', staff_html)
+        self.assertNotIn('<div class="filter-btn', staff_html)
+        for html in [staff_html, technician_html]:
+            self.assertIn("min-height:44px", html)
+
+        self.assertNotIn("立即购买 ⚡", order_html)
+        self.assertIn('id="backBtn" type="button" aria-label="返回"', order_html)
+        self.assertIn('id="closeSheet" type="button" aria-label="关闭"', order_html)
+        self.assertIn('id="historyBack" type="button" aria-label="返回"', order_html)
+
+    def test_all_hxy_html_buttons_declare_button_type(self):
+        for page in (ROOT / "apps").glob("**/*.html"):
+            html = page.read_text(encoding="utf-8")
+            for line_number, line in enumerate(html.splitlines(), start=1):
+                if "<button" in line and "type=" not in line:
+                    self.fail(f"{page.relative_to(ROOT)}:{line_number} button should declare type=\"button\"")
+
+    def test_brain_page_supports_store_daily_metrics_as_operating_diagnosis(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+        add_answer_start = html.index("function addAnswer")
+        detail_start = html.index("function updateCurrentDetail")
+        add_answer_block = html[add_answer_start:detail_start]
+        detail_end = html.index("async function sendFeedback")
+        detail_block = html[detail_start:detail_end]
+
+        for label in [
+            "<summary>门店日报</summary>",
+            "今日经营数据",
+            "提交诊断",
+            "营业额",
+            "目标营业额",
+            "客单价",
+            "复购率",
+            "清泡占比",
+            "复训次数",
+            "投诉数",
+        ]:
+            self.assertIn(label, html)
+        for item in [
+            "/api/operating-brain/store-daily-metrics",
+            "function storeDailyMetricsPayload",
+            "async function diagnoseStoreDailyMetrics",
+            "renderStoreDailyDiagnosisCard",
+            'if (result.version === "hxy-store-daily-diagnosis.v1")',
+            "主要矛盾",
+            "今日动作",
+        ]:
+            self.assertIn(item, html)
+        self.assertIn("renderStoreDailyDiagnosisCard(result)", add_answer_block)
+        self.assertIn("result.anomalies", detail_block)
+        self.assertIn("经营异常", detail_block)
+        self.assertIn("result.today_actions", detail_block)
+
+    def test_super_composer_supports_multimodal_upload_drag_and_paste(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+
+        self.assertIn('class="super-composer"', html)
+        self.assertIn('id="chatFileInput"', html)
+        self.assertIn("handleComposerFiles", html)
+        self.assertIn("dragover", html)
+        self.assertIn("drop", html)
+        self.assertIn("paste", html)
+        self.assertIn("attachedFiles", html)
+        self.assertIn("uploadAttachedFiles", html)
+        self.assertIn("/api/knowledge/upload", html)
+        self.assertIn("/api/operating-brain/workbench-submit", html)
+        self.assertIn("submitWorkbench", html)
+        self.assertIn("memory_result", html)
+        self.assertIn("uploaded_attachments", html)
+        self.assertIn("image_understandings", html)
+        self.assertIn("image_understanding_tasks", html)
+        self.assertIn("data-mode=\"correction\"", html)
+        self.assertIn("data-mode=\"training\"", html)
+        self.assertIn("AI 自动判断", html)
+        composer_start = html.index('<div class="composer-tools"')
+        composer_end = html.index("</div>", composer_start)
+        composer_block = html[composer_start:composer_end]
+        self.assertNotIn("data-mode=\"task\"", composer_block)
+
+    def test_inspector_renders_image_understanding_status_for_uploads(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+        ask_start = html.index("async function ask")
+        listener_start = html.index('document.querySelector("#saveApi").addEventListener', ask_start)
+        ask_block = html[ask_start:listener_start]
+        detail_start = html.index("function updateCurrentDetail")
+        feedback_start = html.index("async function sendFeedback")
+        detail_block = html[detail_start:feedback_start]
+
+        self.assertIn("function renderImageUnderstandingStatus", html)
+        self.assertIn("submitResult.image_understandings", ask_block)
+        self.assertIn("submitResult.image_understanding_tasks", ask_block)
+        self.assertIn("图片理解", detail_block)
+        self.assertIn("待多模态复核", html)
+        self.assertIn("image_understanding_count", detail_block)
+
+    def test_memory_mode_uses_source_brief_notebook_style_workflow(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+        ask_start = html.index("async function ask")
+        listener_start = html.index('document.querySelector("#saveApi").addEventListener', ask_start)
+        ask_block = html[ask_start:listener_start]
+        detail_start = html.index("function updateCurrentDetail")
+        feedback_start = html.index("async function sendFeedback")
+        detail_block = html[detail_start:feedback_start]
+
+        self.assertIn("/api/operating-brain/source-brief", html)
+        self.assertIn("function buildSourceBriefResult", html)
+        self.assertIn("async function sourceBrief", html)
+        self.assertIn("contextLevelLabel", html)
+        self.assertIn("domainLabel", html)
+        self.assertIn('if (selectedMode === "upload" && !hasAttachments)', ask_block)
+        self.assertIn("sourceBrief(finalQuestion)", ask_block)
+        self.assertIn("result.source_brief", detail_block)
+        self.assertIn("上下文策略", detail_block)
+        self.assertIn("转换模板", detail_block)
+        self.assertIn("资料研读能力", html)
+        self.assertIn("已完成资料研读", detail_block)
+        self.assertNotIn("Open Notebook", detail_block)
+
+    def test_source_brief_quality_gate_copy_uses_business_labels(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+        build_start = html.index("function buildSourceBriefResult")
+        training_start = html.index("async function evaluateTraining", build_start)
+        build_block = html[build_start:training_start]
+
+        self.assertIn("引用、背景、排除策略", build_block)
+        self.assertNotIn("full / summary / exclude", build_block)
+
+    def test_super_composer_allows_attachment_only_memory_submit(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+        submit_start = html.index('document.querySelector("#composer").addEventListener("submit"')
+        submit_end = html.index('document.querySelector(".brain-nav").addEventListener', submit_start)
+        submit_block = html[submit_start:submit_end]
+
+        self.assertIn("const hasAttachments = attachedFiles.length > 0", submit_block)
+        self.assertIn('const fallbackQuestion = "资料上传：请自动识别分类并进入组织记忆。"', submit_block)
+        self.assertIn("if (!question && !hasAttachments) return;", submit_block)
+        self.assertIn("ask(question || fallbackQuestion);", submit_block)
+        self.assertNotIn("if (!question) return;", submit_block)
+
+    def test_left_side_uses_lightweight_status_disclosures(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+
+        self.assertIn('class="control-panel compact-status"', html)
+        self.assertIn('class="panel-block knowledge-status status-rail"', html)
+        self.assertIn("panel-disclosure", html)
+        self.assertIn(".compact-status .panel-disclosure", html)
+        self.assertIn("display: none;", html)
+        for summary in ["团队入口", "连接", "资料上传", "黄金评测", "答案卡", "复核任务", "资料位置"]:
+            self.assertIn(f"<summary>{summary}</summary>", html)
+        self.assertIn("知识流入", html)
+        self.assertIn("记忆演进", html)
+        self.assertIn("待复核", html)
+        self.assertIn("后台状态不抢主工作区", html)
+
+    def test_left_side_workbench_sections_are_collapsed_by_default(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+
+        for summary in ["团队入口", "连接", "资料上传", "黄金评测", "答案卡", "复核任务", "资料位置"]:
+            marker = f"<summary>{summary}</summary>"
+            start = html.index(marker)
+            details_start = html.rfind("<details", 0, start)
+            details_opening = html[details_start:start]
+            self.assertNotIn("open", details_opening, summary)
+
+    def test_team_work_entry_is_collapsed_by_default(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+
+        nav_marker = 'class="team-nav"'
+        nav_start = html.index(nav_marker)
+        details_start = html.rfind("<details", 0, nav_start)
+        summary_start = html.find("<summary>团队入口</summary>", details_start, nav_start)
+        details_opening = html[details_start:summary_start]
+        self.assertGreater(details_start, -1)
+        self.assertGreater(summary_start, -1)
+        self.assertNotIn("open", details_opening)
+
+    def test_left_side_is_visually_subordinate_to_chat(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+
+        self.assertIn("grid-template-columns: 216px minmax(0, 1fr);", html)
+        self.assertIn("grid-template-columns: 216px minmax(0, 1fr) 340px;", html)
+        self.assertIn("box-shadow: 0 10px 26px rgba(81, 91, 73, 0.06);", html)
+        self.assertIn("一个输入框处理问答、资料、训练和纠偏。", html)
+        self.assertIn("后台状态不抢主工作区。", html)
+
+    def test_brain_page_uses_single_task_prompt_and_recommended_actions(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+
+        for item in [
+            'class="task-prompt"',
+            "0-1 阶段先做三件事",
+            "直接输入问题、资料、员工话术或纠偏意见",
+            "系统会自动判断任务类型",
+            "推荐先处理",
+            "验证核爆点定位",
+            "固化清泡调补养口径",
+            "整理品牌资料",
+        ]:
+            self.assertIn(item, html)
+        self.assertNotIn("先选任务，再选场景；", html)
+
+    def test_left_side_renders_golden_eval_and_answer_card_workbench(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+
+        for item in [
+            'id="goldenEvalStatus"',
+            'id="goldenEvalCases"',
+            'id="answerCardStatus"',
+            'id="answerCards"',
+            'id="refreshGoldenEval"',
+            'id="refreshAnswerCards"',
+            "/api/operating-brain/evals/golden",
+            "/api/knowledge/answer-cards?status=approved",
+            "refreshGoldenEval",
+            "renderGoldenEval",
+            "refreshAnswerCards",
+            "renderAnswerCards",
+            "黄金问题",
+            "权威答案卡",
+        ]:
+            self.assertIn(item, html)
+
+    def test_left_side_renders_brand_asset_center_for_pre_open_stage(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+
+        for item in [
+            "<summary>品牌资产</summary>",
+            'id="brandAssetStatus"',
+            'id="brandAssetModules"',
+            'id="brandAssetQuestions"',
+            'id="brandAnswerCardStatus"',
+            'id="brandAnswerCards"',
+            'id="brandAssetBuildOrder"',
+            "refreshBrandAssets",
+            "refreshBrandAnswerCards",
+            "renderBrandAnswerCards",
+            "renderBrandAssets",
+            "/api/operating-brain/brand-assets",
+            "/api/operating-brain/brand-answer-cards",
+            "开店前先做品牌资产",
+            "客户消费数据开店后再接入",
+            "品牌答案卡",
+        ]:
+            self.assertIn(item, html)
+
+    def test_brain_page_renders_operating_result_card_fields(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+
+        for label in ["经营结果", "可直接使用版本", "风险边界", "质量闸口"]:
+            self.assertIn(label, html)
+        self.assertIn("result.result_card", html)
+        self.assertIn("qualityGateListHtml", html)
+
+    def test_main_answer_card_is_concise_by_default(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+        add_answer_start = html.index("function addAnswer")
+        source_brief_start = html.index("function renderSourceBriefDetail", add_answer_start)
+        add_answer_block = html[add_answer_start:source_brief_start]
+
+        self.assertIn("answer-main", add_answer_block)
+        self.assertIn("answer-foot", add_answer_block)
+        self.assertIn("详情", add_answer_block)
+        self.assertIn("纠偏", add_answer_block)
+        self.assertNotIn("<h3>经营结果</h3>", add_answer_block)
+        self.assertNotIn("<h3>可直接使用版本</h3>", add_answer_block)
+        self.assertNotIn("<h3>风险边界</h3>", add_answer_block)
+        self.assertNotIn("<h3>质量闸口</h3>", add_answer_block)
+        self.assertNotIn("<h3>可执行动作</h3>", add_answer_block)
+        self.assertNotIn("answer-meta", add_answer_block)
+        self.assertNotIn("qualityGateListHtml", add_answer_block)
+        self.assertNotIn("renderEvidence", add_answer_block)
+        self.assertNotIn("data-rating=\"useful\"", add_answer_block)
+        self.assertNotIn("data-create-card", add_answer_block)
+        self.assertNotIn("source_path", add_answer_block)
+        self.assertNotIn("chunk_id", add_answer_block)
+        self.assertNotIn("normalized_path", add_answer_block)
+
+    def test_inspector_feedback_has_visible_improvement_workflow(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+        detail_start = html.index("function updateCurrentDetail")
+        feedback_start = html.index("async function sendFeedback")
+        detail_block = html[detail_start:feedback_start]
+        send_feedback_end = html.index("async function createAnswerCard")
+        feedback_block = html[feedback_start:send_feedback_end]
+
+        self.assertIn("improvementNote", detail_block)
+        self.assertIn("哪里需要完善", detail_block)
+        self.assertIn("提交完善任务", detail_block)
+        self.assertIn("feedbackStatus", detail_block)
+        self.assertIn("feedbackStatusHtml", html)
+        self.assertIn("setFeedbackStatus", html)
+        self.assertIn("button.dataset.feedbackSubmitting", feedback_block)
+        self.assertIn("result.correction_package", feedback_block)
+        self.assertIn("补充缺失信息并更新答案卡草稿", html)
+        self.assertIn("已生成完善任务", html)
+
+    def test_inspector_maps_internal_workflow_keys_to_business_labels(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+        detail_start = html.index("function updateCurrentDetail")
+        feedback_start = html.index("async function sendFeedback")
+        detail_block = html[detail_start:feedback_start]
+        pills_start = html.index("function detailPillsHtml")
+        pills_end = html.index("function updateCurrentDetail", pills_start)
+        pills_block = html[pills_start:pills_end]
+
+        self.assertIn("workflowLabel", html)
+        self.assertIn("inputTypeLabel", html)
+        self.assertIn("detailPillsHtml", html)
+        self.assertIn("资料研读", detail_block)
+        self.assertIn("secondaryLabel !== primaryLabel", pills_block)
+        self.assertNotIn('intake.primary_workflow || "ask"', detail_block)
+        self.assertNotIn('intake.input_type || "question"', detail_block)
+
+    def test_inspector_renders_answer_pipeline_without_polluting_main_answer(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+        add_answer_start = html.index("function addAnswer")
+        detail_start = html.index("function updateCurrentDetail")
+        add_answer_block = html[add_answer_start:detail_start]
+        detail_end = html.index("async function sendFeedback")
+        detail_block = html[detail_start:detail_end]
+
+        for item in [
+            "renderAnswerPipeline",
+            "result.answer_pipeline",
+            "Policy Gate",
+            "Evidence Plan",
+            "Guardrail",
+            "Evolution",
+            "pipeline.policy_decision",
+            "pipeline.evidence_plan",
+            "pipeline.guardrail_result",
+            "pipeline.evolution_actions",
+        ]:
+            self.assertIn(item, detail_block)
+        self.assertNotIn("answer_pipeline", add_answer_block)
+        self.assertNotIn("Policy Gate", add_answer_block)
+        self.assertNotIn("Evidence Plan", add_answer_block)
+        self.assertNotIn("Guardrail", add_answer_block)
+        self.assertNotIn("Evolution", add_answer_block)
+
+    def test_inspector_renders_loop_contract_as_primary_runtime_constraint(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+        detail_start = html.index("function updateCurrentDetail")
+        feedback_start = html.index("async function sendFeedback")
+        detail_block = html[detail_start:feedback_start]
+
+        self.assertIn("Loop Contract", detail_block)
+        self.assertIn("loop_contract", detail_block)
+        self.assertIn("上下文预算", detail_block)
+        self.assertIn("停止条件", detail_block)
+        self.assertIn("hard limit", detail_block)
+
+    def test_inspector_evidence_hides_raw_file_paths_and_chunk_ids(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+        render_start = html.index("function renderEvidence")
+        render_end = html.index("async function workbenchIntake", render_start)
+        render_block = html[render_start:render_end]
+
+        self.assertIn("资料标题", render_block)
+        self.assertIn("source.title", render_block)
+        self.assertNotIn("source.source_path", render_block)
+        self.assertNotIn("source.chunk_id", render_block)
+        self.assertNotIn("<code>", render_block)
+
+    def test_upload_flow_reports_actionable_network_errors(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+
+        self.assertIn("function formatRequestError", html)
+        self.assertIn("网络请求失败", html)
+        self.assertIn("API 地址", html)
+        self.assertIn("await requestJson(\"/health\")", html)
+        self.assertIn("正在连接知识库服务", html)
+        self.assertNotIn("setStatus(uploadStatus, error.message, \"error\");", html)
+
+    def test_brain_page_defaults_to_same_origin_api(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+        default_start = html.index("function defaultApiBase")
+        default_end = html.index("apiInput.value", default_start)
+        default_block = html[default_start:default_end]
+
+        self.assertIn("window.location.origin", default_block)
+        self.assertNotIn(":18081", default_block)
+
+    def test_brain_page_uses_premium_light_design_tokens(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+
+        for token in [
+            "--bg: #f7f4ee",
+            "--bg-rose: #f7eef1",
+            "--surface-glow",
+            "--shadow-float",
+            "radial-gradient(circle at 8% 6%",
+            "backdrop-filter: blur(18px)",
+            "border-radius: 999px",
+            "知识流入",
+            "记忆演进",
+        ]:
+            self.assertIn(token, html)
+
+    def test_brain_page_locks_page_scroll_to_chat_history(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+
+        self.assertIn("html,", html)
+        self.assertIn("height: 100%;", html)
+        self.assertIn("overflow: hidden;", html)
+        self.assertIn("height: calc(100dvh - 32px);", html)
+        self.assertIn("max-height: calc(100dvh - 32px);", html)
+        self.assertIn(".messages", html)
+        self.assertIn("overflow-y: auto;", html)
+
+
+if __name__ == "__main__":
+    unittest.main()

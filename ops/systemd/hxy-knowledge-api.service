@@ -1,0 +1,22 @@
+[Unit]
+Description=HXY Knowledge API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root/hxy
+Environment=HOME=/root
+Environment=HXY_ROOT_DIR=/root/hxy
+Environment=HXY_ENV_FILE=/root/hxy/ops/env/hxy-postgres.env
+Environment=HXY_API_HOST=127.0.0.1
+Environment=HXY_API_PORT=18081
+ExecStart=/usr/bin/env bash /root/hxy/ops/hxy-knowledge-api.sh
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

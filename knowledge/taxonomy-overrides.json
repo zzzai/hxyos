@@ -1,0 +1,41 @@
+{
+  "version": "hxy-knowledge-taxonomy-overrides.v1",
+  "overrides": [
+    {
+      "match": {
+        "pathIncludes": "长风拨筋"
+      },
+      "knowledgeDomain": "competitor",
+      "projectStage": "preparation",
+      "confidence": 0.9,
+      "reason": "长风拨筋竞品资料目录"
+    },
+    {
+      "match": {
+        "fileNameIncludes": "hxyip"
+      },
+      "knowledgeDomain": "brand",
+      "projectStage": "preparation",
+      "confidence": 0.85,
+      "reason": "荷小悦IP视觉资产"
+    },
+    {
+      "match": {
+        "fileNameIncludes": "CMO薪酬"
+      },
+      "knowledgeDomain": "management",
+      "projectStage": "pilot",
+      "confidence": 0.86,
+      "reason": "CMO薪酬方案属于管理与组织机制"
+    },
+    {
+      "match": {
+        "pathIncludes": "小店调研分析"
+      },
+      "knowledgeDomain": "store_model",
+      "projectStage": "preparation",
+      "confidence": 0.82,
+      "reason": "小店调研分析资料目录"
+    }
+  ]
+}

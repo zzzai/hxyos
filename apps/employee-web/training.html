@@ -1,0 +1,687 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>荷小悦员工训练</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      --bg: #f6f3ee;
+      --panel: #fffdf8;
+      --soft: #e6f2ec;
+      --accent: #0f6f5d;
+      --accent-strong: #084c41;
+      --ink: #20251f;
+      --muted: #677267;
+      --line: rgba(89, 111, 93, 0.18);
+      --danger: #9d382e;
+      --shadow: 0 18px 42px rgba(77, 87, 72, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 8% 0%, rgba(246, 226, 232, 0.7), transparent 32%),
+        radial-gradient(circle at 92% 8%, rgba(225, 241, 232, 0.78), transparent 34%),
+        var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      letter-spacing: 0;
+    }
+
+    button,
+    input,
+    textarea {
+      font: inherit;
+    }
+
+    .app {
+      display: grid;
+      gap: 14px;
+      width: min(100%, 520px);
+      min-height: 100dvh;
+      margin: 0 auto;
+      padding: 18px 14px 22px;
+    }
+
+    .hero,
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: rgba(255, 253, 248, 0.86);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
+    }
+
+    .hero {
+      display: grid;
+      gap: 12px;
+      padding: 18px;
+    }
+
+    .hero-head {
+      display: flex;
+      align-items: start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 24px;
+      line-height: 1.2;
+    }
+
+    h2 {
+      font-size: 18px;
+      line-height: 1.3;
+    }
+
+    h3 {
+      font-size: 15px;
+      line-height: 1.35;
+    }
+
+    p,
+    label,
+    li {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      border: 1px solid rgba(15, 111, 93, 0.24);
+      border-radius: 999px;
+      background: var(--soft);
+      color: var(--accent-strong);
+      padding: 0 10px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .identity {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+    }
+
+    input,
+    textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--ink);
+      outline: none;
+    }
+
+    input {
+      min-height: 40px;
+      padding: 0 11px;
+    }
+
+    textarea {
+      min-height: 132px;
+      resize: vertical;
+      padding: 12px;
+      line-height: 1.55;
+    }
+
+    .panel {
+      display: grid;
+      gap: 12px;
+      padding: 16px;
+    }
+
+    .scenario-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .level-tabs {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+
+    .recommendation {
+      display: grid;
+      gap: 6px;
+      border: 1px solid rgba(15, 111, 93, 0.2);
+      border-radius: 18px;
+      background: linear-gradient(135deg, rgba(230, 242, 236, 0.88), rgba(255, 255, 255, 0.68));
+      padding: 12px;
+    }
+
+    .recommendation-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .recommendation p {
+      font-size: 13px;
+    }
+
+    .scenario {
+      display: grid;
+      gap: 4px;
+      width: 100%;
+      min-height: 62px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.68);
+      color: var(--ink);
+      padding: 12px;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .scenario.active {
+      border-color: rgba(15, 111, 93, 0.32);
+      background: var(--soft);
+    }
+
+    .scenario span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .scenario small {
+      color: var(--accent-strong);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .primary {
+      min-height: 48px;
+      border: 0;
+      border-radius: 999px;
+      background: var(--accent);
+      color: #fff;
+      box-shadow: 0 14px 28px rgba(15, 111, 93, 0.22);
+      cursor: pointer;
+    }
+
+    .secondary {
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.66);
+      color: var(--accent-strong);
+      cursor: pointer;
+    }
+
+    .primary:active,
+    .secondary:active,
+    .scenario:active {
+      transform: translateY(1px);
+    }
+
+    .result {
+      display: none;
+      gap: 12px;
+    }
+
+    .result.is-visible {
+      display: grid;
+    }
+
+    .score-card {
+      display: grid;
+      grid-template-columns: 82px 1fr;
+      gap: 12px;
+      align-items: center;
+      border-radius: 18px;
+      background: linear-gradient(135deg, var(--soft), rgba(255, 255, 255, 0.72));
+      padding: 12px;
+    }
+
+    .score {
+      display: grid;
+      place-items: center;
+      width: 72px;
+      height: 72px;
+      border: 1px solid rgba(15, 111, 93, 0.22);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.76);
+      color: var(--accent-strong);
+      font-size: 28px;
+      font-weight: 760;
+    }
+
+    .grid {
+      display: grid;
+      gap: 8px;
+    }
+
+    .item {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.7);
+      padding: 12px;
+    }
+
+    .item strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 14px;
+    }
+
+    .item ul {
+      display: grid;
+      gap: 5px;
+      margin: 0;
+      padding-left: 18px;
+    }
+
+    .danger {
+      color: var(--danger);
+    }
+
+    .status {
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.62);
+      color: var(--muted);
+      padding: 9px 11px;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .status.error {
+      border-color: rgba(157, 56, 46, 0.24);
+      background: #fff4f1;
+      color: var(--danger);
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <section class="hero">
+      <div class="hero-head">
+        <div>
+          <h1>荷小悦员工训练</h1>
+          <p>每天练一段话术，AI评分、错误纠偏、标准话术和店长复训自动进入记录。</p>
+        </div>
+        <span class="pill">AI评分</span>
+      </div>
+      <div class="identity">
+        <label>员工
+          <input id="employeeName" value="门店员工" autocomplete="name">
+        </label>
+        <label>门店
+          <input id="storeName" value="荷小悦试点店" autocomplete="organization">
+        </label>
+        <label>员工ID
+          <input id="employeeId" value="employee-local">
+        </label>
+        <label>门店ID
+          <input id="storeId" value="pilot-store">
+        </label>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>训练题库</h2>
+      <p>系统会按你的能力档案安排下一轮训练；需要时也可以手动切换等级。</p>
+      <div class="recommendation" id="recommendedPlan">
+        <div class="recommendation-head">
+          <h3>系统推荐训练</h3>
+          <span class="pill" id="recommendedLevel">新人</span>
+        </div>
+        <p id="recommendedReason">按你的能力档案安排下一轮训练。</p>
+      </div>
+      <div class="level-tabs" aria-label="能力等级">
+        <button class="secondary" type="button" data-level="newbie">新人</button>
+        <button class="secondary" type="button" data-level="standard">标准</button>
+        <button class="secondary" type="button" data-level="advanced">进阶</button>
+      </div>
+      <div class="scenario-list" id="scenarioList">
+        <button class="scenario active" type="button" data-question-id="local-basic" data-question="顾客问：清泡调补养有什么区别？">
+          <strong>清泡调补养怎么讲</strong>
+          <span>先问状态，再讲区别，不讲治疗承诺。</span>
+        </button>
+        <button class="scenario" type="button" data-question-id="local-discovery" data-question="顾客说：我就随便泡泡，最便宜的就行。">
+          <strong>顾客说随便泡泡</strong>
+          <span>把基础放松和状态建议讲清楚。</span>
+        </button>
+        <button class="scenario" type="button" data-question-id="local-compliance" data-question="顾客问：这个能不能治疗失眠？">
+          <strong>顾客问有没有效果</strong>
+          <span>练禁用表达和合规替代表达。</span>
+        </button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>今日训练</h2>
+      <label>顾客问题
+        <input id="customerQuestion" value="顾客问：清泡调补养有什么区别？">
+      </label>
+      <label>员工回答
+        <textarea id="employeeAnswer" placeholder="把你准备对顾客说的话写在这里，也可以用语音转文字后粘贴。"></textarea>
+      </label>
+      <button class="primary" type="button" id="submitTraining">提交训练</button>
+      <div id="status" class="status" role="status" aria-live="polite">训练提交后会生成评分、错误纠偏、标准话术和再练一次题目。</div>
+    </section>
+
+    <section id="trainingResult" class="panel result">
+      <div class="score-card">
+        <div id="score" class="score">0</div>
+        <div>
+          <h2>训练结果</h2>
+          <p id="resultSummary">等待 AI 评分。</p>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div class="item">
+          <strong>错误纠偏</strong>
+          <p id="corrections">暂无。</p>
+        </div>
+        <div class="item">
+          <strong>标准话术</strong>
+          <p id="standardScript">暂无。</p>
+        </div>
+        <div class="item">
+          <strong>店长复训</strong>
+          <p id="retrainTask">暂无。</p>
+        </div>
+        <div class="item">
+          <strong>自适应复训</strong>
+          <p id="nextPractice">暂无。</p>
+        </div>
+        <div class="item">
+          <strong>能力等级</strong>
+          <p id="capabilityProfile">暂无。</p>
+        </div>
+        <div class="item">
+          <strong>能力短板</strong>
+          <p id="adaptiveRetrainPlan">暂无。</p>
+        </div>
+        <div class="item">
+          <strong>经营影响</strong>
+          <p id="operatingMetricLinks">暂无。</p>
+        </div>
+      </div>
+      <button class="secondary" type="button" id="practiceAgain" aria-label="再练一次">继续练下一题</button>
+    </section>
+  </main>
+
+  <script>
+    const scenarioList = document.querySelector("#scenarioList");
+    const customerQuestion = document.querySelector("#customerQuestion");
+    const employeeAnswer = document.querySelector("#employeeAnswer");
+    const employeeId = document.querySelector("#employeeId");
+    const employeeName = document.querySelector("#employeeName");
+    const storeId = document.querySelector("#storeId");
+    const storeName = document.querySelector("#storeName");
+    const submitButton = document.querySelector("#submitTraining");
+    const statusBox = document.querySelector("#status");
+    const trainingResult = document.querySelector("#trainingResult");
+    const scoreBox = document.querySelector("#score");
+    const resultSummary = document.querySelector("#resultSummary");
+    const corrections = document.querySelector("#corrections");
+    const standardScript = document.querySelector("#standardScript");
+    const retrainTask = document.querySelector("#retrainTask");
+    const nextPractice = document.querySelector("#nextPractice");
+    const capabilityProfile = document.querySelector("#capabilityProfile");
+    const adaptiveRetrainPlan = document.querySelector("#adaptiveRetrainPlan");
+    const operatingMetricLinks = document.querySelector("#operatingMetricLinks");
+    const recommendedPlanBox = document.querySelector("#recommendedPlan");
+    const recommendedLevelLabel = document.querySelector("#recommendedLevel");
+    const recommendedReason = document.querySelector("#recommendedReason");
+    let selectedLevel = "newbie";
+    let recommendedLevel = "newbie";
+    let recommendedPlan = null;
+    let lastAdaptiveRetrainPlan = null;
+
+    function setStatus(message, type = "") {
+      statusBox.textContent = message;
+      statusBox.className = `status ${type}`.trim();
+    }
+
+    function saveIdentity() {
+      localStorage.setItem("hxy-training-identity", JSON.stringify({
+        employeeId: employeeId.value.trim(),
+        employeeName: employeeName.value.trim(),
+        storeId: storeId.value.trim(),
+        storeName: storeName.value.trim(),
+      }));
+    }
+
+    function loadIdentity() {
+      try {
+        const saved = JSON.parse(localStorage.getItem("hxy-training-identity") || "{}");
+        if (saved.employeeId) employeeId.value = saved.employeeId;
+        if (saved.employeeName) employeeName.value = saved.employeeName;
+        if (saved.storeId) storeId.value = saved.storeId;
+        if (saved.storeName) storeName.value = saved.storeName;
+      } catch (error) {
+        localStorage.removeItem("hxy-training-identity");
+      }
+    }
+
+    function setSubmitting(isSubmitting) {
+      submitButton.disabled = isSubmitting;
+      submitButton.textContent = isSubmitting ? "AI评分中" : "提交训练";
+    }
+
+    function renderQuestionBank(items) {
+      if (!items || !items.length) return;
+      scenarioList.innerHTML = items.map((item, index) => `
+        <button class="scenario ${index === 0 ? "active" : ""}" type="button" data-question-id="${item.question_id}" data-question="${item.customer_question}">
+          <strong>${item.title}</strong>
+          <span>${item.customer_question}</span>
+          <small>${item.module_label} · ${item.capability_targets.join(" / ")}</small>
+        </button>
+      `).join("");
+      customerQuestion.value = items[0].customer_question || customerQuestion.value;
+    }
+
+    async function loadQuestionBank(level = selectedLevel) {
+      selectedLevel = level;
+      try {
+        const response = await fetch(`/api/operating-brain/training/question-bank?level=${encodeURIComponent(level)}`);
+        if (!response.ok) throw new Error(`训练题库读取失败：${response.status}`);
+        const result = await response.json();
+        renderQuestionBank(result.items || []);
+      } catch (error) {
+        setStatus(error.message, "error");
+      }
+    }
+
+    function levelLabel(level) {
+      return {
+        newbie: "新人",
+        standard: "标准",
+        advanced: "进阶",
+      }[level] || "新人";
+    }
+
+    function sourceLabel(source) {
+      return {
+        adaptive_retrain: "复训优先",
+        capability_level: "能力档案",
+        default_new_employee: "新人默认",
+      }[source] || "系统推荐";
+    }
+
+    function renderRecommendedPlan(result) {
+      recommendedPlan = result || {};
+      recommendedLevel = recommendedPlan.recommended_level || "newbie";
+      selectedLevel = recommendedLevel;
+      recommendedLevelLabel.textContent = levelLabel(recommendedLevel);
+      recommendedReason.textContent = `${sourceLabel(recommendedPlan.source)}：${recommendedPlan.reason || "按你的能力档案安排下一轮训练。"}`;
+      recommendedPlanBox.dataset.source = recommendedPlan.source || "default_new_employee";
+      renderQuestionBank(recommendedPlan.items || []);
+    }
+
+    function updateRecommendedPlanFromTrainingResult(result) {
+      const plan = result.adaptive_retrain_plan || {};
+      if (!result.needs_retrain || !plan.next_questions || !plan.next_questions.length) return;
+      renderRecommendedPlan({
+        version: "hxy-training-recommended-plan.v1",
+        employee_id: employeeId.value.trim() || "employee-local",
+        store_id: storeId.value.trim() || "pilot-store",
+        recommended_level: plan.target_level || "newbie",
+        source: "adaptive_retrain",
+        reason: "训练未达标，已切换到复训题。",
+        count: plan.next_questions.length,
+        items: plan.next_questions,
+      });
+    }
+
+    async function loadRecommendedPlan() {
+      const params = new URLSearchParams({
+        store_id: storeId.value.trim() || "pilot-store",
+        employee_id: employeeId.value.trim() || "employee-local",
+      });
+      try {
+        const response = await fetch(`/api/operating-brain/training/recommended-plan?${params.toString()}`);
+        if (!response.ok) throw new Error(`推荐训练读取失败：${response.status}`);
+        const result = await response.json();
+        renderRecommendedPlan(result);
+        setStatus(`已载入${levelLabel(recommendedLevel)}训练：${result.reason || "系统推荐训练"}`);
+      } catch (error) {
+        setStatus(`${error.message}，先使用新人基础训练。`, "error");
+        const defaultFallbackLevel = "newbie";
+        loadQuestionBank(defaultFallbackLevel);
+      }
+    }
+
+    function textList(items, mapper) {
+      if (!items || !items.length) return "暂无。";
+      return items.map(mapper).join(" / ");
+    }
+
+    function renderTrainingResult(result) {
+      trainingResult.classList.add("is-visible");
+      scoreBox.textContent = result.score || 0;
+      scoreBox.classList.toggle("danger", Boolean(result.needs_retrain));
+      resultSummary.textContent = result.result_card && result.result_card.business_result
+        ? result.result_card.business_result
+        : result.answer || "训练已完成。";
+      corrections.textContent = (result.correction_points || []).join(" / ") || "已通过基础检查。";
+      standardScript.textContent = result.standard_script
+        || (result.answer_card_draft && result.answer_card_draft.answer)
+        || "您好，我先了解一下您最近的状态：睡眠怎么样，身体会不会容易累，手脚有没有发凉，压力大不大？如果只是想放松，清泡就够用；如果最近状态比较紧、睡眠或疲劳感明显，可以选调泡，做更有针对性的放松调理体验；如果最近比较累，补泡会更适合恢复感；如果想长期保养，养泡更适合持续养护。我们主要帮您做放松、体验和状态调理建议，不替代医疗治疗。";
+      retrainTask.textContent = result.retraining_task && result.retraining_task.actions
+        ? result.retraining_task.actions.join(" / ")
+        : "店长复核后可提交为优秀话术。";
+      nextPractice.textContent = (result.follow_up_questions || [])[0] || "换一个顾客追问继续练。";
+      const profile = result.capability_profile || {};
+      const plan = result.adaptive_retrain_plan || {};
+      const metricLinks = result.operating_metric_links || [];
+      lastAdaptiveRetrainPlan = plan;
+      capabilityProfile.textContent = profile.level
+        ? `${profile.level} · ${profile.summary || "能力画像已生成。"}`
+        : "暂无能力等级。";
+      adaptiveRetrainPlan.textContent = textList(plan.next_questions || [], (item) => item.customer_question || item.title || "复训题目");
+      operatingMetricLinks.textContent = textList(metricLinks, (item) => `${item.metric}：${item.reason}`);
+      trainingResult.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    function useAdaptiveNextQuestion() {
+      const nextQuestion = lastAdaptiveRetrainPlan
+        && lastAdaptiveRetrainPlan.next_questions
+        && lastAdaptiveRetrainPlan.next_questions[0];
+      if (!nextQuestion) {
+        employeeAnswer.value = "";
+        employeeAnswer.focus();
+        setStatus("请按新的顾客问题再练一次。");
+        return;
+      }
+      customerQuestion.value = nextQuestion.customer_question || nextQuestion.title || customerQuestion.value;
+      employeeAnswer.value = "";
+      employeeAnswer.focus();
+      setStatus("下一题已经切换，请直接作答。");
+    }
+
+    async function submitTraining() {
+      const answer = employeeAnswer.value.trim();
+      if (!answer) {
+        setStatus("请先输入员工话术。", "error");
+        return;
+      }
+      saveIdentity();
+      setSubmitting(true);
+      setStatus("AI评分中，正在纠偏并生成复训建议...");
+      try {
+        const response = await fetch("/api/operating-brain/training/evaluate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            training_item: "清泡调补养门店推荐话术",
+            customer_question: customerQuestion.value.trim() || "顾客问：清泡调补养有什么区别？",
+            employee_answer: answer,
+            scenario: "门店员工培训",
+            role: "门店员工",
+            employee_id: employeeId.value.trim() || "employee-local",
+            employee_name: employeeName.value.trim() || "门店员工",
+            store_id: storeId.value.trim() || "pilot-store",
+            store_name: storeName.value.trim() || "荷小悦试点店",
+          }),
+        });
+        if (!response.ok) {
+          throw new Error(`训练提交失败：${response.status}`);
+        }
+        const result = await response.json();
+        setStatus(`已保存训练记录：${result.training_session_id || "待同步"}`);
+        renderTrainingResult(result);
+        updateRecommendedPlanFromTrainingResult(result);
+      } catch (error) {
+        setStatus(error.message, "error");
+      } finally {
+        setSubmitting(false);
+      }
+    }
+
+    loadIdentity();
+    [employeeId, employeeName, storeId, storeName].forEach((input) => {
+      input.addEventListener("change", () => {
+        saveIdentity();
+        loadRecommendedPlan();
+      });
+    });
+    scenarioList.addEventListener("click", (event) => {
+      const button = event.target.closest(".scenario");
+      if (!button) return;
+      document.querySelectorAll(".scenario").forEach((item) => item.classList.toggle("active", item === button));
+      customerQuestion.value = button.dataset.question || customerQuestion.value;
+      employeeAnswer.focus();
+    });
+    document.querySelectorAll("[data-level]").forEach((button) => {
+      button.addEventListener("click", () => loadQuestionBank(button.dataset.level || "newbie"));
+    });
+
+    submitButton.addEventListener("click", submitTraining);
+    document.querySelector("#practiceAgain").addEventListener("click", useAdaptiveNextQuestion);
+    loadRecommendedPlan();
+  </script>
+</body>
+</html>

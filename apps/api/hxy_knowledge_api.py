@@ -1,0 +1,2854 @@
+from __future__ import annotations
+
+import inspect
+import json
+import re
+import base64
+import secrets
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable
+
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel, Field
+
+from hxy_knowledge.answer_pipeline import build_answer_pipeline
+from hxy_knowledge.brand_assets import brand_authority_cards, build_brand_asset_center
+from hxy_knowledge.answer_engine import (
+    answer_status_for,
+    applicable_scenarios_for,
+    build_result_card,
+    compact_content,
+    has_metadata_noise,
+    PRIMARY_CLAIM_DOMAINS,
+    synthesize_answer,
+    usage_for,
+)
+from hxy_knowledge.answer_engine import classify_intent
+from hxy_knowledge.config import get_settings
+from hxy_knowledge.eval_runner import run_golden_evals
+from hxy_knowledge.golden_questions import authority_cards
+from hxy_knowledge.golden_questions import golden_questions
+from hxy_knowledge.importer import load_current_records
+from hxy_knowledge.memory_ingest import build_instant_memory_records
+from hxy_knowledge.model_router import ModelRouter
+from hxy_knowledge.okf import load_okf_documents, summarize_okf_lifecycle
+from hxy_knowledge.operating_brain import operating_brain_capabilities
+from hxy_knowledge.operating_issues import build_operating_issues, issue_from_intake
+from hxy_knowledge.reliability import insufficient_answer, score_answer_quality
+from hxy_knowledge.repository import KnowledgeRepository
+from hxy_knowledge.source_brief import build_source_brief
+from hxy_knowledge.startup_advancer import build_startup_advance
+from hxy_knowledge.store_metrics import diagnose_store_daily_metrics
+from hxy_knowledge.thinking_lenses import apply_thinking_lenses
+from hxy_knowledge.training_curriculum import (
+    build_adaptive_retrain_plan,
+    build_recommended_training_plan,
+    build_training_capability_profile,
+    filter_training_questions,
+)
+from hxy_knowledge.understanding_engine import understand_text
+from hxy_knowledge.workbench import classify_workbench_intake
+
+
+RepositoryFactory = Callable[[], Any]
+
+
+class ChatRequest(BaseModel):
+    question: str = Field(default="")
+    scenario: str = Field(default="创始人内部决策")
+    domain: str | None = None
+    stage: str | None = None
+    limit: int = Field(default=5, ge=1, le=10)
+
+
+class FeedbackRequest(BaseModel):
+    answer_id: str | None = None
+    question: str = ""
+    rating: str
+    note: str = ""
+
+
+class AnswerCardRequest(BaseModel):
+    question_pattern: str
+    intent: str = "unknown"
+    audience: str = "general"
+    answer: str
+    reasoning: list[Any] = Field(default_factory=list)
+    evidence: list[Any] = Field(default_factory=list)
+    corrections: list[Any] = Field(default_factory=list)
+    next_actions: list[Any] = Field(default_factory=list)
+    status: str = "draft"
+    source_answer_id: str | None = None
+
+
+class UnderstandRequest(BaseModel):
+    input: str
+    scenario: str = "创始人内部决策"
+    role: str = "founder"
+    attachments: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ThinkingLensRequest(BaseModel):
+    input: str
+    scenario: str = "创始人内部决策"
+    stage: str = "zero_to_one"
+    max_lenses: int = Field(default=3, ge=1, le=5)
+
+
+class WorkbenchIntakeRequest(BaseModel):
+    input: str = ""
+    scenario: str = "经营问答"
+    role: str = "team"
+    attachments: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class OperatingIssueIntakeRequest(BaseModel):
+    input: str = ""
+    scenario: str = "经营问答"
+    role: str = "team"
+
+
+class SourceBriefRequest(BaseModel):
+    question: str = ""
+    scenario: str = "经营问答"
+    domain: str | None = None
+    stage: str | None = None
+    limit: int = Field(default=8, ge=1, le=20)
+
+
+class StartupAdvanceRequest(BaseModel):
+    action: str
+    evidence_input: str = ""
+    current_conclusion: str = ""
+    main_question: str = "核爆点定位是否成立？"
+
+
+class TrainingEvaluateRequest(BaseModel):
+    training_item: str = "清泡调补养门店推荐话术"
+    customer_question: str = "顾客问：清泡调补养有什么区别？"
+    employee_answer: str
+    scenario: str = "门店员工培训"
+    role: str = "门店员工"
+    employee_id: str = "employee-local"
+    employee_name: str = "门店员工"
+    store_id: str = "pilot-store"
+    store_name: str = "荷小悦试点门店"
+
+
+class StoreDailyMetricsRequest(BaseModel):
+    store_id: str = "pilot-store"
+    store_name: str = "荷小悦试点门店"
+    business_date: str
+    revenue: float = 0
+    target_revenue: float = 0
+    orders: int = 0
+    average_ticket: float = 0
+    target_average_ticket: float = 0
+    repeat_rate: float = 0
+    target_repeat_rate: float = 0
+    product_mix: dict[str, float] = Field(default_factory=dict)
+    training_retrain_count: int = 0
+    customer_complaints: int = 0
+
+
+class TrainingManagerAcceptanceRequest(BaseModel):
+    session_id: str = ""
+    training_session_id: str = ""
+    manager_id: str = "manager-local"
+    manager_name: str = "店长"
+    accepted: bool = False
+    onsite_verified: bool = False
+    score: int = Field(default=0, ge=0, le=100)
+    note: str = ""
+    operating_metric_links: list[dict[str, Any]] = Field(default_factory=list)
+
+
+def _safe_inbox_destination(inbox_dir: Path, file_name: str) -> Path:
+    if not file_name or "/" in file_name or "\\" in file_name:
+        raise HTTPException(status_code=400, detail="Invalid file name")
+    destination = (inbox_dir / Path(file_name).name).resolve()
+    inbox_root = inbox_dir.resolve()
+    if not destination.is_relative_to(inbox_root):
+        raise HTTPException(status_code=400, detail="Invalid upload path")
+    return destination
+
+
+def _require_api_token(expected_token: str):
+    async def dependency(authorization: str | None = Header(default=None)) -> None:
+        if not expected_token:
+            return
+        scheme, _, value = (authorization or "").partition(" ")
+        if scheme.lower() != "bearer" or not secrets.compare_digest(value.strip(), expected_token):
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
+    return dependency
+
+
+async def _validated_upload_file(
+    file: UploadFile,
+    *,
+    inbox_dir: Path,
+    root_dir: Path,
+    max_bytes: int,
+    allowed_extensions: set[str],
+) -> dict[str, Any]:
+    destination = _safe_inbox_destination(inbox_dir, file.filename or "")
+    extension = destination.suffix.lower()
+    if extension not in allowed_extensions:
+        raise HTTPException(status_code=415, detail=f"Unsupported upload file type: {extension or 'none'}")
+
+    size = 0
+    with destination.open("wb") as output:
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > max_bytes:
+                output.close()
+                destination.unlink(missing_ok=True)
+                raise HTTPException(status_code=413, detail="Upload file is too large")
+            output.write(chunk)
+
+    return {
+        "file_name": destination.name,
+        "relative_path": str(destination.relative_to(root_dir)),
+        "size": size,
+        "mime_type": file.content_type or "",
+        "status": "uploaded",
+    }
+
+
+def _default_repository_factory(database_url: str) -> RepositoryFactory:
+    def make_repository() -> KnowledgeRepository:
+        if not database_url:
+            raise HTTPException(status_code=503, detail="HXY_DATABASE_URL is not configured")
+        return KnowledgeRepository(database_url)
+
+    return make_repository
+
+
+def _fallback_queries(question: str) -> list[str]:
+    stop_chars = "，。！？?；;：:、（）()[]【】\"'“”‘’"
+    cleaned = question
+    for char in stop_chars:
+        cleaned = cleaned.replace(char, " ")
+    phrase_stop_words = [
+        "是什么",
+        "有什么",
+        "有哪些",
+        "怎么讲",
+        "怎么说",
+        "请问",
+        "荷小悦",
+        "知识库",
+    ]
+    compact = cleaned.replace(" ", "")
+    queries: list[str] = []
+    for word in phrase_stop_words:
+        compact = compact.replace(word, "")
+    image_question_terms = ["图片", "图", "视觉", "画面", "海报", "菜单图", "表达", "卖点"]
+    if any(term in question for term in image_question_terms):
+        image_query_parts = ["图片类型", "视觉摘要", "业务摘要"]
+        for term in ["草本泡脚", "泡脚", "菜单", "产品", "卖点", "复购话术", "品牌", "竞品", "背书", "价格", "视觉风格"]:
+            if term in question and term not in image_query_parts:
+                image_query_parts.append(term)
+        queries.insert(0, " ".join(image_query_parts))
+
+    known_terms = [
+        "泡脚方",
+        "泡脚",
+        "清泡调补养",
+        "核爆点",
+        "定位",
+        "产品体系",
+        "草本",
+        "一人一方",
+        "小店模型",
+    ]
+    for term in known_terms:
+        if term in question and term not in queries:
+            queries.append(term)
+
+    if compact and compact != question:
+        queries.append(compact)
+
+    product_system_synonyms = {
+        "清泡调补养": ["草本泡脚", "泡脚方", "一人一方", "产品体系"],
+        "产品体系": ["草本泡脚", "泡脚方", "一人一方"],
+        "泡脚方": ["草本泡脚", "一人一方", "五脏泡脚"],
+    }
+    for trigger, synonyms in product_system_synonyms.items():
+        if trigger not in question:
+            continue
+        for synonym in synonyms:
+            if synonym not in queries:
+                queries.append(synonym)
+
+    token_stop_words = {"什么", "怎么", "如何", "为什么", "多少", "有没有", "请问", "荷小悦", "知识库"}
+    parts = [part.strip() for part in cleaned.split() if part.strip()]
+    keywords = [part for part in parts if part not in token_stop_words]
+    if keywords:
+        joined = " ".join(keywords[:3])
+        if joined not in queries:
+            queries.append(joined)
+    return [query for query in queries if query and query != question]
+
+
+def _repository_search(
+    repo: Any,
+    query: str,
+    *,
+    domain: str | None,
+    stage: str | None,
+    limit: int,
+    domain_hint: str | None,
+) -> list[dict[str, Any]]:
+    search = repo.search
+    if "domain_hint" in inspect.signature(search).parameters:
+        return search(query, domain=domain, stage=stage, limit=limit, domain_hint=domain_hint)
+    return search(query, domain=domain, stage=stage, limit=limit)
+
+
+def _items_need_better_retrieval(items: list[dict[str, Any]], intent: str) -> bool:
+    if not items:
+        return True
+    allowed_domains = PRIMARY_CLAIM_DOMAINS.get(intent) or set()
+    domains = {item.get("domain") for item in items if item.get("domain")}
+    if allowed_domains and not (domains & allowed_domains):
+        return True
+    top_items = items[: min(3, len(items))]
+    if top_items and all(has_metadata_noise(item.get("content") or "") for item in top_items):
+        return True
+    return False
+
+
+def _retrieval_item_quality(item: dict[str, Any], intent: str) -> int:
+    content = str(item.get("content") or "")
+    if not content.strip():
+        return -40
+    allowed_domains = PRIMARY_CLAIM_DOMAINS.get(intent) or set()
+    domain = str(item.get("domain") or "")
+    stage = str(item.get("stage") or "")
+    score = int(item.get("score") or 0)
+    quality = min(max(score, 0), 100) // 5
+    if domain in allowed_domains:
+        quality += 40
+    elif allowed_domains:
+        quality -= 12
+    preferred_domains = {
+        "product_system": {"product"},
+        "brand_positioning": {"brand"},
+        "operations": {"operations"},
+        "finance": {"finance"},
+        "franchise": {"franchise"},
+        "store_model": {"store_model"},
+    }.get(intent, set())
+    if domain in preferred_domains:
+        quality += 48
+    if stage in {"approved", "final", "production"}:
+        quality += 22
+    elif stage == "pilot":
+        quality += 8
+    elif stage in {"draft", "preparation"}:
+        quality -= 4
+    if has_metadata_noise(content):
+        quality -= 90
+    for keyword in ["清泡调补养", "泡脚方", "产品体系", "草本泡脚", "一人一方", "门店员工", "培训", "话术"]:
+        if keyword in content:
+            quality += 8
+    return quality
+
+
+def _retrieval_domain_rank(domain: str, intent: str) -> int:
+    priority = {
+        "product_system": ["product", "brand", "operations", "store_model", "franchise", "finance", "competitor", "external"],
+        "brand_positioning": ["brand", "product", "store_model", "franchise", "finance", "competitor", "external"],
+        "operations": ["operations", "product", "store_model", "brand", "franchise", "finance", "competitor", "external"],
+        "finance": ["finance", "store_model", "franchise", "brand", "product", "competitor", "external"],
+        "franchise": ["franchise", "finance", "store_model", "brand", "product", "competitor", "external"],
+        "store_model": ["store_model", "product", "finance", "brand", "operations", "competitor", "external"],
+    }.get(intent, [])
+    if domain in priority:
+        return len(priority) - priority.index(domain)
+    return 0
+
+
+def _sort_retrieval_items(items: list[dict[str, Any]], intent: str) -> list[dict[str, Any]]:
+    return sorted(
+        items,
+        key=lambda item: (
+            _retrieval_item_quality(item, intent),
+            _retrieval_domain_rank(str(item.get("domain") or ""), intent),
+            int(item.get("score") or 0),
+        ),
+        reverse=True,
+    )
+
+
+def _retrieval_set_quality(items: list[dict[str, Any]], intent: str) -> int:
+    if not items:
+        return -1000
+    sorted_items = _sort_retrieval_items(items, intent)
+    qualities = [_retrieval_item_quality(item, intent) for item in sorted_items]
+    usable_count = sum(1 for value in qualities if value >= 45)
+    noisy_count = sum(1 for item in items if has_metadata_noise(str(item.get("content") or "")))
+    top_quality = sum(sorted(qualities, reverse=True)[:3])
+    return top_quality + usable_count * 25 - noisy_count * 20
+
+
+def _best_retrieval_candidate(
+    repo: Any,
+    question: str,
+    *,
+    domain: str | None,
+    stage: str | None,
+    limit: int,
+    domain_hint: str | None,
+) -> tuple[str, list[dict[str, Any]]]:
+    candidates = [question, *_fallback_queries(question)]
+    seen: set[str] = set()
+    best_query = question
+    best_items: list[dict[str, Any]] = []
+    best_quality = -1001
+    for query in candidates:
+        if query in seen:
+            continue
+        seen.add(query)
+        items = _repository_search(
+            repo,
+            query,
+            domain=domain,
+            stage=stage,
+            limit=limit,
+            domain_hint=domain_hint,
+        )
+        quality = _retrieval_set_quality(items, domain_hint or "")
+        if quality > best_quality:
+            best_query = query
+            best_items = _sort_retrieval_items(items, domain_hint or "")
+            best_quality = quality
+        if best_quality >= 180 and not _items_need_better_retrieval(best_items, domain_hint or ""):
+            break
+    return best_query, best_items
+
+
+_IMAGE_UPLOAD_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+
+
+def _is_image_upload(file_info: dict[str, Any]) -> bool:
+    mime_type = str(file_info.get("mime_type") or "").lower()
+    file_name = str(file_info.get("file_name") or "")
+    return mime_type.startswith("image/") or Path(file_name).suffix.lower() in _IMAGE_UPLOAD_EXTENSIONS
+
+
+_FRONTDOOR_INTENTS = {
+    "brand_positioning",
+    "product_system",
+    "operations",
+    "finance",
+    "franchise",
+    "store_model",
+    "knowledge_lookup",
+}
+_FRONTDOOR_WORKFLOWS = {"ask", "train", "ingest", "correct", "decide", "review"}
+_WORKBENCH_INPUT_TYPES = {
+    "question",
+    "knowledge_intake",
+    "correction",
+    "operating_task",
+    "training",
+    "decision_support",
+}
+_WORKBENCH_WORKFLOWS = {"ask", "train", "ingest", "correct", "execute", "decide"}
+
+
+def _frontdoor_messages(question: str, scenario: str, rule_intent: str) -> list[dict[str, str]]:
+    system = (
+        "你是荷小悦经营大脑的前门意图判断器。你的任务不是回答问题，而是判断这次输入应该走哪条业务路径。"
+        "必须基于语义和场景判断，不要只按关键词匹配。只返回 JSON，不要 Markdown。"
+        "JSON 字段：intent, audience, primary_workflow, confidence, reason。"
+        "intent 只能是 brand_positioning/product_system/operations/finance/franchise/store_model/knowledge_lookup。"
+        "primary_workflow 只能是 ask/train/ingest/correct/decide/review。"
+        "如果问题模糊但场景明确，要结合场景判断；如果仍不确定，intent 用 knowledge_lookup。"
+    )
+    user = "\n".join(
+        [
+            f"问题：{question}",
+            f"场景：{scenario}",
+            f"规则兜底意图：{rule_intent}",
+            "判断目标：识别业务域、使用角色和工作流，让后续检索进入正确知识域。",
+        ]
+    )
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def _frontdoor_classification_from_generation(generation: dict[str, Any]) -> dict[str, Any] | None:
+    if not generation.get("used_model"):
+        return None
+    payload = _extract_json_object(str(generation.get("output") or ""))
+    if not payload:
+        return None
+    intent = str(payload.get("intent") or "").strip()
+    workflow = str(payload.get("primary_workflow") or "").strip()
+    if intent not in _FRONTDOOR_INTENTS:
+        return None
+    if workflow not in _FRONTDOOR_WORKFLOWS:
+        workflow = "ask"
+    confidence = 0.0
+    try:
+        confidence = float(payload.get("confidence") or 0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    if confidence > 1:
+        confidence = confidence / 100
+    if confidence < 0.65:
+        return None
+    return {
+        "version": "hxy-frontdoor-classification.v1",
+        "mode": "ai",
+        "intent": intent,
+        "audience": str(payload.get("audience") or "general").strip() or "general",
+        "primary_workflow": workflow,
+        "confidence": round(max(0.0, min(1.0, confidence)), 2),
+        "reason": str(payload.get("reason") or "").strip(),
+        "model_reason": generation.get("reason") or "ok",
+    }
+
+
+def _classify_frontdoor(
+    *,
+    model_router: Any,
+    question: str,
+    scenario: str,
+    rule_intent: str,
+    rule_audience: str,
+) -> dict[str, Any]:
+    route = model_router.route("frontdoor_classification")
+    fallback = {
+        "version": "hxy-frontdoor-classification.v1",
+        "mode": "rule_fallback",
+        "intent": rule_intent,
+        "audience": rule_audience,
+        "primary_workflow": "ask",
+        "confidence": 0.55 if rule_intent == "knowledge_lookup" else 0.75,
+        "reason": "使用本地规则判断；模型未启用或当前规则已足够明确。",
+        "model_reason": "not_used",
+    }
+    if rule_intent != "knowledge_lookup" or not route.get("should_call_model"):
+        fallback["route"] = route
+        return fallback
+    try:
+        generation = model_router.generate(
+            "frontdoor_classification",
+            messages=_frontdoor_messages(question, scenario, rule_intent),
+            metadata={
+                "scenario": scenario,
+                "rule_intent": rule_intent,
+                "task": "frontdoor_classification",
+            },
+        )
+    except Exception as exc:
+        fallback["model_reason"] = f"model_error:{type(exc).__name__}"
+        fallback["route"] = route
+        return fallback
+    classification = _frontdoor_classification_from_generation(generation)
+    if not classification:
+        fallback["model_reason"] = generation.get("reason") or "invalid_model_output"
+        fallback["route"] = route
+        return fallback
+    classification["route"] = route
+    return classification
+
+
+def _workbench_intake_messages(
+    input_text: str,
+    scenario: str,
+    role: str,
+    attachments: list[dict[str, Any]],
+    rule_result: dict[str, Any],
+) -> list[dict[str, str]]:
+    system = (
+        "你是荷小悦经营大脑的工作台入口判断器。你不回答问题，只判断这次输入应该进入哪个工作流。"
+        "必须基于语义、场景、角色和附件综合判断，不要只按关键词匹配。只返回 JSON，不要 Markdown。"
+        "JSON 字段：input_type, primary_workflow, team_value, answer_shape, inspector_shape, memory_action, next_actions, confidence, reason。"
+        "input_type 只能是 question/knowledge_intake/correction/operating_task/training/decision_support。"
+        "primary_workflow 只能是 ask/train/ingest/correct/execute/decide。"
+        "team_value、answer_shape、inspector_shape、next_actions 必须是短字符串数组。"
+        "如果用户是在说上一条不对、重做、按最新口径改，即使没有出现“纠偏”二字，也应判断为 correction/correct。"
+    )
+    user = "\n".join(
+        [
+            f"输入：{input_text}",
+            f"场景：{scenario}",
+            f"角色：{role}",
+            f"附件：{json.dumps(attachments, ensure_ascii=False)}",
+            f"规则兜底结果：{json.dumps({key: rule_result.get(key) for key in ['input_type', 'primary_workflow', 'team_value', 'answer_shape', 'inspector_shape', 'memory_action', 'next_actions']}, ensure_ascii=False)}",
+            "判断目标：让聊天框同时支持问经营、练员工、传资料、纠偏和派任务，并保持主回答简洁。",
+        ]
+    )
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def _bounded_string_list(value: Any, fallback: list[str], *, limit: int = 5) -> list[str]:
+    if not isinstance(value, list):
+        return fallback
+    cleaned = [str(item).strip() for item in value if str(item).strip()]
+    return cleaned[:limit] or fallback
+
+
+def _workbench_intake_from_generation(
+    generation: dict[str, Any],
+    *,
+    base_result: dict[str, Any],
+    route: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not generation.get("used_model"):
+        return None
+    payload = _extract_json_object(str(generation.get("output") or ""))
+    if not payload:
+        return None
+    input_type = str(payload.get("input_type") or "").strip()
+    workflow = str(payload.get("primary_workflow") or "").strip()
+    if input_type not in _WORKBENCH_INPUT_TYPES or workflow not in _WORKBENCH_WORKFLOWS:
+        return None
+    confidence = 0.0
+    try:
+        confidence = float(payload.get("confidence") or 0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    if confidence > 1:
+        confidence = confidence / 100
+    if confidence < 0.7:
+        return None
+    result = dict(base_result)
+    result.update(
+        {
+            "input_type": input_type,
+            "primary_workflow": workflow,
+            "team_value": _bounded_string_list(payload.get("team_value"), base_result.get("team_value") or [], limit=4),
+            "answer_shape": _bounded_string_list(payload.get("answer_shape"), base_result.get("answer_shape") or [], limit=6),
+            "inspector_shape": _bounded_string_list(payload.get("inspector_shape"), base_result.get("inspector_shape") or [], limit=7),
+            "memory_action": str(payload.get("memory_action") or base_result.get("memory_action") or "").strip(),
+            "next_actions": _bounded_string_list(payload.get("next_actions"), base_result.get("next_actions") or [], limit=5),
+            "intake_judgment": {
+                "version": "hxy-workbench-intake-judgment.v1",
+                "mode": "ai",
+                "task_type": "workbench_intake",
+                "confidence": round(max(0.0, min(1.0, confidence)), 2),
+                "reason": str(payload.get("reason") or "").strip(),
+                "model_reason": generation.get("reason") or "ok",
+                "route": route,
+            },
+        }
+    )
+    return result
+
+
+def _classify_workbench_intake_with_model(
+    *,
+    model_router: Any,
+    input_text: str,
+    scenario: str,
+    role: str,
+    attachments: list[dict[str, Any]],
+) -> dict[str, Any]:
+    rule_result = classify_workbench_intake(input_text, scenario=scenario, role=role, attachments=attachments)
+    route = model_router.route("workbench_intake")
+    fallback = dict(rule_result)
+    fallback["intake_judgment"] = {
+        "version": "hxy-workbench-intake-judgment.v1",
+        "mode": "rule_fallback",
+        "task_type": "workbench_intake",
+        "confidence": 0.62,
+        "reason": "使用本地工作台规则；模型未启用、未配置或输出未通过白名单校验。",
+        "model_reason": "not_used",
+        "route": route,
+    }
+    if not route.get("should_call_model"):
+        return fallback
+    try:
+        generation = model_router.generate(
+            "workbench_intake",
+            messages=_workbench_intake_messages(input_text, scenario, role, attachments, rule_result),
+            metadata={
+                "scenario": scenario,
+                "role": role,
+                "attachment_count": len(attachments),
+                "rule_input_type": rule_result.get("input_type"),
+                "rule_primary_workflow": rule_result.get("primary_workflow"),
+            },
+        )
+    except Exception as exc:
+        fallback["intake_judgment"]["model_reason"] = f"model_error:{type(exc).__name__}"
+        return fallback
+    ai_result = _workbench_intake_from_generation(generation, base_result=rule_result, route=route)
+    if not ai_result:
+        fallback["intake_judgment"]["model_reason"] = generation.get("reason") or "invalid_model_output"
+        return fallback
+    return ai_result
+
+
+def _vision_messages_for_upload(file_info: dict[str, Any], data_url: str, input_text: str, scenario: str) -> list[dict[str, Any]]:
+    instruction = (
+        "你是荷小悦经营大脑的图片资料理解器。请深度识别图片里的业务信息，不要只做普通 caption。"
+        "必须返回 JSON，不要 Markdown。字段：image_type, visual_summary, business_summary, ocr_text, "
+        "detected_entities, prices, related_domains, confidence, qa_ready, needs_review。"
+        "image_type 可用 menu/competitor_reference/store_photo/brand_visual/system_screenshot/general_image。"
+        "business_summary 要说明这张图应该沉淀到哪个经营知识里，以及团队如何使用。"
+        "related_domains 只能使用 product/brand/operations/store_model/franchise/finance/competitor/technology/external。"
+        "如果图片不清楚或无法稳定识别，qa_ready=false, needs_review=true。"
+    )
+    prompt = "\n".join(
+        [
+            instruction,
+            f"上传文件：{file_info.get('file_name') or ''}",
+            f"上传场景：{scenario}",
+            f"用户说明：{input_text or '无'}",
+        ]
+    )
+    return [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": data_url}},
+            ],
+        }
+    ]
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _image_understanding_from_generation(
+    *,
+    generation: dict[str, Any],
+    file_info: dict[str, Any],
+    asset_id: str,
+) -> dict[str, Any] | None:
+    if not generation.get("used_model"):
+        return None
+    payload = _extract_json_object(str(generation.get("output") or ""))
+    if not payload:
+        return None
+    image_type = str(payload.get("image_type") or "general_image").strip() or "general_image"
+    visual_summary = str(payload.get("visual_summary") or "").strip()
+    business_summary = str(payload.get("business_summary") or "").strip()
+    if not visual_summary or not business_summary:
+        return None
+    confidence = max(0.0, min(1.0, _safe_float(payload.get("confidence"), 0.0)))
+    qa_ready = bool(payload.get("qa_ready")) and confidence >= 0.5
+    needs_review = bool(payload.get("needs_review", not qa_ready)) or not qa_ready
+    related_domains = _string_list(payload.get("related_domains")) or ["external"]
+    normalized_domains = [
+        domain
+        for domain in related_domains
+        if domain in {"product", "brand", "operations", "store_model", "franchise", "finance", "competitor", "technology", "external"}
+    ] or ["external"]
+    record = {
+        "asset_id": asset_id,
+        "run_name": "workbench-instant",
+        "source_path": file_info.get("relative_path") or "",
+        "normalized_path": file_info.get("relative_path") or "",
+        "title": Path(str(file_info.get("file_name") or "")).stem,
+        "image_type": image_type,
+        "visual_summary": visual_summary,
+        "business_summary": business_summary,
+        "ocr_text": str(payload.get("ocr_text") or "").strip(),
+        "detected_entities": _string_list(payload.get("detected_entities")),
+        "prices": _string_list(payload.get("prices")),
+        "related_domains": normalized_domains,
+        "confidence": confidence,
+        "qa_ready": qa_ready,
+        "needs_review": needs_review,
+        "payload": {
+            **payload,
+            "model_reason": generation.get("reason") or "ok",
+            "provider_response_id": generation.get("provider_response_id"),
+        },
+    }
+    return record
+
+
+def _image_understanding_text(record: dict[str, Any]) -> str:
+    parts = [
+        f"图片类型：{record.get('image_type') or 'general_image'}",
+        f"视觉摘要：{record.get('visual_summary') or ''}",
+        f"业务摘要：{record.get('business_summary') or ''}",
+    ]
+    if record.get("detected_entities"):
+        parts.append("识别实体：" + "、".join(record["detected_entities"]))
+    if record.get("prices"):
+        parts.append("价格信息：" + "、".join(record["prices"]))
+    if record.get("ocr_text"):
+        parts.append("OCR 文本：" + str(record["ocr_text"])[:1000])
+    parts.append("相关知识域：" + "、".join(record.get("related_domains") or []))
+    return "\n".join(parts)
+
+
+def _chunk_for_image_understanding(record: dict[str, Any]) -> dict[str, Any]:
+    primary_domain = (record.get("related_domains") or ["external"])[0]
+    return {
+        "chunk_id": f"{record['asset_id']}:image-understanding:0",
+        "asset_id": record["asset_id"],
+        "run_name": record.get("run_name") or "workbench-instant",
+        "chunk_index": 900000,
+        "title": record.get("title") or "",
+        "source_path": record.get("source_path") or "",
+        "normalized_path": record.get("normalized_path") or "",
+        "domain": primary_domain,
+        "stage": "workbench",
+        "content": _image_understanding_text(record),
+        "metadata": {
+            "chunk_type": "image_understanding",
+            "image_type": record.get("image_type") or "general_image",
+            "confidence": record.get("confidence") or 0,
+            "qa_ready": bool(record.get("qa_ready")),
+        },
+    }
+
+
+def _understand_uploaded_images(
+    *,
+    root_dir: Path,
+    uploaded_files: list[dict[str, Any]],
+    memory_assets: list[dict[str, Any]],
+    model_router: Any,
+    input_text: str,
+    scenario: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    asset_by_path = {asset.get("source_path"): asset for asset in memory_assets}
+    records: list[dict[str, Any]] = []
+    chunks: list[dict[str, Any]] = []
+    tasks: list[dict[str, Any]] = []
+    for file_info in uploaded_files:
+        if not _is_image_upload(file_info):
+            continue
+        relative_path = file_info.get("relative_path") or ""
+        path = (root_dir / relative_path).resolve()
+        asset = asset_by_path.get(relative_path) or {}
+        asset_id = asset.get("asset_id") or f"hxy-workbench:image:{Path(relative_path).name}"
+        task = {
+            "file_name": file_info.get("file_name") or "",
+            "relative_path": relative_path,
+            "asset_id": asset_id,
+            "status": "needs_review",
+            "reason": "vision_model_unavailable",
+        }
+        if not path.exists() or not path.is_relative_to(root_dir.resolve()):
+            task["reason"] = "file_not_found"
+            tasks.append(task)
+            continue
+        route = model_router.route("vision_understanding")
+        if not route.get("should_call_model"):
+            tasks.append(task)
+            continue
+        mime_type = file_info.get("mime_type") or "image/png"
+        data_url = f"data:{mime_type};base64,{base64.b64encode(path.read_bytes()).decode('ascii')}"
+        try:
+            generation = model_router.generate(
+                "vision_understanding",
+                messages=_vision_messages_for_upload(file_info, data_url, input_text, scenario),
+                metadata={
+                    "file_name": file_info.get("file_name") or "",
+                    "mime_type": mime_type,
+                    "scenario": scenario,
+                },
+            )
+        except Exception as exc:
+            task["reason"] = f"model_error:{type(exc).__name__}"
+            tasks.append(task)
+            continue
+        record = _image_understanding_from_generation(generation=generation, file_info=file_info, asset_id=asset_id)
+        if not record:
+            task["reason"] = generation.get("reason") or "invalid_model_output"
+            tasks.append(task)
+            continue
+        records.append(record)
+        if record.get("qa_ready"):
+            chunks.append(_chunk_for_image_understanding(record))
+        else:
+            task["reason"] = "needs_human_review"
+            tasks.append(task)
+    return records, chunks, tasks
+
+
+def _normalize_question_pattern(question: str) -> str:
+    stop_chars = "，。！？?；;：:、（）()[]【】\"'“”‘’"
+    normalized = question or ""
+    for char in stop_chars:
+        normalized = normalized.replace(char, "")
+    return "".join(normalized.split())
+
+
+def _builtin_authority_card(question: str, intent: str) -> dict[str, Any] | None:
+    normalized_question = _normalize_question_pattern(question)
+    for card in [*authority_cards(), *brand_authority_cards()]:
+        if intent != "any" and card.get("intent") != intent:
+            continue
+        candidates = [card.get("question_pattern") or "", *(card.get("aliases") or [])]
+        normalized_candidates = [_normalize_question_pattern(candidate) for candidate in candidates if candidate]
+        if normalized_question in normalized_candidates:
+            result = dict(card)
+            result["card_id"] = f"builtin:{normalized_candidates[0]}"
+            result["builtin"] = True
+            return result
+    return None
+
+
+def _public_answer_card(card: dict[str, Any], *, source: str) -> dict[str, Any]:
+    public = dict(card)
+    public.setdefault("card_id", f"builtin:{_normalize_question_pattern(str(card.get('question_pattern') or ''))}")
+    public.setdefault("review_status", "approved_v1" if public.get("status") == "approved" else public.get("status", "draft"))
+    public.setdefault("version", "v1.0")
+    public.setdefault("role_versions", {})
+    public.setdefault("forbidden_terms", [])
+    public.setdefault("applicable_scenarios", [])
+    public.setdefault("aliases", [])
+    public["builtin"] = source == "builtin"
+    public["source"] = source
+    return public
+
+
+def _list_repository_answer_cards(repo: Any, *, status: str | None, limit: int) -> list[dict[str, Any]]:
+    list_cards = getattr(repo, "list_answer_cards", None)
+    if not callable(list_cards):
+        return []
+    return list_cards(status=status, limit=limit)
+
+
+def _answer_from_authority_card(
+    *,
+    question: str,
+    used_query: str,
+    scenario: str,
+    understanding: dict[str, Any],
+    card: dict[str, Any],
+) -> dict[str, Any]:
+    card_intent = card.get("intent") or "unknown"
+    card_audience = card.get("audience") or "general"
+    card_answer = card.get("answer") or ""
+    card_evidence = card.get("evidence") or []
+    result_card_evidence = card_evidence or [
+        {
+            "domain": "approved_answer_card",
+            "title": card.get("question_pattern") or question,
+            "strength": "high",
+            "excerpt": "已批准权威答案卡",
+        }
+    ]
+    result_card = build_result_card(
+        intent=card_intent,
+        scenario=scenario,
+        answer=card_answer,
+        evidence=result_card_evidence,
+        confidence="high",
+        conflicts=[],
+        needs_review=False,
+    )
+    for gate in result_card["quality_gates"]:
+        if gate["name"] == "命中正确业务域":
+            gate["passed"] = True
+            gate["detail"] = "已命中批准后的权威答案卡。"
+    result_card["stability_level"] = "stable"
+    quality_score = score_answer_quality(
+        question=question,
+        intent=card_intent,
+        scenario=scenario,
+        answer=card_answer,
+        evidence=result_card_evidence,
+        confidence="high",
+        needs_review=False,
+        from_answer_card=True,
+    )
+    return {
+        "answer_id": None,
+        "card_id": card.get("card_id"),
+        "authority_card": {
+            "builtin": bool(card.get("builtin")),
+            "card_id": card.get("card_id"),
+            "source": card.get("source") or "builtin",
+            "module": card.get("module"),
+        },
+        "from_answer_card": True,
+        "question": question,
+        "query": used_query,
+        "intent": card_intent,
+        "audience": card_audience,
+        "scenario": scenario,
+        "answer": card_answer,
+        "usage": usage_for(card_intent, scenario),
+        "applicable_scenarios": card.get("applicable_scenarios")
+        or applicable_scenarios_for(card_intent, card_audience, scenario),
+        "role_versions": card.get("role_versions") or {},
+        "forbidden_terms": card.get("forbidden_terms") or [],
+        "review_status": card.get("review_status") or "approved",
+        "version": card.get("version") or "v1.0",
+        "answer_status": "已批准",
+        "reasoning": card.get("reasoning") or [],
+        "evidence": card_evidence,
+        "sources": card_evidence,
+        "conflicts": [],
+        "corrections": card.get("corrections") or [],
+        "confidence": "high",
+        "quality_score": quality_score,
+        "quality_dimensions": quality_score["dimensions"],
+        "next_actions": card.get("next_actions") or [],
+        "needs_review": False,
+        "result_card": result_card,
+        "understanding": understanding,
+    }
+
+
+def _attach_model_route(answer: dict[str, Any], route: dict[str, Any]) -> dict[str, Any]:
+    answer["model_route"] = route
+    understanding = answer.get("understanding")
+    if isinstance(understanding, dict):
+        understanding["model_route"] = route
+    return answer
+
+
+def _attach_answer_pipeline(answer: dict[str, Any], *, role: str = "team") -> dict[str, Any]:
+    route = answer.get("model_route") or {}
+    pipeline = build_answer_pipeline(
+        question=answer.get("question") or "",
+        scenario=answer.get("scenario") or "经营问答",
+        role=role,
+        intent=answer.get("intent") or "unknown",
+        answer=answer.get("answer") or "",
+        evidence=answer.get("evidence") or [],
+        confidence=answer.get("confidence") or "low",
+        needs_review=bool(answer.get("needs_review", True)),
+        from_answer_card=bool(answer.get("from_answer_card", False)),
+        model_route=route,
+    )
+    answer["answer_pipeline"] = pipeline
+    understanding = answer.get("understanding")
+    if isinstance(understanding, dict):
+        understanding["answer_pipeline"] = pipeline
+    return answer
+
+
+def _apply_frontdoor_to_answer(answer: dict[str, Any], frontdoor: dict[str, Any]) -> dict[str, Any]:
+    if frontdoor.get("mode") != "ai":
+        return answer
+    frontdoor_intent = str(frontdoor.get("intent") or "")
+    if frontdoor_intent in _FRONTDOOR_INTENTS and frontdoor_intent != "knowledge_lookup":
+        answer["intent"] = frontdoor_intent
+        answer["audience"] = frontdoor.get("audience") or answer.get("audience") or "general"
+    understanding = answer.get("understanding")
+    if isinstance(understanding, dict):
+        understanding["frontdoor_classification"] = frontdoor
+    return answer
+
+
+def _model_answer_messages(question: str, answer: dict[str, Any]) -> list[dict[str, str]]:
+    evidence_lines = []
+    for index, item in enumerate(answer.get("evidence") or [], start=1):
+        title = item.get("title") or "未命名资料"
+        domain = item.get("domain") or "unknown"
+        excerpt = item.get("excerpt") or ""
+        evidence_lines.append(f"{index}. {title} [{domain}]：{excerpt}")
+    system = (
+        "你是荷小悦经营大脑的答案生成器。只能基于给定证据和已生成草稿回答。"
+        "输出给团队直接使用的中文答案，不要展示来源、路径、chunk、技术字段。"
+        "不得承诺治疗、治愈、保证回本、稳赚或绝对效果。"
+    )
+    user = "\n".join(
+        [
+            f"问题：{question}",
+            f"场景：{answer.get('scenario') or '经营问答'}",
+            f"意图：{answer.get('intent') or 'unknown'}",
+            f"当前草稿：{answer.get('answer') or ''}",
+            "证据：",
+            "\n".join(evidence_lines) or "无",
+            "请输出更清晰、可执行、克制的可用答案。",
+        ]
+    )
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def _policy_review_messages(question: str, answer: dict[str, Any], candidate_answer: str) -> list[dict[str, str]]:
+    evidence_lines = []
+    for index, item in enumerate(answer.get("evidence") or [], start=1):
+        title = item.get("title") or "未命名资料"
+        domain = item.get("domain") or "unknown"
+        excerpt = item.get("excerpt") or ""
+        evidence_lines.append(f"{index}. {title} [{domain}]：{excerpt}")
+    system = (
+        "你是荷小悦经营大脑的质检守门员。你不负责美化答案，只判断候选答案能不能交付给团队使用。"
+        "只返回 JSON，不要 Markdown。字段：passed, action, risk_flags, reason, confidence。"
+        "action 只能是 pass/needs_review/reject。"
+        "必须检查：是否有可用结论、是否符合证据、是否暴露技术痕迹、是否夸大疗效或收益、是否需要人工复核。"
+        "你只能收紧质量要求，不能放宽本地安全规则。"
+    )
+    user = "\n".join(
+        [
+            f"问题：{question}",
+            f"场景：{answer.get('scenario') or '经营问答'}",
+            f"意图：{answer.get('intent') or 'unknown'}",
+            f"候选答案：{candidate_answer}",
+            "证据：",
+            "\n".join(evidence_lines) or "无",
+            "请判断这条候选答案是否可以直接给团队使用。",
+        ]
+    )
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def _policy_review_from_generation(generation: dict[str, Any]) -> dict[str, Any] | None:
+    if not generation.get("used_model"):
+        return None
+    payload = _extract_json_object(str(generation.get("output") or ""))
+    if not payload:
+        return None
+    action = str(payload.get("action") or "").strip()
+    if action not in {"pass", "needs_review", "reject"}:
+        return None
+    confidence = 0.0
+    try:
+        confidence = float(payload.get("confidence") or 0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    if confidence > 1:
+        confidence = confidence / 100
+    if confidence < 0.6:
+        return None
+    return {
+        "version": "hxy-policy-review.v1",
+        "mode": "ai",
+        "passed": bool(payload.get("passed")) and action == "pass",
+        "action": action,
+        "risk_flags": _bounded_string_list(payload.get("risk_flags"), [], limit=6),
+        "reason": str(payload.get("reason") or "").strip(),
+        "confidence": round(max(0.0, min(1.0, confidence)), 2),
+        "model_reason": generation.get("reason") or "ok",
+        "route": generation.get("route") or {},
+    }
+
+
+def _review_model_candidate_answer(
+    *,
+    model_router: Any,
+    question: str,
+    answer: dict[str, Any],
+    candidate_answer: str,
+) -> dict[str, Any]:
+    route = model_router.route("policy_review")
+    fallback = {
+        "version": "hxy-policy-review.v1",
+        "mode": "rule_fallback",
+        "passed": True,
+        "action": "pass",
+        "risk_flags": [],
+        "reason": "模型质检未启用；已由本地质量闸口判断。",
+        "confidence": 0.0,
+        "model_reason": "not_used",
+        "route": route,
+    }
+    if not route.get("should_call_model"):
+        return fallback
+    try:
+        generation = model_router.generate(
+            "policy_review",
+            messages=_policy_review_messages(question, answer, candidate_answer),
+            metadata={
+                "intent": answer.get("intent") or "unknown",
+                "scenario": answer.get("scenario") or "经营问答",
+                "confidence": answer.get("confidence") or "low",
+                "evidence_count": len(answer.get("evidence") or []),
+            },
+        )
+    except Exception as exc:
+        fallback["passed"] = False
+        fallback["action"] = "needs_review"
+        fallback["risk_flags"] = ["policy_review_model_error"]
+        fallback["reason"] = "模型质检异常，按需复核处理。"
+        fallback["model_reason"] = f"model_error:{type(exc).__name__}"
+        return fallback
+    review = _policy_review_from_generation(generation)
+    if not review:
+        fallback["passed"] = False
+        fallback["action"] = "needs_review"
+        fallback["risk_flags"] = ["policy_review_invalid_output"]
+        fallback["reason"] = "模型质检输出未通过结构化校验，按需复核处理。"
+        fallback["model_reason"] = generation.get("reason") or "invalid_model_output"
+        return fallback
+    return review
+
+
+def _maybe_apply_model_answer(
+    *,
+    model_router: Any,
+    question: str,
+    answer: dict[str, Any],
+) -> dict[str, Any]:
+    route = answer.get("model_route") or model_router.route("rag_answer")
+    if not route.get("should_call_model"):
+        answer["model_generation"] = {
+            "used_model": False,
+            "reason": "disabled",
+            "route": route,
+        }
+        return answer
+    if bool(answer.get("needs_review")) and answer.get("confidence") == "low":
+        answer["model_generation"] = {
+            "used_model": False,
+            "reason": "quality_gate_blocked",
+            "route": route,
+        }
+        return answer
+    original_answer = answer.get("answer") or ""
+    result = model_router.generate(
+        "answer_synthesis",
+        messages=_model_answer_messages(question, answer),
+        metadata={
+            "intent": answer.get("intent") or "unknown",
+            "scenario": answer.get("scenario") or "经营问答",
+            "confidence": answer.get("confidence") or "low",
+            "evidence_count": len(answer.get("evidence") or []),
+        },
+    )
+    output = str(result.get("output") or "").strip()
+    if not result.get("used_model") or not output:
+        answer["model_generation"] = result
+        return answer
+    candidate_quality = score_answer_quality(
+        question=question,
+        intent=answer.get("intent") or "unknown",
+        scenario=answer.get("scenario") or "经营问答",
+        answer=output,
+        evidence=answer.get("evidence") or [],
+        confidence=answer.get("confidence") or "low",
+        needs_review=bool(answer.get("needs_review", True)),
+        from_answer_card=False,
+    )
+    if candidate_quality["needs_review"] or candidate_quality["level"] == "low" or has_metadata_noise(output):
+        answer["model_generation"] = {
+            **result,
+            "used_model": False,
+            "reason": "quality_gate_rejected",
+        }
+        answer["needs_review"] = True
+        return answer
+    policy_review = _review_model_candidate_answer(
+        model_router=model_router,
+        question=question,
+        answer=answer,
+        candidate_answer=output,
+    )
+    answer["policy_review"] = policy_review
+    if not policy_review.get("passed", True):
+        answer["model_generation"] = {
+            **result,
+            "used_model": False,
+            "reason": "policy_review_rejected",
+        }
+        answer["needs_review"] = True
+        answer["quality_score"] = candidate_quality
+        answer["quality_dimensions"] = candidate_quality["dimensions"]
+        return answer
+    answer["answer"] = output
+    answer["quality_score"] = candidate_quality
+    answer["quality_dimensions"] = candidate_quality["dimensions"]
+    answer["result_card"] = build_result_card(
+        intent=answer.get("intent") or "unknown",
+        scenario=answer.get("scenario") or "经营问答",
+        answer=output,
+        evidence=answer.get("evidence") or [],
+        confidence=answer.get("confidence") or "low",
+        conflicts=answer.get("conflicts") or [],
+        needs_review=bool(answer.get("needs_review", True)),
+    )
+    answer["model_generation"] = result
+    if not original_answer:
+        answer["reasoning"] = [*answer.get("reasoning", []), "模型在证据约束下生成了可用答案。"]
+    return answer
+
+
+def _has_any(text: str, terms: list[str]) -> bool:
+    return any(term in text for term in terms)
+
+
+def _training_dimension(key: str, name: str, score: int, detail: str) -> dict[str, Any]:
+    bounded_score = max(0, min(100, score))
+    return {
+        "key": key,
+        "name": name,
+        "score": bounded_score,
+        "passed": bounded_score >= 75,
+        "detail": detail,
+    }
+
+
+def _score_training_accuracy(answer: str) -> dict[str, Any]:
+    product_terms = ["清泡", "调泡", "补泡", "养泡"]
+    mentioned = [term for term in product_terms if term in answer]
+    role_terms = ["基础放松", "基础", "放松", "调理", "针对", "恢复", "疲劳", "保养", "长期"]
+    score = 20 + len(mentioned) * 12
+    if len(mentioned) >= 4:
+        score += 18
+    if _has_any(answer, role_terms):
+        score += 14
+    if "便宜" in answer and "贵" in answer and not _has_any(answer, ["基础", "状态", "调理", "恢复", "保养"]):
+        score -= 24
+    detail = (
+        "能区分清泡、调泡、补泡、养泡，并表达基础放松、状态调理、恢复和保养。"
+        if score >= 75
+        else "没有讲清清泡、调泡、补泡、养泡的差异，容易被顾客理解成价格差。"
+    )
+    return _training_dimension("accuracy", "产品准确性", score, detail)
+
+
+def _score_training_discovery(answer: str) -> dict[str, Any]:
+    discovery_terms = ["问", "了解", "最近", "睡眠", "疲劳", "累", "手脚凉", "压力", "状态", "需求", "情况"]
+    hit_count = sum(1 for term in discovery_terms if term in answer)
+    score = min(100, hit_count * 16)
+    if _has_any(answer, ["睡眠", "疲劳", "手脚凉", "压力"]) and _has_any(answer, ["问", "了解", "最近", "情况"]):
+        score = max(score, 95)
+    detail = (
+        "先探询顾客近期状态，再推荐泡脚方。"
+        if score >= 75
+        else "缺少需求探询，员工应先问睡眠、疲劳、手脚凉、压力等状态。"
+    )
+    return _training_dimension("discovery", "需求探询", score, detail)
+
+
+def _score_training_compliance(answer: str) -> tuple[dict[str, Any], list[str]]:
+    correction_points: list[str] = []
+    score = 100
+    overclaim_terms = ["治愈", "治好", "保证", "肯定有效", "一定有效", "药到病除", "根治"]
+    treatment_claim = (
+        "治疗" in answer
+        and not _has_any(answer, ["不承诺治疗", "不能承诺治疗", "不说治疗", "不可说治疗", "不讲治疗"])
+    )
+    insomnia_claim = "失眠" in answer and not _has_any(answer, ["不承诺", "不能承诺", "不说", "不可说", "不讲"])
+    if treatment_claim or insomnia_claim or _has_any(answer, overclaim_terms):
+        score = 20
+        correction_points.append("不能承诺治疗、治愈、保证或肯定有效，只能表达放松、改善体验和状态建议。")
+    if "排毒" in answer:
+        score = min(score, 60)
+        correction_points.append("不要使用排毒等容易夸大功效的表达。")
+    detail = (
+        "已避开治疗、治愈、保证有效等高风险表达。"
+        if score >= 75
+        else "存在治疗、保证或绝对化承诺，必须复训。"
+    )
+    return _training_dimension("compliance", "合规边界", score, detail), correction_points
+
+
+def _score_training_conversion(answer: str) -> dict[str, Any]:
+    score = 45
+    if _has_any(answer, ["根据", "适合", "建议", "推荐", "针对"]):
+        score += 18
+    if _has_any(answer, ["睡眠", "疲劳", "手脚凉", "压力", "状态", "需求"]):
+        score += 22
+    if _has_any(answer, ["清泡", "调泡", "补泡", "养泡"]) and _has_any(answer, ["放松", "调理", "恢复", "保养"]):
+        score += 15
+    if "便宜" in answer and "贵" in answer and not _has_any(answer, ["适合", "建议", "状态", "需求"]):
+        score -= 35
+    detail = (
+        "能把顾客状态连接到推荐理由。"
+        if score >= 75
+        else "推荐逻辑偏价格解释，缺少按顾客状态转化。"
+    )
+    return _training_dimension("conversion", "推荐转化", score, detail)
+
+
+def _score_training_clarity(answer: str) -> dict[str, Any]:
+    length = len(answer.strip())
+    score = 45
+    if length >= 45:
+        score += 20
+    if length >= 80:
+        score += 10
+    if _has_any(answer, ["先", "再", "清泡", "调泡", "补泡", "养泡"]):
+        score += 15
+    if "。" in answer or "；" in answer:
+        score += 10
+    detail = "表达清楚，能直接作为训练示例。" if score >= 75 else "表达过短或结构不清，员工复述后仍可能跑偏。"
+    return _training_dimension("clarity", "表达清晰度", score, detail)
+
+
+_TRAINING_SAFETY_TERMS = [
+    "治疗失眠",
+    "治疗",
+    "治愈",
+    "治好",
+    "根治",
+    "保证有效",
+    "保证",
+    "肯定有效",
+    "一定有效",
+    "包好",
+    "当天见效",
+    "药到病除",
+    "排毒治病",
+    "稳赚",
+    "保证回本",
+    "一定回本",
+    "零风险",
+]
+_TRAINING_SAFETY_NEGATIONS = [
+    "不",
+    "不能",
+    "不得",
+    "不要",
+    "禁止",
+    "避免",
+    "不可",
+    "不说",
+    "不讲",
+    "不承诺",
+    "不能承诺",
+    "不得承诺",
+    "不要承诺",
+    "禁用",
+]
+_TRAINING_SAFETY_CORRECTION = "不能承诺治疗、治愈、保证或肯定有效，只能表达放松、改善体验和状态建议。"
+
+
+def _training_term_is_negated(text: str, index: int, term: str) -> bool:
+    before = text[max(0, index - 12) : index]
+    around = text[max(0, index - 12) : index + len(term) + 4]
+    return any(marker in before or marker in around for marker in _TRAINING_SAFETY_NEGATIONS)
+
+
+def _training_safety_violations(text: str) -> list[str]:
+    normalized = (text or "").strip()
+    if not normalized:
+        return []
+    hits: list[str] = []
+    for term in _TRAINING_SAFETY_TERMS:
+        start = 0
+        while True:
+            index = normalized.find(term, start)
+            if index < 0:
+                break
+            if not _training_term_is_negated(normalized, index, term):
+                hits.append(term)
+                break
+            start = index + len(term)
+    return hits
+
+
+def _default_store_staff_standard_script() -> str:
+    return (
+        "您好，我先了解一下您最近的状态：睡眠怎么样，身体会不会容易累，手脚有没有发凉，压力大不大？"
+        "如果只是想放松，清泡就够用；如果最近状态比较紧、睡眠或疲劳感明显，可以选调泡，做更有针对性的放松调理体验；"
+        "如果最近比较累，补泡会更适合恢复感；如果想长期保养，养泡更适合持续养护。"
+        "我们主要帮您做放松、体验和状态调理建议，不替代医疗治疗。"
+    )
+
+
+_TRAINING_DIMENSION_NAMES = {
+    "accuracy": "产品准确性",
+    "discovery": "需求探询",
+    "compliance": "合规边界",
+    "conversion": "推荐转化",
+    "clarity": "表达清晰度",
+}
+
+
+def _training_level_for_score(score: int) -> tuple[str, str, bool]:
+    if score >= 90:
+        level = "excellent"
+    elif score >= 75:
+        level = "pass"
+    else:
+        level = "retrain"
+    level_label = {"excellent": "优秀", "pass": "通过", "retrain": "需复训"}[level]
+    return level, level_label, level == "retrain"
+
+
+def _rule_training_dimensions_and_corrections(employee_answer: str) -> tuple[list[dict[str, Any]], list[str]]:
+    dimensions: list[dict[str, Any]] = [
+        _score_training_accuracy(employee_answer),
+        _score_training_discovery(employee_answer),
+    ]
+    compliance_dimension, correction_points = _score_training_compliance(employee_answer)
+    dimensions.extend(
+        [
+            compliance_dimension,
+            _score_training_conversion(employee_answer),
+            _score_training_clarity(employee_answer),
+        ]
+    )
+    dimension_scores = {item["key"]: int(item["score"]) for item in dimensions}
+    if dimension_scores["accuracy"] < 75:
+        correction_points.append("不要把调泡、补泡、养泡讲成只是更贵；要讲清各自适用状态和价值。")
+    if dimension_scores["discovery"] < 75:
+        correction_points.append("推荐前先问顾客最近睡眠、疲劳、手脚凉、压力或身体状态。")
+    if dimension_scores["conversion"] < 75:
+        correction_points.append("用顾客状态推荐泡脚方，不要只从价格高低解释。")
+    if dimension_scores["clarity"] < 75:
+        correction_points.append("话术要短、清楚、可复述，建议控制在 30 秒内。")
+    return dimensions, correction_points
+
+
+def _replace_dimension(dimensions: list[dict[str, Any]], replacement: dict[str, Any]) -> list[dict[str, Any]]:
+    replaced = False
+    next_dimensions: list[dict[str, Any]] = []
+    for item in dimensions:
+        if item.get("key") == replacement["key"]:
+            next_dimensions.append(replacement)
+            replaced = True
+        else:
+            next_dimensions.append(item)
+    if not replaced:
+        next_dimensions.append(replacement)
+    return next_dimensions
+
+
+def _append_unique(items: list[str], value: str) -> list[str]:
+    if value and value not in items:
+        items.append(value)
+    return items
+
+
+def _apply_training_safety_gate(result: dict[str, Any], request: TrainingEvaluateRequest) -> dict[str, Any]:
+    employee_violations = _training_safety_violations(request.employee_answer)
+    standard_violations = _training_safety_violations(result.get("standard_script") or "")
+    final_standard_script = str(result.get("standard_script") or "")
+    standard_script_rewritten = False
+    if standard_violations:
+        final_standard_script = _default_store_staff_standard_script()
+        result["standard_script"] = final_standard_script
+        standard_script_rewritten = True
+        if isinstance(result.get("answer_card_draft"), dict):
+            result["answer_card_draft"]["answer"] = final_standard_script
+        correction_package = result.get("correction_package") or {}
+        package_draft = correction_package.get("answer_card_draft")
+        if isinstance(package_draft, dict):
+            package_draft["answer"] = final_standard_script
+        if isinstance(result.get("role_versions"), dict):
+            result["role_versions"]["store_staff"] = final_standard_script
+        if standard_violations and not employee_violations:
+            _append_unique(
+                result.setdefault("correction_points", []),
+                "AI生成的标准话术包含高风险表达，已替换为安全标准话术，需运营负责人复核后再沉淀。",
+            )
+
+    safety_gate = {
+        "passed": not employee_violations,
+        "employee_claim_violations": employee_violations,
+        "standard_script_violations": standard_violations,
+        "standard_script_rewritten": standard_script_rewritten,
+    }
+    result.setdefault("training_judgment", {})["safety_gate"] = safety_gate
+    if not employee_violations:
+        return result
+
+    violation_text = "、".join(employee_violations)
+    correction = f"员工话术包含高风险承诺：{violation_text}。{_TRAINING_SAFETY_CORRECTION}"
+    _append_unique(result.setdefault("correction_points", []), correction)
+    result["corrections"] = result["correction_points"]
+    result["dimensions"] = _replace_dimension(
+        result.get("dimensions") or [],
+        _training_dimension(
+            "compliance",
+            "合规边界",
+            20,
+            f"员工话术包含高风险承诺：{violation_text}，必须复训。",
+        ),
+    )
+    result["score"] = min(int(result.get("score") or 0), 60)
+    result["level"] = "retrain"
+    result["level_label"] = "需复训"
+    result["needs_retrain"] = True
+    result["answer_card_draft"] = None
+    result["review_status"] = "待复训"
+    result["confidence"] = "high"
+    retraining_task = result.get("retraining_task") or {}
+    retraining_actions = retraining_task.get("actions") or []
+    result["next_actions"] = retraining_actions
+    result["reasoning"] = [item.get("detail") for item in result["dimensions"] if item.get("detail")]
+    result["answer"] = (
+        "训练结果：需要复训。员工话术出现治疗、保证有效或绝对化承诺，不能对顾客这样表达。"
+        "正确做法是先问睡眠、疲劳、手脚凉、压力，再讲清泡基础放松、调泡按状态调理、补泡强调恢复感、养泡强调长期保养。"
+    )
+    result_card = result.get("result_card") or {}
+    result_card["usable_answer"] = result["answer"]
+    result_card["business_result"] = f"员工话术评分 {result['score']} 分，等级：需复训。"
+    result_card["stability_level"] = "review_required"
+    quality_gates = []
+    for item in result["dimensions"]:
+        quality_gates.append(
+            {
+                "name": item["name"],
+                "passed": bool(item["passed"]),
+                "detail": f"{item['score']} 分：{item['detail']}",
+            }
+        )
+    result_card["quality_gates"] = quality_gates
+    result["result_card"] = result_card
+    correction_package = result.get("correction_package") or {}
+    correction_package["failure_type"] = "training_gap"
+    correction_package["recommended_actions"] = retraining_actions
+    result["correction_package"] = correction_package
+    workbench_intake = result.get("workbench_intake") or {}
+    workbench_intake["next_actions"] = retraining_actions
+    workbench_intake["memory_action"] = "违规话术进入复训任务；复训通过前不能沉淀为权威答案卡。"
+    result["workbench_intake"] = workbench_intake
+    return result
+
+
+def _attach_training_curriculum(result: dict[str, Any], request: TrainingEvaluateRequest) -> dict[str, Any]:
+    employee_id = request.employee_id.strip() or "employee-local"
+    capability_profile = build_training_capability_profile(result, employee_id=employee_id)
+    adaptive_retrain_plan = build_adaptive_retrain_plan(result, employee_id=employee_id)
+    result["capability_profile"] = capability_profile
+    result["adaptive_retrain_plan"] = adaptive_retrain_plan
+    result["operating_metric_links"] = adaptive_retrain_plan.get("operating_metric_links") or []
+    result["follow_up_questions"] = [
+        item.get("customer_question") or ""
+        for item in adaptive_retrain_plan.get("next_questions") or []
+        if item.get("customer_question")
+    ] or result.get("follow_up_questions") or []
+    result["next_actions"] = result.get("next_actions") or []
+    if result.get("needs_retrain"):
+        result["next_actions"] = [
+            f"优先复训：{capability_profile.get('summary') or '基础话术'}",
+            *result["next_actions"],
+        ]
+    result_card = result.get("result_card") or {}
+    gates = result_card.get("quality_gates") or []
+    gates.append(
+        {
+            "name": "能力等级",
+            "passed": capability_profile.get("level") != "newbie" or not result.get("needs_retrain"),
+            "detail": f"{capability_profile.get('level')} · {capability_profile.get('summary')}",
+        }
+    )
+    result_card["quality_gates"] = gates
+    result["result_card"] = result_card
+    workbench_intake = result.get("workbench_intake") or {}
+    workbench_intake["team_value"] = [
+        "训练团队",
+        "能力等级",
+        "自适应复训",
+        "经营结果关联",
+    ]
+    workbench_intake["next_actions"] = result.get("next_actions") or []
+    result["workbench_intake"] = workbench_intake
+    return result
+
+
+def _build_training_result(
+    request: TrainingEvaluateRequest,
+    *,
+    dimensions: list[dict[str, Any]],
+    correction_points: list[str],
+    standard_script: str | None = None,
+    usable_answer_override: str | None = None,
+    judgment: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    employee_answer = request.employee_answer.strip()
+    dimension_scores = {item["key"]: int(item["score"]) for item in dimensions}
+    score = round(sum(dimension_scores.values()) / len(dimension_scores)) if dimensions else 0
+    if judgment and isinstance(judgment.get("score"), int):
+        score = max(0, min(100, int(judgment["score"])))
+    level, level_label, needs_retrain = _training_level_for_score(score)
+    standard_script = standard_script or (employee_answer if level == "excellent" else _default_store_staff_standard_script())
+    answer_card_draft = {
+        "question_pattern": _normalize_question_pattern(request.customer_question or request.training_item),
+        "intent": "product_system",
+        "audience": "store_staff",
+        "answer": standard_script,
+        "reasoning": [
+            "来自门店员工训练评估。",
+            "通过产品准确性、需求探询、合规边界、推荐转化和表达清晰度五项评分。",
+        ],
+        "evidence": [],
+        "corrections": correction_points,
+        "next_actions": ["运营负责人复核", "通过后纳入门店培训标准话术", "沉淀为权威答案卡"],
+        "status": "draft",
+        "source_answer_id": None,
+    }
+    retraining_task = {
+        "title": f"{request.training_item.strip() or '门店话术'}复训",
+        "owner": "店长/运营负责人",
+        "deadline": "下次班前会",
+        "actions": [
+            "删除治疗、保证有效、只是更贵等错误表达",
+            "按顾客状态做一次追问演练",
+            "用清泡、调泡、补泡、养泡四句话重新录制话术",
+            "店长按五项评分表复核",
+        ],
+    }
+    follow_up_questions = [
+        f"{request.customer_question.strip() or '顾客问：清泡调补养有什么区别？'} 请用 30 秒重新回答，先问状态，再推荐。",
+        "顾客说最近很累但只想随便泡泡，你怎么引导？",
+        "顾客问能不能治疗失眠，你怎么合规表达？",
+    ]
+    usable_answer = (
+        "训练结果：优秀，可作为答案卡候选。保留“先问顾客状态，再讲清泡基础放松、调泡针对状态、补泡恢复感、养泡长期保养，并避免治疗承诺”的结构。"
+        if level == "excellent"
+        else "训练结果：需要复训。先删掉“治疗失眠、肯定有效、只是更贵”等表达；正确做法是先问睡眠、疲劳、手脚凉、压力，再讲清泡基础放松、调泡按状态调理、补泡强调恢复感、养泡强调长期保养。"
+        if needs_retrain
+        else "训练结果：通过。建议继续压缩话术，把顾客状态和推荐理由说得更直接。"
+    )
+    if usable_answer_override:
+        usable_answer = usable_answer_override
+    training_judgment = {
+        "mode": "ai" if judgment else "rule_fallback",
+        "model_reason": (judgment or {}).get("model_reason") or "not_used",
+    }
+    result = {
+        "version": "hxy-training-evaluation.v1",
+        "status": "evaluated",
+        "training_item": request.training_item.strip() or "清泡调补养门店推荐话术",
+        "customer_question": request.customer_question.strip() or "顾客问：清泡调补养有什么区别？",
+        "employee_answer": employee_answer,
+        "scenario": request.scenario.strip() or "门店员工培训",
+        "role": request.role.strip() or "门店员工",
+        "intent": "training",
+        "audience": "store_staff",
+        "score": score,
+        "level": level,
+        "level_label": level_label,
+        "dimensions": dimensions,
+        "needs_retrain": needs_retrain,
+        "correction_points": correction_points,
+        "follow_up_questions": follow_up_questions,
+        "standard_script": standard_script,
+        "training_judgment": training_judgment,
+        "retraining_task": retraining_task,
+        "answer_card_draft": answer_card_draft if level == "excellent" else None,
+        "correction_package": {
+            "version": "hxy-training-correction.v1",
+            "failure_type": "training_gap",
+            "target": f"{request.training_item.strip() or '门店话术'}复训并复核后替代旧训练口径",
+            "normalized_question": _normalize_question_pattern(request.customer_question or request.training_item),
+            "recommended_reviewer": "运营负责人",
+            "recommended_actions": retraining_task["actions"],
+            "answer_card_draft": answer_card_draft,
+        },
+        "answer": usable_answer,
+        "usage": "用于门店员工训练、店长验收和优秀话术沉淀。",
+        "applicable_scenarios": ["门店员工培训", "店长验收", "标准话术沉淀"],
+        "role_versions": {
+            "store_staff": answer_card_draft["answer"],
+            "store_manager": "按五项评分表验收员工话术，低于 75 分进入复训，高于 90 分提交为答案卡候选。",
+        },
+        "forbidden_terms": ["治疗失眠", "治愈", "保证有效", "肯定有效", "只是更贵"],
+        "review_status": "待复训" if needs_retrain else "待复核",
+        "confidence": "high",
+        "evidence": [],
+        "sources": [],
+        "reasoning": [item["detail"] for item in dimensions],
+        "corrections": correction_points,
+        "next_actions": retraining_task["actions"] if needs_retrain else answer_card_draft["next_actions"],
+        "needs_review": True,
+        "result_card": {
+            "result_type": "门店训练评分卡",
+            "usable_answer": usable_answer,
+            "business_result": f"员工话术评分 {score} 分，等级：{level_label}。",
+            "risk_boundary": "训练反馈只用于内部培训；对顾客不得承诺治疗、治愈、保证或绝对效果。",
+            "quality_gates": [
+                {
+                    "name": item["name"],
+                    "passed": bool(item["passed"]),
+                    "detail": f"{item['score']} 分：{item['detail']}",
+                }
+                for item in dimensions
+            ],
+            "review_owner": "运营负责人",
+            "stability_level": "review_required" if needs_retrain else "candidate",
+        },
+        "workbench_intake": {
+            "input_type": "training_script",
+            "primary_workflow": "training_evaluation",
+            "scenario": request.scenario.strip() or "门店员工培训",
+            "team_value": ["训练团队", "统一话术", "纠偏复训", "沉淀优秀样本"],
+            "next_actions": retraining_task["actions"] if needs_retrain else answer_card_draft["next_actions"],
+            "memory_action": "优秀话术经复核后沉淀为权威答案卡；低分话术进入复训任务。",
+        },
+    }
+    result = _apply_training_safety_gate(result, request)
+    return _attach_training_curriculum(result, request)
+
+
+def evaluate_training_script(request: TrainingEvaluateRequest) -> dict[str, Any]:
+    dimensions, correction_points = _rule_training_dimensions_and_corrections(request.employee_answer.strip())
+    return _build_training_result(request, dimensions=dimensions, correction_points=correction_points)
+
+
+def _training_evaluation_messages(request: TrainingEvaluateRequest, rule_result: dict[str, Any]) -> list[dict[str, str]]:
+    system = (
+        "你是荷小悦门店员工训练评分官。你的任务是判断员工话术是否能在真实门店对顾客使用，"
+        "不要只按关键词命中打分，要根据语义、业务意图、合规边界和顾客沟通效果综合判断。"
+        "必须只返回 JSON，不要 Markdown，不要解释 JSON 以外的内容。"
+        "JSON 字段：score(int 0-100), level(excellent/pass/retrain), dimensions(list), "
+        "correction_points(list), standard_script(string), usable_answer(string)。"
+        "dimensions 必须包含 accuracy, discovery, compliance, conversion, clarity 五项，每项包含 key, name, score, detail。"
+        "standard_script 必须是员工可以直接对顾客说的话，不要写“建议、先问顾客、不要”等内部教练指令。"
+        "不得承诺治疗、治愈、保证有效、肯定有效、稳赚或绝对结果。"
+    )
+    user = "\n".join(
+        [
+            f"训练项目：{request.training_item.strip() or '清泡调补养门店推荐话术'}",
+            f"顾客问题：{request.customer_question.strip() or '顾客问：清泡调补养有什么区别？'}",
+            f"员工话术：{request.employee_answer.strip()}",
+            f"规则兜底评分：{rule_result.get('score')} 分，仅供校准，不得机械照搬。",
+            "评分标准：",
+            "1. 产品准确性：是否理解清泡、调泡、补泡、养泡的真实差异，而不是只讲价格。",
+            "2. 需求探询：是否先理解顾客状态、睡眠、疲劳、手脚凉、压力等信息。",
+            "3. 合规边界：是否避开治疗、治愈、保证有效等表达。",
+            "4. 推荐转化：是否能把顾客状态连接到合适方案。",
+            "5. 表达清晰度：是否短、清楚、顾客听得懂、员工可复述。",
+        ]
+    )
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def _extract_json_object(text: str) -> dict[str, Any] | None:
+    stripped = (text or "").strip()
+    if not stripped:
+        return None
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", stripped, flags=re.DOTALL)
+    candidate = fenced.group(1) if fenced else stripped
+    if not candidate.startswith("{"):
+        start = candidate.find("{")
+        end = candidate.rfind("}")
+        if start >= 0 and end > start:
+            candidate = candidate[start : end + 1]
+    try:
+        parsed = json.loads(candidate)
+    except Exception:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _bounded_int(value: Any, default: int = 0) -> int:
+    try:
+        return max(0, min(100, int(value)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _training_judgment_from_model_generation(generation: dict[str, Any]) -> dict[str, Any] | None:
+    if not generation.get("used_model"):
+        return None
+    payload = _extract_json_object(str(generation.get("output") or ""))
+    if not payload:
+        return None
+    raw_dimensions = payload.get("dimensions")
+    if not isinstance(raw_dimensions, list):
+        return None
+    by_key = {str(item.get("key") or ""): item for item in raw_dimensions if isinstance(item, dict)}
+    dimensions: list[dict[str, Any]] = []
+    for key, name in _TRAINING_DIMENSION_NAMES.items():
+        item = by_key.get(key)
+        if not item:
+            return None
+        dimensions.append(
+            _training_dimension(
+                key,
+                str(item.get("name") or name),
+                _bounded_int(item.get("score")),
+                str(item.get("detail") or "AI 已完成该项判断。"),
+            )
+        )
+    standard_script = str(payload.get("standard_script") or "").strip()
+    if not standard_script:
+        return None
+    raw_corrections = payload.get("correction_points") or []
+    correction_points = [str(item).strip() for item in raw_corrections if str(item).strip()] if isinstance(raw_corrections, list) else []
+    usable_answer = str(payload.get("usable_answer") or "").strip()
+    return {
+        "score": _bounded_int(payload.get("score")),
+        "dimensions": dimensions,
+        "correction_points": correction_points,
+        "standard_script": standard_script,
+        "usable_answer": usable_answer,
+        "model_reason": generation.get("reason") or "ok",
+        "model_usage": generation.get("usage") or {},
+    }
+
+
+def _evaluate_training_with_model(
+    *,
+    model_router: Any,
+    request: TrainingEvaluateRequest,
+    rule_result: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        generation = model_router.generate(
+            "training_evaluation",
+            messages=_training_evaluation_messages(request, rule_result),
+            metadata={
+                "scenario": request.scenario.strip() or "门店员工培训",
+                "role": request.role.strip() or "门店员工",
+                "training_item": request.training_item.strip() or "清泡调补养门店推荐话术",
+            },
+        )
+    except Exception as exc:
+        rule_result["training_judgment"] = {
+            "mode": "rule_fallback",
+            "model_reason": f"model_error:{type(exc).__name__}",
+        }
+        return rule_result
+
+    judgment = _training_judgment_from_model_generation(generation)
+    if not judgment:
+        rule_result["training_judgment"] = {
+            "mode": "rule_fallback",
+            "model_reason": generation.get("reason") or "invalid_model_output",
+        }
+        return rule_result
+    return _build_training_result(
+        request,
+        dimensions=judgment["dimensions"],
+        correction_points=judgment["correction_points"],
+        standard_script=judgment["standard_script"],
+        usable_answer_override=judgment["usable_answer"],
+        judgment=judgment,
+    )
+
+
+def build_correction_package(question: str, rating: str, note: str) -> dict[str, Any]:
+    normalized_question = _normalize_question_pattern(question)
+    failure_type = "incorrect_answer" if rating == "incorrect" else "incomplete_answer"
+    target = "修正答案并沉淀权威答案卡" if rating == "incorrect" else "补充缺失信息并更新答案卡草稿"
+    review_notes = [note] if note else []
+    error_type = _correction_error_type(question, note, rating)
+    missing_information = _correction_missing_information(question, note)
+    recommended_reviewer = _correction_reviewer(question)
+    replacement_action = "复核通过后替代旧答案；旧答案保留历史记录但不再作为默认口径。"
+    actions = [
+        "复核原答案和证据来源是否匹配",
+        "补充或替换权威资料后重新提问",
+        "将确认后的结论沉淀为答案卡草稿",
+        "复核通过后替代旧答案",
+    ]
+    if rating == "incorrect":
+        actions.insert(0, "定位错误结论，标注正确说法")
+    else:
+        actions.insert(0, "列出缺失字段、适用场景或证据口径")
+    corrections = review_notes[:]
+    if error_type == "overclaim_or_wrong_conclusion":
+        corrections.append("不能承诺稳赚、保证回本、治疗或绝对效果；必须补充风险边界。")
+    return {
+        "version": "hxy-correction-package.v1",
+        "failure_type": failure_type,
+        "error_type": error_type,
+        "target": target,
+        "normalized_question": normalized_question,
+        "review_notes": review_notes,
+        "missing_information": missing_information,
+        "recommended_reviewer": recommended_reviewer,
+        "replacement_action": replacement_action,
+        "recommended_actions": actions,
+        "answer_card_draft": {
+            "question_pattern": normalized_question,
+            "intent": "unknown",
+            "audience": "general",
+            "answer": "",
+            "reasoning": [],
+            "evidence": [],
+            "corrections": corrections,
+            "next_actions": actions,
+            "status": "draft",
+            "source_answer_id": None,
+        },
+    }
+
+
+def _correction_error_type(question: str, note: str, rating: str) -> str:
+    text = f"{question} {note}"
+    if any(term in text for term in ["保证", "稳赚", "一定回本", "治疗", "治愈", "绝对", "承诺"]):
+        return "overclaim_or_wrong_conclusion"
+    if rating == "needs_work" or any(term in text for term in ["缺少", "不完整", "没说", "需要补"]):
+        return "missing_context_or_incomplete_answer"
+    if any(term in text for term in ["冲突", "不一致", "新旧"]):
+        return "knowledge_conflict"
+    return "wrong_or_unverified_answer"
+
+
+def _correction_missing_information(question: str, note: str) -> list[str]:
+    text = f"{question} {note}"
+    missing: list[str] = []
+    if any(term in text for term in ["回本", "招商", "加盟", "单店模型"]):
+        missing.extend(["真实门店数据", "投资成本", "客流来源", "客单价", "复购率", "风险边界"])
+    if any(term in text for term in ["定位", "核爆点", "品牌"]):
+        missing.extend(["权威定位原文", "适用场景", "外部话术边界"])
+    if any(term in text for term in ["清泡", "调补养", "泡脚方", "产品"]):
+        missing.extend(["产品定义", "适用人群", "禁用表达", "门店话术"])
+    if "风险边界" in text and "风险边界" not in missing:
+        missing.append("风险边界")
+    if not missing:
+        missing.append("权威资料或业务负责人复核结论")
+    deduped: list[str] = []
+    for item in missing:
+        if item not in deduped:
+            deduped.append(item)
+    return deduped
+
+
+def _correction_reviewer(question: str) -> str:
+    if any(term in question for term in ["招商", "加盟", "回本", "单店模型"]):
+        return "招商负责人"
+    if any(term in question for term in ["清泡", "调补养", "泡脚方", "产品"]):
+        return "产品负责人"
+    if any(term in question for term in ["员工", "门店", "SOP", "话术"]):
+        return "运营负责人"
+    if any(term in question for term in ["定位", "核爆点", "品牌"]):
+        return "创始人/品牌负责人"
+    return "业务负责人"
+
+
+def _review_task_dedupe_key(task: dict[str, Any]) -> str:
+    reason = str(task.get("reason") or "")
+    payload = task.get("payload_json") or {}
+    if isinstance(payload, dict):
+        reason = str(payload.get("reason") or reason)
+        correction_package = payload.get("correction_package") or {}
+        if isinstance(correction_package, dict):
+            normalized = correction_package.get("normalized_question")
+            if normalized:
+                return f"{normalized}:{reason}" if reason else str(normalized)
+    normalized_question = _normalize_question_pattern(str(task.get("question") or ""))
+    return f"{normalized_question}:{reason}" if reason else normalized_question
+
+
+def dedupe_review_tasks(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in items:
+        key = _review_task_dedupe_key(item)
+        if not key:
+            key = str(item.get("task_id") or "")
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def create_app(
+    root_dir: Path | None = None,
+    repository_factory: RepositoryFactory | None = None,
+    model_router: Any | None = None,
+) -> FastAPI:
+    settings = get_settings()
+    resolved_root = (root_dir or settings.root_dir).resolve()
+    project_root = Path(__file__).resolve().parents[2]
+    inbox_dir = resolved_root / "knowledge" / "raw" / "inbox"
+    inbox_dir.mkdir(parents=True, exist_ok=True)
+    make_repository = repository_factory or _default_repository_factory(settings.database_url)
+    model_router = model_router or ModelRouter()
+    require_api_token = _require_api_token(settings.api_token)
+    allowed_upload_extensions = {extension.lower() for extension in settings.allowed_upload_extensions}
+
+    app = FastAPI(title="HXY Knowledge API", version="0.1.0")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(settings.cors_origins),
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    @app.get("/health")
+    async def health() -> dict[str, Any]:
+        return {
+            "service": "hxy-knowledge-api",
+            "status": "ok",
+            "root_dir": str(resolved_root),
+            "inbox_path": str(inbox_dir),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    @app.get("/brain.html")
+    async def brain_page() -> HTMLResponse:
+        for page in [
+            resolved_root / "apps" / "admin-web" / "brain.html",
+            project_root / "apps" / "admin-web" / "brain.html",
+        ]:
+            if page.exists():
+                return HTMLResponse(page.read_text(encoding="utf-8"))
+        raise HTTPException(status_code=404, detail="brain.html not found")
+
+    @app.get("/startup.html")
+    async def startup_stage_page() -> HTMLResponse:
+        for page in [
+            resolved_root / "apps" / "admin-web" / "startup.html",
+            project_root / "apps" / "admin-web" / "startup.html",
+        ]:
+            if page.exists():
+                return HTMLResponse(page.read_text(encoding="utf-8"))
+        raise HTTPException(status_code=404, detail="startup.html not found")
+
+    @app.get("/knowledge.html")
+    async def knowledge_page() -> HTMLResponse:
+        for page in [
+            resolved_root / "apps" / "admin-web" / "knowledge.html",
+            project_root / "apps" / "admin-web" / "knowledge.html",
+        ]:
+            if page.exists():
+                return HTMLResponse(page.read_text(encoding="utf-8"))
+        raise HTTPException(status_code=404, detail="knowledge.html not found")
+
+    @app.get("/employee/training")
+    async def employee_training_page() -> HTMLResponse:
+        for page in [
+            resolved_root / "apps" / "employee-web" / "training.html",
+            project_root / "apps" / "employee-web" / "training.html",
+        ]:
+            if page.exists():
+                return HTMLResponse(page.read_text(encoding="utf-8"))
+        raise HTTPException(status_code=404, detail="employee training page not found")
+
+    @app.get("/manager/training")
+    async def manager_training_page() -> HTMLResponse:
+        for page in [
+            resolved_root / "apps" / "manager-web" / "training.html",
+            project_root / "apps" / "manager-web" / "training.html",
+        ]:
+            if page.exists():
+                return HTMLResponse(page.read_text(encoding="utf-8"))
+        raise HTTPException(status_code=404, detail="manager training page not found")
+
+    @app.get("/api/knowledge/summary")
+    async def knowledge_summary() -> dict[str, Any]:
+        return make_repository().summary()
+
+    @app.get("/api/knowledge/assets")
+    async def knowledge_assets(limit: int = Query(default=100, ge=1, le=500)) -> dict[str, Any]:
+        items = make_repository().assets(limit=limit)
+        return {"items": items, "count": len(items)}
+
+    @app.get("/api/knowledge/search")
+    async def knowledge_search(
+        q: str = Query(min_length=1),
+        domain: str | None = None,
+        stage: str | None = None,
+        limit: int = Query(default=20, ge=1, le=100),
+    ) -> dict[str, Any]:
+        items = make_repository().search(q, domain=domain, stage=stage, limit=limit)
+        return {"items": items, "count": len(items), "query": q}
+
+    @app.get("/api/operating-brain/capabilities")
+    async def operating_brain_capabilities_endpoint() -> dict[str, Any]:
+        return operating_brain_capabilities()
+
+    @app.get("/api/operating-brain/model-router")
+    async def operating_brain_model_router_endpoint() -> dict[str, Any]:
+        return model_router.status()
+
+    @app.get("/api/operating-brain/evals/golden")
+    async def operating_brain_golden_eval_endpoint() -> dict[str, Any]:
+        return run_golden_evals(
+            questions=golden_questions(),
+            cards=authority_cards(),
+            model_router=model_router,
+        )
+
+    @app.get("/api/operating-brain/brand-assets")
+    async def operating_brain_brand_assets_endpoint() -> dict[str, Any]:
+        return build_brand_asset_center()
+
+    @app.get("/api/operating-brain/brand-answer-cards")
+    async def operating_brain_brand_answer_cards_endpoint(
+        limit: int = Query(default=100, ge=1, le=200),
+    ) -> dict[str, Any]:
+        items = [_public_answer_card(card, source="brand_assets") for card in brand_authority_cards()]
+        return {
+            "version": "hxy-brand-answer-cards.v1",
+            "stage": "pre_open_brand_first",
+            "items": items[:limit],
+            "count": len(items[:limit]),
+            "total": len(items),
+        }
+
+    @app.post("/api/operating-brain/startup-advance", dependencies=[Depends(require_api_token)])
+    async def operating_brain_startup_advance_endpoint(request: StartupAdvanceRequest) -> dict[str, Any]:
+        try:
+            return build_startup_advance(
+                action=request.action,
+                evidence_input=request.evidence_input,
+                current_conclusion=request.current_conclusion,
+                main_question=request.main_question,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+    @app.get("/api/operating-brain/okf/summary")
+    async def operating_brain_okf_summary_endpoint() -> dict[str, Any]:
+        okf_root = resolved_root / "knowledge" / "okf"
+        documents = load_okf_documents(okf_root)
+        summary = summarize_okf_lifecycle(documents)
+        summary["root"] = "knowledge/okf"
+        summary["documents"] = [
+            {
+                key: value
+                for key, value in document.items()
+                if key not in {"body", "path"}
+            }
+            for document in documents[:50]
+        ]
+        return summary
+
+    @app.get("/api/operating-brain/issues")
+    async def operating_brain_issues_endpoint() -> dict[str, Any]:
+        okf_root = resolved_root / "knowledge" / "okf"
+        documents = load_okf_documents(okf_root)
+        issues = build_operating_issues(documents)
+        return {
+            "version": "hxy-operating-issue-queue.v1",
+            "source": "okf_lifecycle",
+            "count": len(issues),
+            "items": issues,
+            "empty_state": "暂无经营议题。上传资料、纠偏反馈或 OKF 生命周期异常会进入这里。",
+        }
+
+    @app.post("/api/operating-brain/issues/intake", dependencies=[Depends(require_api_token)])
+    async def operating_brain_issue_intake_endpoint(request: OperatingIssueIntakeRequest) -> dict[str, Any]:
+        input_text = request.input.strip()
+        if not input_text:
+            raise HTTPException(status_code=400, detail="input is required")
+        return issue_from_intake(
+            input_text,
+            scenario=request.scenario.strip() or "经营问答",
+            role=request.role.strip() or "team",
+        )
+
+    @app.post("/api/operating-brain/understand")
+    async def operating_brain_understand(request: UnderstandRequest) -> dict[str, Any]:
+        input_text = request.input.strip()
+        if not input_text and not request.attachments:
+            raise HTTPException(status_code=400, detail="input or attachments are required")
+        result = understand_text(input_text, scenario=request.scenario.strip() or "创始人内部决策", role=request.role.strip() or "founder")
+        result["thinking_lenses"] = apply_thinking_lenses(input_text, stage="zero_to_one")
+        return result
+
+    @app.post("/api/operating-brain/thinking-lenses")
+    async def operating_brain_thinking_lenses(request: ThinkingLensRequest) -> dict[str, Any]:
+        input_text = request.input.strip()
+        if not input_text:
+            raise HTTPException(status_code=400, detail="input is required")
+        result = apply_thinking_lenses(input_text, max_lenses=request.max_lenses, stage=request.stage.strip() or "zero_to_one")
+        result["scenario"] = request.scenario.strip() or "创始人内部决策"
+        return result
+
+    @app.post("/api/operating-brain/workbench-intake")
+    async def operating_brain_workbench_intake(request: WorkbenchIntakeRequest) -> dict[str, Any]:
+        input_text = request.input.strip()
+        if not input_text and not request.attachments:
+            raise HTTPException(status_code=400, detail="input or attachments are required")
+        return _classify_workbench_intake_with_model(
+            model_router=model_router,
+            input_text=input_text,
+            scenario=request.scenario.strip() or "经营问答",
+            role=request.role.strip() or "team",
+            attachments=request.attachments,
+        )
+
+    @app.post("/api/operating-brain/source-brief")
+    async def operating_brain_source_brief(request: SourceBriefRequest) -> dict[str, Any]:
+        question = request.question.strip()
+        scenario = request.scenario.strip() or "经营问答"
+        if not question:
+            raise HTTPException(status_code=400, detail="question is required")
+        domain_hint, _hint_audience = classify_intent(question)
+        repo = make_repository()
+        used_query, items = _best_retrieval_candidate(
+            repo,
+            question,
+            domain=request.domain,
+            stage=request.stage,
+            limit=request.limit,
+            domain_hint=domain_hint,
+        )
+        result = build_source_brief(question, items, scenario=scenario)
+        result["query"] = used_query
+        result["retrieval"] = {
+            "count": len(items),
+            "domain_hint": domain_hint,
+            "mode": "keyword_plus_domain_hint",
+            "used_query": used_query,
+        }
+        return result
+
+    @app.post("/api/operating-brain/store-daily-metrics", dependencies=[Depends(require_api_token)])
+    async def operating_brain_store_daily_metrics(request: StoreDailyMetricsRequest) -> dict[str, Any]:
+        if not request.store_id.strip():
+            raise HTTPException(status_code=400, detail="store_id is required")
+        if not request.business_date.strip():
+            raise HTTPException(status_code=400, detail="business_date is required")
+        payload = request.model_dump()
+        payload["store_id"] = request.store_id.strip()
+        payload["store_name"] = request.store_name.strip() or payload["store_id"]
+        payload["business_date"] = request.business_date.strip()
+        diagnosis = diagnose_store_daily_metrics(payload)
+        metrics_id = make_repository().save_store_daily_metrics({**payload, "diagnosis": diagnosis})
+        return {**diagnosis, "metrics_id": metrics_id}
+
+    @app.get("/api/operating-brain/training/question-bank")
+    async def operating_brain_training_question_bank(
+        level: str | None = None,
+        module: str | None = None,
+    ) -> dict[str, Any]:
+        items = filter_training_questions(level=level, module=module)
+        return {
+            "version": "hxy-training-question-bank.v1",
+            "level": level or "all",
+            "module": module or "all",
+            "count": len(items),
+            "items": items,
+        }
+
+    @app.post("/api/operating-brain/training/manager-acceptance", dependencies=[Depends(require_api_token)])
+    async def operating_brain_training_manager_acceptance(request: TrainingManagerAcceptanceRequest) -> dict[str, Any]:
+        session_id = (request.session_id or request.training_session_id).strip()
+        if not session_id:
+            raise HTTPException(status_code=400, detail="session_id is required")
+        repo = make_repository()
+        acceptance_evidence = repo.training_acceptance_evidence(session_id, pass_score=75, required_pass_count=2)
+        onsite_verified = bool(request.onsite_verified)
+        can_accept = bool(request.accepted) and bool(acceptance_evidence.get("eligible")) and onsite_verified and request.score >= 75
+        payload = request.model_dump()
+        payload["session_id"] = session_id
+        payload["manager_id"] = request.manager_id.strip() or "manager-local"
+        payload["manager_name"] = request.manager_name.strip() or "店长"
+        payload["accepted"] = can_accept
+        payload["onsite_verified"] = onsite_verified
+        payload["acceptance_rule"] = {
+            **acceptance_evidence,
+            "onsite_verified": onsite_verified,
+            "manager_score": request.score,
+        }
+        payload["requires_retrain"] = not can_accept
+        metric_names = [str(item.get("metric") or "").strip() for item in request.operating_metric_links if str(item.get("metric") or "").strip()]
+        payload["operating_summary"] = (
+            f"本次验收关联经营指标：{'、'.join(metric_names)}。"
+            if metric_names
+            else "本次验收未关联具体经营指标。"
+        )
+        acceptance_id = repo.save_training_manager_acceptance(payload)
+        capability_upgrade = None
+        if can_accept:
+            capability_upgrade = repo.upsert_training_capability_level(
+                {
+                    "employee_id": acceptance_evidence.get("employee_id") or "",
+                    "store_id": acceptance_evidence.get("store_id") or "",
+                    "training_item": acceptance_evidence.get("training_item") or "",
+                    "current_level": "standard",
+                    "accepted_count": acceptance_evidence.get("consecutive_pass_count") or 0,
+                    "last_acceptance_id": acceptance_id,
+                    "acceptance_evidence": payload["acceptance_rule"],
+                }
+            )
+        next_actions = (
+            [
+                "通过验收后可进入下一等级训练。",
+                "店长每周复盘训练结果与客单价、调补养占比、投诉风险的关系。",
+            ]
+            if can_accept
+            else [
+                "现场复述通过、同一训练项目连续 2 次达到 75 分后，才能通过验收。",
+                acceptance_evidence.get("reason") or "未达到验收规则。",
+                "未通过验收则回到自适应复训题库继续练习。",
+            ]
+        )
+        return {
+            "version": "hxy-training-manager-acceptance.v1",
+            "acceptance_id": acceptance_id,
+            "session_id": payload["session_id"],
+            "accepted": can_accept,
+            "requires_retrain": payload["requires_retrain"],
+            "acceptance_rule": payload["acceptance_rule"],
+            "capability_upgrade": capability_upgrade,
+            "operating_summary": payload["operating_summary"],
+            "next_actions": next_actions,
+        }
+
+    @app.post("/api/operating-brain/training/evaluate", dependencies=[Depends(require_api_token)])
+    async def operating_brain_training_evaluate(request: TrainingEvaluateRequest) -> dict[str, Any]:
+        if not request.employee_answer.strip():
+            raise HTTPException(status_code=400, detail="employee_answer is required")
+        rule_result = evaluate_training_script(request)
+        result = _evaluate_training_with_model(model_router=model_router, request=request, rule_result=rule_result)
+        repo = make_repository()
+        if result["needs_retrain"]:
+            review_task_id = repo.create_review_task(
+                {
+                    "answer_id": None,
+                    "question": result["customer_question"],
+                    "intent": "training",
+                    "reason": "training_retrain",
+                    "priority": "high",
+                    "note": result["employee_answer"],
+                    "correction_package": result["correction_package"],
+                    "training_evaluation": {
+                        "score": result["score"],
+                        "level": result["level"],
+                        "dimensions": result["dimensions"],
+                    },
+                }
+            )
+        else:
+            review_task_id = repo.create_review_task(
+                {
+                    "answer_id": None,
+                    "question": result["customer_question"],
+                    "intent": "training",
+                    "reason": "training_answer_card_candidate",
+                    "priority": "low",
+                    "note": result["employee_answer"],
+                    "correction_package": result["correction_package"],
+                    "answer_card_draft": result["answer_card_draft"],
+                    "training_evaluation": {
+                        "score": result["score"],
+                        "level": result["level"],
+                        "dimensions": result["dimensions"],
+                    },
+                }
+            )
+        result["review_task_id"] = review_task_id
+        result["training_session_id"] = repo.save_training_session(
+            {
+                "employee_id": request.employee_id.strip() or "employee-local",
+                "employee_name": request.employee_name.strip() or "门店员工",
+                "store_id": request.store_id.strip() or "pilot-store",
+                "store_name": request.store_name.strip() or "荷小悦试点门店",
+                "training_item": result["training_item"],
+                "customer_question": result["customer_question"],
+                "employee_answer": result["employee_answer"],
+                "scenario": result["scenario"],
+                "role": result["role"],
+                "score": result["score"],
+                "level": result["level"],
+                "needs_retrain": result["needs_retrain"],
+                "dimensions": result["dimensions"],
+                "correction_points": result["correction_points"],
+                "follow_up_questions": result["follow_up_questions"],
+                "retraining_task": result["retraining_task"],
+                "answer_card_draft": result["answer_card_draft"],
+                "capability_profile": result.get("capability_profile") or {},
+                "adaptive_retrain_plan": result.get("adaptive_retrain_plan") or {},
+                "operating_metric_links": result.get("operating_metric_links") or [],
+                "review_task_id": review_task_id,
+                "payload": result,
+            }
+        )
+        return result
+
+    @app.get("/api/operating-brain/training/manager-summary")
+    async def operating_brain_training_manager_summary(
+        store_id: str | None = None,
+        days: int = Query(default=7, ge=1, le=90),
+    ) -> dict[str, Any]:
+        return make_repository().training_manager_summary(store_id=store_id, days=days)
+
+    @app.get("/api/operating-brain/training/sessions")
+    async def operating_brain_training_sessions(
+        store_id: str | None = None,
+        employee_id: str | None = None,
+        limit: int = Query(default=50, ge=1, le=200),
+    ) -> dict[str, Any]:
+        items = make_repository().training_sessions(store_id=store_id, employee_id=employee_id, limit=limit)
+        return {
+            "version": "hxy-training-sessions.v1",
+            "store_id": store_id or "all",
+            "employee_id": employee_id or "all",
+            "count": len(items),
+            "items": items,
+        }
+
+    @app.get("/api/operating-brain/training/capability-levels")
+    async def operating_brain_training_capability_levels(
+        store_id: str | None = None,
+        employee_id: str | None = None,
+        limit: int = Query(default=50, ge=1, le=200),
+    ) -> dict[str, Any]:
+        items = make_repository().training_capability_levels(store_id=store_id, employee_id=employee_id, limit=limit)
+        return {
+            "version": "hxy-training-capability-levels.v1",
+            "store_id": store_id or "all",
+            "employee_id": employee_id or "all",
+            "count": len(items),
+            "items": items,
+        }
+
+    @app.get("/api/operating-brain/training/recommended-plan")
+    async def operating_brain_training_recommended_plan(
+        store_id: str | None = None,
+        employee_id: str | None = None,
+    ) -> dict[str, Any]:
+        store = (store_id or "pilot-store").strip() or "pilot-store"
+        employee = (employee_id or "employee-local").strip() or "employee-local"
+        repo = make_repository()
+        recent_sessions = repo.training_sessions(store_id=store, employee_id=employee, limit=1)
+        capability_levels = repo.training_capability_levels(store_id=store, employee_id=employee, limit=1)
+        return build_recommended_training_plan(
+            capability_levels,
+            employee_id=employee,
+            store_id=store,
+            recent_sessions=recent_sessions,
+        )
+
+    @app.post("/api/operating-brain/workbench-submit", dependencies=[Depends(require_api_token)])
+    async def operating_brain_workbench_submit(
+        input: str = Form(default=""),
+        scenario: str = Form(default="经营问答"),
+        role: str = Form(default="team"),
+        files: list[UploadFile] = File(default=[]),
+    ) -> dict[str, Any]:
+        input_text = input.strip()
+        if not input_text and not files:
+            raise HTTPException(status_code=400, detail="input or files are required")
+        uploaded_files: list[dict[str, Any]] = []
+        for file in files:
+            uploaded_files.append(
+                await _validated_upload_file(
+                    file,
+                    inbox_dir=inbox_dir,
+                    root_dir=resolved_root,
+                    max_bytes=settings.max_upload_bytes,
+                    allowed_extensions=allowed_upload_extensions,
+                )
+            )
+        intake = _classify_workbench_intake_with_model(
+            model_router=model_router,
+            input_text=input_text,
+            scenario=scenario.strip() or "经营问答",
+            role=role.strip() or "team",
+            attachments=uploaded_files,
+        )
+        memory_result = build_instant_memory_records(resolved_root, uploaded_files)
+        image_understandings, image_chunks, image_tasks = _understand_uploaded_images(
+            root_dir=resolved_root,
+            uploaded_files=uploaded_files,
+            memory_assets=memory_result["assets"],
+            model_router=model_router,
+            input_text=input_text,
+            scenario=scenario.strip() or "经营问答",
+        )
+        if image_chunks:
+            memory_result["chunks"].extend(image_chunks)
+            memory_result["chunk_count"] = len(memory_result["chunks"])
+            memory_result["status"] = "indexed"
+        memory_result["image_understanding_count"] = len(image_understandings)
+        memory_result["image_understanding_task_count"] = len(image_tasks)
+        if memory_result["asset_count"]:
+            repo = make_repository()
+            repo.upsert_run(
+                memory_result["run_name"],
+                "knowledge/raw/inbox",
+                "workbench-instant",
+                memory_result["asset_count"],
+                memory_result["chunk_count"],
+                status="completed",
+            )
+            repo.upsert_assets(memory_result["assets"])
+            repo.upsert_chunks(memory_result["chunks"])
+            if image_understandings and hasattr(repo, "upsert_image_understandings"):
+                repo.upsert_image_understandings(image_understandings)
+            for task in image_tasks:
+                repo.create_review_task(
+                    {
+                        "answer_id": None,
+                        "question": f"图片资料需要多模态理解：{task.get('file_name') or task.get('relative_path')}",
+                        "intent": "knowledge_intake",
+                        "reason": "image_understanding_needed",
+                        "priority": "medium",
+                        "note": input_text,
+                        "correction_package": {
+                            "version": "hxy-image-understanding-task.v1",
+                            "failure_type": "image_understanding_gap",
+                            "target": "完成图片 OCR/多模态理解并沉淀为可检索业务知识",
+                            "file": task,
+                            "recommended_reviewer": "运营负责人",
+                            "recommended_actions": [
+                                "确认图片所属业务域",
+                                "补充图片中的文字、价格、项目和业务含义",
+                                "通过后重新入库为图片理解记录",
+                            ],
+                        },
+                    }
+                )
+        next_message = (
+            f"已进入组织记忆：{memory_result['asset_count']} 份资料，"
+            f"{memory_result['chunk_count']} 个可检索片段。"
+            if memory_result["chunk_count"]
+            else "资料已上传并进入复核；图片和复杂文件需要后续多模态理解后才能稳定问答。"
+        )
+        if image_understandings:
+            next_message = (
+                f"已完成图片多模态理解并进入组织记忆：{len(image_understandings)} 张图片，"
+                f"{memory_result['chunk_count']} 个可检索片段。"
+            )
+        elif image_tasks:
+            next_message = "图片已上传，正在等待多模态理解或人工复核；完成前不能作为稳定问答依据。"
+        return {
+            "intake": intake,
+            "uploaded_files": uploaded_files,
+            "memory_result": {
+                key: value
+                for key, value in memory_result.items()
+                if key not in {"assets", "chunks"}
+            },
+            "image_understandings": image_understandings,
+            "image_understanding_tasks": image_tasks,
+            "next_message": next_message,
+            "status": "submitted",
+        }
+
+    @app.post("/api/knowledge/chat")
+    async def knowledge_chat(request: ChatRequest) -> dict[str, Any]:
+        question = request.question.strip()
+        scenario = request.scenario.strip() or "创始人内部决策"
+        if not question:
+            raise HTTPException(status_code=400, detail="question is required")
+        repo = make_repository()
+        understanding = understand_text(question, scenario=scenario, role="founder")
+        understanding["thinking_lenses"] = apply_thinking_lenses(question, stage="zero_to_one")
+        rule_domain_hint, rule_hint_audience = classify_intent(question)
+        frontdoor = _classify_frontdoor(
+            model_router=model_router,
+            question=question,
+            scenario=scenario,
+            rule_intent=rule_domain_hint,
+            rule_audience=rule_hint_audience,
+        )
+        understanding["frontdoor_classification"] = frontdoor
+        domain_hint = str(frontdoor.get("intent") or rule_domain_hint)
+        if domain_hint not in _FRONTDOOR_INTENTS:
+            domain_hint = rule_domain_hint
+        early_builtin_card = _builtin_authority_card(question, domain_hint) or _builtin_authority_card(question, "any")
+        if early_builtin_card:
+            answer = _answer_from_authority_card(
+                question=question,
+                used_query=question,
+                scenario=scenario,
+                understanding=understanding,
+                card=early_builtin_card,
+            )
+            _attach_model_route(answer, model_router.route("authority_answer"))
+            _attach_answer_pipeline(answer, role="store_staff" if "员工" in scenario or "培训" in scenario else "team")
+            answer_id = repo.save_answer_run(answer)
+            answer["answer_id"] = answer_id
+            return answer
+        items = _repository_search(
+            repo,
+            question,
+            domain=request.domain,
+            stage=request.stage,
+            limit=request.limit,
+            domain_hint=domain_hint,
+        )
+        used_query = question
+        if _items_need_better_retrieval(items, domain_hint):
+            for fallback_query in _fallback_queries(question):
+                fallback_items = _repository_search(
+                    repo,
+                    fallback_query,
+                    domain=request.domain,
+                    stage=request.stage,
+                    limit=request.limit,
+                    domain_hint=domain_hint,
+                )
+                if fallback_items and not _items_need_better_retrieval(fallback_items, domain_hint):
+                    items = fallback_items
+                    used_query = fallback_query
+                    break
+                if not items and fallback_items:
+                    items = fallback_items
+                    used_query = fallback_query
+                    break
+        intent, _audience = classify_intent(question, items)
+        if frontdoor.get("mode") == "ai" and domain_hint != "knowledge_lookup":
+            intent = domain_hint
+        card = repo.find_answer_card(question, intent)
+        if card:
+            answer = _answer_from_authority_card(
+                question=question,
+                used_query=used_query,
+                scenario=scenario,
+                understanding=understanding,
+                card=card,
+            )
+            _attach_model_route(answer, model_router.route("authority_answer"))
+            _attach_answer_pipeline(answer, role="team")
+            answer_id = repo.save_answer_run(answer)
+            answer["answer_id"] = answer_id
+            return answer
+        builtin_card = _builtin_authority_card(question, intent)
+        if builtin_card:
+            answer = _answer_from_authority_card(
+                question=question,
+                used_query=used_query,
+                scenario=scenario,
+                understanding=understanding,
+                card=builtin_card,
+            )
+            _attach_model_route(answer, model_router.route("authority_answer"))
+            _attach_answer_pipeline(answer, role="team")
+            answer_id = repo.save_answer_run(answer)
+            answer["answer_id"] = answer_id
+            return answer
+        answer = synthesize_answer(question, used_query, items, scenario=scenario)
+        answer["from_answer_card"] = False
+        answer["understanding"] = understanding
+        _apply_frontdoor_to_answer(answer, frontdoor)
+        _attach_model_route(answer, model_router.route("rag_answer"))
+        _maybe_apply_model_answer(model_router=model_router, question=question, answer=answer)
+        quality_score = score_answer_quality(
+            question=question,
+            intent=answer.get("intent") or intent,
+            scenario=scenario,
+            answer=answer.get("answer") or "",
+            evidence=answer.get("evidence") or [],
+            confidence=answer.get("confidence") or "low",
+            needs_review=bool(answer.get("needs_review", True)),
+            from_answer_card=False,
+        )
+        answer["quality_score"] = quality_score
+        answer["quality_dimensions"] = quality_score["dimensions"]
+        if quality_score["level"] == "low" and bool(answer.get("needs_review", True)):
+            answer["answer"] = insufficient_answer(question, "当前召回资料没有形成足够稳定的权威结论")
+            answer["answer_status"] = "资料不足"
+            answer["confidence"] = "low"
+            answer["needs_review"] = True
+            answer["result_card"] = build_result_card(
+                intent=answer.get("intent") or intent,
+                scenario=scenario,
+                answer=answer["answer"],
+                evidence=answer.get("evidence") or [],
+                confidence="low",
+                conflicts=answer.get("conflicts") or ["证据不足"],
+                needs_review=True,
+            )
+        _attach_answer_pipeline(answer, role="team")
+        answer_id = repo.save_answer_run(answer)
+        answer["answer_id"] = answer_id
+        return answer
+
+    @app.post("/api/knowledge/feedback", dependencies=[Depends(require_api_token)])
+    async def knowledge_feedback(request: FeedbackRequest) -> dict[str, Any]:
+        if request.rating not in {"useful", "incorrect", "needs_work"}:
+            raise HTTPException(status_code=400, detail="rating must be useful, incorrect, or needs_work")
+        repo = make_repository()
+        payload = {
+            "answer_id": request.answer_id,
+            "question": request.question.strip(),
+            "rating": request.rating,
+            "note": request.note.strip(),
+        }
+        feedback_id = repo.save_feedback(payload)
+        review_task_id = None
+        correction_package = None
+        if request.rating in {"incorrect", "needs_work"}:
+            correction_package = build_correction_package(
+                request.question.strip(),
+                request.rating,
+                request.note.strip(),
+            )
+            correction_package["answer_card_draft"]["source_answer_id"] = request.answer_id
+            review_task_id = repo.create_review_task(
+                {
+                    "answer_id": request.answer_id,
+                    "feedback_id": feedback_id,
+                    "question": request.question.strip(),
+                    "intent": "unknown",
+                    "reason": request.rating,
+                    "priority": "high" if request.rating == "incorrect" else "medium",
+                    "note": request.note.strip(),
+                    "correction_package": correction_package,
+                }
+            )
+        return {
+            "feedback_id": feedback_id,
+            "review_task_id": review_task_id,
+            "correction_package": correction_package,
+            "status": "recorded",
+        }
+
+    @app.get("/api/knowledge/review-tasks")
+    async def knowledge_review_tasks(status: str = "open", limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
+        items = dedupe_review_tasks(make_repository().review_tasks(status=status, limit=200))
+        return {"items": items[:limit], "count": len(items[:limit])}
+
+    @app.post("/api/knowledge/review-tasks/{task_id}/resolve", dependencies=[Depends(require_api_token)])
+    async def resolve_review_task(task_id: str) -> dict[str, Any]:
+        resolved = make_repository().resolve_review_task(task_id, status="resolved")
+        if not resolved:
+            raise HTTPException(status_code=404, detail="review task not found")
+        return {"task_id": task_id, "status": "resolved"}
+
+    @app.get("/api/knowledge/answer-cards")
+    async def list_answer_cards(status: str | None = "approved", limit: int = Query(default=100, ge=1, le=500)) -> dict[str, Any]:
+        builtin_items = [
+            _public_answer_card(card, source="builtin")
+            for card in authority_cards()
+            if not status or card.get("status") == status
+        ]
+        repo_items = [
+            _public_answer_card(card, source="repository")
+            for card in _list_repository_answer_cards(make_repository(), status=status, limit=limit)
+        ]
+        items = [*repo_items, *builtin_items]
+        return {"items": items[:limit], "count": len(items[:limit])}
+
+    @app.post("/api/knowledge/answer-cards", dependencies=[Depends(require_api_token)])
+    async def create_answer_card(request: AnswerCardRequest) -> dict[str, Any]:
+        if request.status not in {"draft", "approved", "archived"}:
+            raise HTTPException(status_code=400, detail="status must be draft, approved, or archived")
+        if not request.question_pattern.strip():
+            raise HTTPException(status_code=400, detail="question_pattern is required")
+        if not request.answer.strip():
+            raise HTTPException(status_code=400, detail="answer is required")
+        payload = request.model_dump()
+        payload["question_pattern"] = request.question_pattern.strip()
+        payload["answer"] = request.answer.strip()
+        card_id = make_repository().create_answer_card(payload)
+        return {"card_id": card_id, "status": "created"}
+
+    @app.post("/api/knowledge/upload", dependencies=[Depends(require_api_token)])
+    async def upload_knowledge_file(file: UploadFile = File(...)) -> dict[str, Any]:
+        return await _validated_upload_file(
+            file,
+            inbox_dir=inbox_dir,
+            root_dir=resolved_root,
+            max_bytes=settings.max_upload_bytes,
+            allowed_extensions=allowed_upload_extensions,
+        )
+
+    @app.post("/api/knowledge/import", dependencies=[Depends(require_api_token)])
+    async def import_knowledge() -> dict[str, Any]:
+        run_name = settings.run_name
+        repo = make_repository()
+        manifest, assets, chunks = load_current_records(resolved_root, run_name)
+        manifest_path = f"knowledge/structured/hxy-inbox-manifest-{run_name}.json"
+        index_path = f"knowledge/structured/hxy-inbox-search-index-{run_name}.json"
+        repo.clear_run(run_name)
+        repo.upsert_run(run_name, manifest_path, index_path, len(assets), len(chunks), status="completed")
+        repo.upsert_assets(assets)
+        repo.upsert_chunks(chunks)
+        return {
+            "run_name": manifest.get("run_name") or run_name,
+            "assets": len(assets),
+            "chunks": len(chunks),
+            "status": "imported",
+        }
+
+    return app
+
+
+app = create_app()

@@ -1,0 +1,26 @@
+{
+  "initial_investment": 180000,
+  "monthly_fixed_cost": 68000,
+  "variable_cost_rate": 0.28,
+  "package_mix": [
+    {
+      "package_key": "basic",
+      "label": "基础款",
+      "price": 68,
+      "monthly_orders": 320
+    },
+    {
+      "package_key": "signature",
+      "label": "招牌款",
+      "price": 128,
+      "monthly_orders": 620
+    },
+    {
+      "package_key": "premium",
+      "label": "尊享款",
+      "price": 198,
+      "monthly_orders": 180
+    }
+  ],
+  "other_monthly_revenue": 6000
+}

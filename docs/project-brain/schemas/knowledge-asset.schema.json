@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HXY Knowledge Asset",
+  "type": "object",
+  "required": ["asset_id", "domain", "title", "asset_type", "source_path", "version_status"],
+  "properties": {
+    "asset_id": { "type": "string" },
+    "domain": { "type": "string", "const": "hxy" },
+    "title": { "type": "string" },
+    "asset_type": {
+      "type": "string",
+      "enum": ["project_doc", "bp", "brand_plan", "store_model", "system_plan", "industry_report", "competitor_media", "external_theory"]
+    },
+    "source_path": { "type": "string" },
+    "version_status": {
+      "type": "string",
+      "enum": ["draft", "current_candidate", "confirmed", "deprecated"]
+    },
+    "stage": {
+      "type": "string",
+      "enum": ["preparation", "pilot_store", "replication", "regional_scale", "national_scale"]
+    },
+    "created_at": { "type": "string" },
+    "notes": { "type": "string" }
+  }
+}
+
