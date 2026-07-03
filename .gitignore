@@ -1,0 +1,39 @@
+# Local secrets
+ops/env/*.env
+ops/env/*.toml
+!ops/env/*.env.example
+.env
+.env.*
+
+# Private knowledge and operating artifacts
+knowledge/raw/
+knowledge/normalized/
+knowledge/structured/
+knowledge/reports/
+knowledge/runs/
+knowledge/wiki/
+knowledge/okf/core/
+knowledge/taxonomy-overrides.json
+data/seeds/
+data/exports/
+data/backups/
+
+# Runtime and dependency artifacts
+.venv/
+node_modules/
+dist/
+build/
+.next/
+.turbo/
+.cache/
+.pytest_cache/
+__pycache__/
+*.pyc
+tmp/
+quarantine/
+
+# Logs
+*.log
+logs/
+ops/logs/
+
