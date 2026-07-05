@@ -1,0 +1,39 @@
+# HXY-owned Hermes Agent Docker deployment using the official prebuilt image.
+#
+# This is the default HXY path because it avoids slow local source builds.
+# Use ops/docker/hxy-hermes-compose.yml only when a pinned source build is needed.
+
+services:
+  hxy-hermes-gateway:
+    image: ${HXY_HERMES_PREBUILT_IMAGE:-nousresearch/hermes-agent:latest}
+    container_name: hxy-hermes
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - ${HXY_HERMES_ENV_FILE:-../env/hxy-hermes.env}
+    volumes:
+      - ../../.hermes-runtime:/opt/data
+    environment:
+      - HERMES_UID=${HERMES_UID:-10000}
+      - HERMES_GID=${HERMES_GID:-10000}
+      - HERMES_HOME=/opt/data
+      - API_SERVER_HOST=${HXY_HERMES_API_SERVER_HOST:-127.0.0.1}
+      - API_SERVER_KEY=${HXY_HERMES_API_SERVER_KEY:-}
+    command: ["gateway", "run"]
+
+  hxy-hermes-dashboard:
+    image: ${HXY_HERMES_PREBUILT_IMAGE:-nousresearch/hermes-agent:latest}
+    container_name: hxy-hermes-dashboard
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      - hxy-hermes-gateway
+    env_file:
+      - ${HXY_HERMES_ENV_FILE:-../env/hxy-hermes.env}
+    volumes:
+      - ../../.hermes-runtime:/opt/data
+    environment:
+      - HERMES_UID=${HERMES_UID:-10000}
+      - HERMES_GID=${HERMES_GID:-10000}
+      - HERMES_HOME=/opt/data
+    command: ["dashboard", "--host", "127.0.0.1", "--no-open"]

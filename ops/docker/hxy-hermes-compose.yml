@@ -1,0 +1,44 @@
+# HXY-owned Hermes Agent Docker deployment.
+#
+# This intentionally does not use the upstream defaults:
+# - container names are hxy-* to avoid colliding with another Hermes runtime
+# - data volume is /root/hxy/.hermes-runtime, not the user-level Hermes home
+# - source is prepared by ops/hxy-hermes-gateway.sh from the pinned official tag
+
+services:
+  hxy-hermes-gateway:
+    build:
+      context: ${HXY_HERMES_SOURCE_DIR:-/root/hxy/.hermes-source/hermes-agent}
+      network: host
+    image: hxy-hermes-agent:${HXY_HERMES_IMAGE_TAG:-v2026.6.19}
+    container_name: hxy-hermes
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - ${HXY_HERMES_ENV_FILE:-../env/hxy-hermes.env}
+    volumes:
+      - ../../.hermes-runtime:/opt/data
+    environment:
+      - HERMES_UID=${HERMES_UID:-10000}
+      - HERMES_GID=${HERMES_GID:-10000}
+      - HERMES_HOME=/opt/data
+      - API_SERVER_HOST=${HXY_HERMES_API_SERVER_HOST:-127.0.0.1}
+      - API_SERVER_KEY=${HXY_HERMES_API_SERVER_KEY:-}
+    command: ["gateway", "run"]
+
+  hxy-hermes-dashboard:
+    image: hxy-hermes-agent:${HXY_HERMES_IMAGE_TAG:-v2026.6.19}
+    container_name: hxy-hermes-dashboard
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      - hxy-hermes-gateway
+    env_file:
+      - ${HXY_HERMES_ENV_FILE:-../env/hxy-hermes.env}
+    volumes:
+      - ../../.hermes-runtime:/opt/data
+    environment:
+      - HERMES_UID=${HERMES_UID:-10000}
+      - HERMES_GID=${HERMES_GID:-10000}
+      - HERMES_HOME=/opt/data
+    command: ["dashboard", "--host", "127.0.0.1", "--no-open"]

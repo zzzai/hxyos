@@ -1,0 +1,21 @@
+[Unit]
+Description=HXY Hermes Gateway
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=root
+Group=root
+WorkingDirectory=/root/hxy
+Environment=HOME=/root
+Environment=HXY_ROOT_DIR=/root/hxy
+Environment=HXY_HERMES_ENV_FILE=/root/hxy/ops/env/hxy-hermes.env
+ExecStart=/usr/bin/env bash /root/hxy/ops/hxy-hermes-gateway.sh up
+ExecStop=/usr/bin/env bash /root/hxy/ops/hxy-hermes-gateway.sh down
+TimeoutStartSec=900
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target
