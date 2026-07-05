@@ -1056,6 +1056,26 @@ class KnowledgeRepository:
             ).fetchall()
         return list(rows)
 
+    def downgrade_answer_cards(self, card_ids: list[str], *, status: str = "draft") -> list[str]:
+        if status not in {"draft", "archived"}:
+            raise ValueError("status must be draft or archived")
+        normalized_ids = [str(card_id).strip() for card_id in card_ids if str(card_id).strip()]
+        if not normalized_ids:
+            return []
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                UPDATE hxy_knowledge_answer_cards
+                SET status = %s,
+                    updated_at = NOW()
+                WHERE card_id::text = ANY(%s)
+                  AND status = 'approved'
+                RETURNING card_id::text
+                """,
+                (status, normalized_ids),
+            ).fetchall()
+        return [row["card_id"] for row in rows]
+
     def find_answer_card(self, question: str, intent: str) -> dict[str, Any] | None:
         with self.connect() as conn:
             row = conn.execute(

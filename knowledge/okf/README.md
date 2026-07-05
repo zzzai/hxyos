@@ -10,3 +10,14 @@ OKF 是荷小悦经营大脑 v2 的结构化知识底座。
 
 当前目录先采用 Markdown + frontmatter 文件形态，后续可迁移到 PostgreSQL / pgvector / graph schema。
 
+## Lifecycle Rule
+
+当下项目资料默认都是 `reference`，不是核定事实。OKF 条目必须显式标注生命周期状态：
+
+- `reference`: 参考资料，只能用于 AI 梳理和对比。
+- `ai_structured`: AI 已提炼的候选知识、冲突点、问题集或答案卡草稿。
+- `needs_review`: 需要负责人复核的定位、产品、价格、功效、收益、政策或冲突内容。
+- `approved`: 人工核定后的正式答案卡、训练卡、政策或品牌口径。
+- `superseded`: 已被新版本替代，保留历史追溯。
+
+经营大脑只能把 `approved` 内容作为直接回答依据。其他状态必须输出为未核定梳理稿，并进入复核或答案卡草稿闭环。

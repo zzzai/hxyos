@@ -1,5 +1,6 @@
 import importlib
 import asyncio
+import json
 import os
 import sys
 import tempfile
@@ -510,6 +511,19 @@ class HxyKnowledgeApiTest(unittest.TestCase):
         self.assertIn("招商融资库", visible)
         self.assertIn("客户消费数据开店后再接入", visible)
 
+    def test_operating_brain_brand_risk_rules_endpoint_uses_compliance_materials(self):
+        response = self.client.get("/api/operating-brain/brand-risk-rules")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-brand-risk-rules.v1")
+        self.assertFalse(body["official_use_allowed"])
+        self.assertTrue(body["requires_human_review"])
+        serialized_rules = json.dumps(body["rules"], ensure_ascii=False)
+        for term in ["祛湿排毒", "改善睡眠", "治疗脚气", "年轻十岁", "医美级"]:
+            self.assertIn(term, serialized_rules)
+        self.assertIn("09_风险与合规/荷小悦禁用表达库.md", " ".join(body["source_paths"]))
+
     def test_operating_brain_brand_answer_cards_endpoint_returns_approved_brand_cards(self):
         response = self.client.get("/api/operating-brain/brand-answer-cards")
 
@@ -611,6 +625,853 @@ used_by:
         self.assertEqual(body["status_counts"]["disputed"], 1)
         self.assertEqual(body["conflict_count"], 1)
 
+    def test_operating_brain_knowledge_governance_endpoint_returns_enterprise_gate(self):
+        (self.root / "quarantine" / "knowledge-assets" / "structured").mkdir(parents=True)
+        (self.root / "quarantine" / "knowledge-assets" / "structured" / "claims.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "claim_id": "claim-no-evidence",
+                        "claim_type": "brand_positioning",
+                        "claim": "荷小悦是社区轻恢复品牌",
+                        "status": "current_candidate",
+                        "confidence": 0.62,
+                        "evidence_ids": [],
+                    },
+                    {
+                        "claim_id": "claim-overclaim",
+                        "claim_type": "product_service",
+                        "claim": "清泡可以治疗失眠，保证有效",
+                        "status": "current_candidate",
+                        "confidence": 0.78,
+                        "evidence_ids": ["e1"],
+                    },
+                ],
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        (self.root / "quarantine" / "knowledge-assets" / "structured" / "evidence.json").write_text(
+            json.dumps([{"evidence_id": "e1", "source_id": "asset-reference", "snippet": "外部方法论"}], ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        response = self.client.get("/api/operating-brain/knowledge-governance")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-enterprise-knowledge-governance.v1")
+        self.assertIn("summary", body)
+        self.assertIn("quality_score", body)
+        self.assertIn("memory_layers", body)
+        self.assertIn("release_gate", body)
+        self.assertIn("evolution_actions", body)
+        self.assertIn("review_task_drafts", body)
+        self.assertFalse(body["release_gate"]["can_publish"])
+        issue_codes = {item["code"] for item in body["lint_issues"]}
+        self.assertIn("claim_missing_evidence", issue_codes)
+        self.assertIn("claim_overclaim_risk", issue_codes)
+        self.assertEqual(
+            body["memory_layers"]["policy"]["direct_answer_allowed"],
+            ["L3_approved_knowledge", "L4_action_asset"],
+        )
+
+    def test_operating_brain_incremental_compile_endpoint_accepts_manifests(self):
+        response = self.client.post(
+            "/api/operating-brain/incremental-compile-plan",
+            json={
+                "previous_manifest": {
+                    "assets": [
+                        {"asset_id": "asset-a", "relative_path": "a.md", "sha256": "old"},
+                        {"asset_id": "asset-b", "relative_path": "b.md", "sha256": "same"},
+                    ]
+                },
+                "current_manifest": {
+                    "assets": [
+                        {"asset_id": "asset-a", "relative_path": "a.md", "sha256": "new"},
+                        {"asset_id": "asset-c", "relative_path": "c.md", "sha256": "new-c"},
+                    ]
+                },
+                "relations": [{"from_id": "asset-a", "to_id": "claim-a", "relation_type": "supports"}],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-incremental-compile-plan.v1")
+        self.assertEqual(body["summary"]["added"], 1)
+        self.assertEqual(body["summary"]["changed"], 1)
+        self.assertEqual(body["summary"]["deleted"], 1)
+        self.assertIn("lint", {task["stage"] for task in body["tasks"]})
+        self.assertIn("claim-a", {item["id"] for item in body["affected_nodes"]})
+
+    def test_operating_brain_file_manifest_endpoint_hashes_hxy_raw_inbox(self):
+        inbox = self.root / "knowledge" / "raw" / "inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
+        (inbox / "brand.md").write_text("荷小悦品牌资料", encoding="utf-8")
+        (inbox / "ignore.tmp").write_text("ignore", encoding="utf-8")
+
+        response = self.client.get("/api/operating-brain/file-manifest")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-file-manifest.v1")
+        self.assertEqual(body["summary"]["asset_count"], 1)
+        self.assertEqual(body["summary"]["ignored_count"], 1)
+        self.assertEqual(body["assets"][0]["relative_path"], "knowledge/raw/inbox/brand.md")
+        self.assertTrue(body["assets"][0]["asset_id"].startswith("hxy-file:"))
+
+    def test_operating_brain_benchmark_endpoint_reads_latest_report(self):
+        report_dir = self.root / "knowledge" / "reports"
+        report_dir.mkdir(parents=True)
+        (report_dir / "benchmark-latest.json").write_text(
+            json.dumps(
+                {
+                    "version": "hxy-brain-benchmark-report.v1",
+                    "case_count": 30,
+                    "passed_count": 24,
+                    "failed_count": 6,
+                    "pass_rate": 0.8,
+                    "failure_thresholds": {"min_pass_rate": 0.85},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        response = self.client.get("/api/operating-brain/benchmark")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-brain-benchmark-status.v1")
+        self.assertEqual(body["summary"]["case_count"], 30)
+        self.assertEqual(body["summary"]["pass_rate"], 0.8)
+        self.assertIn("next_actions", body)
+
+    def test_operating_brain_compiler_status_endpoint_reads_latest_report(self):
+        report_dir = self.root / "knowledge" / "reports"
+        report_dir.mkdir(parents=True)
+        (report_dir / "compiler-latest.json").write_text(
+            json.dumps(
+                {
+                    "version": "hxy-knowledge-compiler-report.v1",
+                    "extract_count": 2,
+                    "claim_count": 7,
+                    "approved_count": 0,
+                    "graph_node_count": 12,
+                    "graph_edge_count": 14,
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        response = self.client.get("/api/operating-brain/knowledge-compiler/status")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-knowledge-compiler-status.v1")
+        self.assertEqual(body["summary"]["extract_count"], 2)
+        self.assertEqual(body["summary"]["claim_count"], 7)
+        self.assertEqual(body["summary"]["approved_count"], 0)
+        self.assertIn("next_actions", body)
+
+    def test_operating_brain_compiler_review_queue_endpoint_reads_generated_queue(self):
+        wiki_dir = self.root / "knowledge" / "wiki"
+        wiki_dir.mkdir(parents=True)
+        (wiki_dir / "review-queue.json").write_text(
+            json.dumps(
+                {
+                    "version": "hxy-review-queue.v1",
+                    "items": [
+                        {
+                            "claim_id": "claim-001",
+                            "claim": "荷小悦社区小店要复核门店模型参数。",
+                            "review_group": "store_model",
+                            "priority": "high",
+                            "sources": ["source.pdf"],
+                        }
+                    ],
+                    "reviewable_claim_count": 1,
+                    "noise_claim_count": 0,
+                    "group_counts": {"store_model": 1},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        response = self.client.get("/api/operating-brain/knowledge-compiler/review-queue")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-review-queue.v1")
+        self.assertEqual(body["count"], 1)
+        self.assertEqual(body["items"][0]["claim_id"], "claim-001")
+        self.assertFalse(body["items"][0]["official_use_allowed"])
+
+    def test_operating_brain_compiler_compliance_review_pack_endpoint_is_read_only(self):
+        wiki_dir = self.root / "knowledge" / "wiki"
+        wiki_dir.mkdir(parents=True)
+        (wiki_dir / "compliance-review-pack.json").write_text(
+            json.dumps(
+                {
+                    "version": "hxy-compliance-review-pack.v1",
+                    "status": "needs_human_review",
+                    "count": 1,
+                    "items": [
+                        {
+                            "claim_id": "risk-001",
+                            "claim": "员工不能承诺治疗、保证有效或一次见效。",
+                            "risk_level": "P0",
+                            "required_decision": "approve_as_rule, needs_revision, or reject",
+                            "official_use_allowed": False,
+                            "publish_allowed": False,
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        response = self.client.get("/api/operating-brain/knowledge-compiler/compliance-review-pack")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-compliance-review-pack.v1")
+        self.assertEqual(body["status"], "needs_human_review")
+        self.assertEqual(body["count"], 1)
+        self.assertFalse(body["official_use_allowed"])
+        self.assertFalse(body["publish_allowed"])
+        self.assertTrue(body["requires_human_review"])
+        self.assertEqual(body["items"][0]["claim_id"], "risk-001")
+        self.assertFalse(body["items"][0]["official_use_allowed"])
+        self.assertFalse(body["items"][0]["publish_allowed"])
+
+    def test_operating_brain_compiler_review_decision_records_decision_and_creates_draft_card(self):
+        wiki_dir = self.root / "knowledge" / "wiki"
+        wiki_dir.mkdir(parents=True)
+        (wiki_dir / "review-queue.json").write_text(
+            json.dumps(
+                {
+                    "version": "hxy-review-queue.v1",
+                    "items": [
+                        {
+                            "claim_id": "claim-001",
+                            "claim": "荷小悦不是传统足疗店，而是社区轻养生门店。",
+                            "domain": "brand_positioning",
+                            "review_group": "brand_positioning",
+                            "priority": "high",
+                            "risk_flags": [],
+                            "sources": ["source.pdf"],
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        response = self.client.post(
+            "/api/operating-brain/knowledge-compiler/review-queue/claim-001/decision",
+            json={"action": "pass_to_draft", "reviewer": "founder", "note": "先做草稿，不批准。"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-compiler-review-decision.v1")
+        self.assertEqual(body["decision"]["action"], "pass_to_draft")
+        self.assertEqual(body["answer_card_draft"]["status"], "draft")
+        self.assertFalse(body["answer_card_draft"]["official_use_allowed"])
+        self.assertTrue((wiki_dir / "review-decisions.json").is_file())
+        decisions = json.loads((wiki_dir / "review-decisions.json").read_text(encoding="utf-8"))
+        self.assertEqual(decisions["items"][0]["claim_id"], "claim-001")
+
+    def test_operating_brain_benchmark_corrections_endpoint_reads_latest_corrections(self):
+        runs_dir = self.root / "knowledge" / "runs" / "benchmark-loop-latest"
+        runs_dir.mkdir(parents=True)
+        (runs_dir / "benchmark-corrections.json").write_text(
+            json.dumps(
+                {
+                    "version": "hxy-benchmark-correction-package.v1",
+                    "benchmark_version": "hxy-brain-benchmark.v1",
+                    "task_count": 2,
+                    "tasks": [
+                        {
+                            "task_id": "benchmark-fix-brand-001",
+                            "case_id": "brand-001",
+                            "domain": "brand_positioning",
+                            "question": "荷小悦是什么？",
+                            "failed_checks": ["missing_citation"],
+                            "warnings": ["lifecycle_not_explicit"],
+                            "recommended_reviewer": "品牌/产品负责人",
+                            "required_action": "补充已批准答案卡引用。",
+                            "status": "open",
+                        },
+                        {
+                            "task_id": "benchmark-fix-product-001",
+                            "case_id": "product-001",
+                            "domain": "product_system",
+                            "question": "清泡调补养怎么讲？",
+                            "failed_checks": ["missing_citation"],
+                            "warnings": [],
+                            "recommended_reviewer": "品牌/产品负责人",
+                            "required_action": "补充已批准答案卡引用。",
+                            "status": "open",
+                        },
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        response = self.client.get("/api/operating-brain/benchmark/corrections?limit=1")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-benchmark-corrections.v1")
+        self.assertEqual(body["count"], 1)
+        self.assertEqual(body["total"], 2)
+        self.assertEqual(body["items"][0]["case_id"], "brand-001")
+        self.assertFalse(body["items"][0]["official_use_allowed"])
+        self.assertIn("correction_package", body["items"][0])
+
+    def test_hxy_p0_reviewer_todo_endpoint_is_read_only_and_hxy_owned(self):
+        runs_dir = self.root / "knowledge" / "runs" / "benchmark-loop-latest"
+        runs_dir.mkdir(parents=True)
+        decisions_path = runs_dir / "p0-review-decisions.json"
+        decisions_payload = {
+            "version": "hxy-p0-review-decisions.v1",
+            "decision_count": 4,
+            "publish_allowed": False,
+            "write_to_database": False,
+            "manual_decisions": [
+                {"source_case_id": "compliance-medical-001", "action": "pending"},
+                {"source_case_id": "compliance-effect-001", "action": "pending"},
+                {"source_case_id": "compliance-marketing-001", "action": "pending"},
+                {"source_case_id": "risk-002", "action": "pending"},
+            ],
+        }
+        decisions_path.write_text(json.dumps(decisions_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        before_decisions = decisions_path.read_text(encoding="utf-8")
+        (runs_dir / "p0-reviewer-todo.json").write_text(
+            json.dumps(
+                {
+                    "version": "hxy-p0-reviewer-todo.v1",
+                    "item_count": 4,
+                    "pending_count": 4,
+                    "actioned_count": 0,
+                    "items": [
+                        {
+                            "source_case_id": "compliance-medical-001",
+                            "question_pattern": "泡脚能治失眠吗？",
+                            "current_action": "pending",
+                            "edit_target": "p0-review-decisions.json items[source_case_id=compliance-medical-001]",
+                            "official_use_allowed": False,
+                            "publish_allowed": False,
+                            "write_to_database": False,
+                        }
+                    ],
+                    "official_use_allowed": False,
+                    "publish_allowed": False,
+                    "write_to_database": False,
+                    "requires_human_review": True,
+                    "authority_rule": "p0_reviewer_todo_does_not_publish_approved_cards",
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        response = self.client.get("/api/v1/hxy/p0/reviewer-todo")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-p0-reviewer-todo.v1")
+        self.assertEqual(body["status"], "ready")
+        self.assertEqual(body["run_id"], "benchmark-loop-latest")
+        self.assertEqual(body["pending_count"], 4)
+        self.assertEqual(body["actioned_count"], 0)
+        self.assertFalse(body["write_to_database"])
+        self.assertFalse(body["publish_allowed"])
+        self.assertFalse(body["official_use_allowed"])
+        self.assertTrue(body["requires_human_review"])
+        self.assertEqual(body["items"][0]["source_case_id"], "compliance-medical-001")
+        self.assertFalse(body["items"][0]["write_to_database"])
+        self.assertEqual(decisions_path.read_text(encoding="utf-8"), before_decisions)
+        self.assertEqual(len(self.repo.saved_review_tasks), 0)
+        self.assertNotIn("htops", json.dumps(body, ensure_ascii=False).lower())
+
+    def test_hxy_p0_reviewer_todo_endpoint_returns_safe_missing_state(self):
+        response = self.client.get("/api/v1/hxy/p0/reviewer-todo")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-p0-reviewer-todo.v1")
+        self.assertEqual(body["status"], "missing")
+        self.assertEqual(body["run_id"], "benchmark-loop-latest")
+        self.assertEqual(body["pending_count"], 0)
+        self.assertFalse(body["write_to_database"])
+        self.assertFalse(body["publish_allowed"])
+        self.assertFalse(body["official_use_allowed"])
+        self.assertTrue(body["requires_human_review"])
+        self.assertIn("next_actions", body)
+
+    def test_hxy_p0_reviewer_todo_endpoint_rejects_unsafe_run_id(self):
+        response = self.client.get("/api/v1/hxy/p0/reviewer-todo?run_id=../../htops")
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_hxy_p0_governance_status_endpoint_is_read_only(self):
+        response = self.client.get("/api/v1/hxy/p0/governance-status")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-p0-governance-status.v1")
+        self.assertEqual(body["run_id"], "benchmark-loop-latest")
+        self.assertEqual(body["current_step"], "missing_stub")
+        self.assertTrue(body["blocked"])
+        self.assertFalse(body["write_to_database"])
+        self.assertEqual(body["authority_rule"], "status_check_is_read_only")
+        self.assertIn("p0_reviewer_todo_url", body)
+        self.assertEqual(len(self.repo.saved_review_tasks), 0)
+        self.assertNotIn("htops", json.dumps(body, ensure_ascii=False).lower())
+
+    def test_hxy_p0_governance_status_endpoint_rejects_unsafe_run_id(self):
+        response = self.client.get("/api/v1/hxy/p0/governance-status?run_id=../htops")
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_hxy_p0_notification_endpoint_builds_read_only_hermes_payload(self):
+        response = self.client.get("/api/v1/hxy/p0/notification")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-p0-governance-notification.v1")
+        self.assertEqual(body["run_id"], "benchmark-loop-latest")
+        self.assertEqual(body["channel"], "hermes_feishu")
+        self.assertFalse(body["send_allowed"])
+        self.assertFalse(body["write_to_database"])
+        self.assertFalse(body["publish_allowed"])
+        self.assertFalse(body["official_use_allowed"])
+        self.assertIn("HXY P0 Governance Status", body["text"])
+        self.assertIn("Current step: missing_stub", body["text"])
+        self.assertIn("/api/v1/hxy/p0/governance-status?run_id=benchmark-loop-latest", body["links"]["status_api"])
+        self.assertIn("/api/v1/hxy/p0/reviewer-todo?run_id=benchmark-loop-latest", body["links"]["reviewer_todo_api"])
+        self.assertEqual(len(self.repo.saved_review_tasks), 0)
+        self.assertNotIn("htops", json.dumps(body, ensure_ascii=False).lower())
+
+    def test_hxy_p0_decision_preview_validates_without_writing_decisions(self):
+        runs_dir = self.root / "knowledge" / "runs" / "benchmark-loop-latest"
+        runs_dir.mkdir(parents=True)
+        (runs_dir / "p0-review-decisions.stub.json").write_text(
+            json.dumps(
+                {
+                    "version": "hxy-p0-review-decisions.v1",
+                    "decision_count": 1,
+                    "items": [
+                        {
+                            "source_case_id": "compliance-effect-001",
+                            "source_task_id": "authority-gap-compliance-effect-001",
+                            "question_pattern": "泡脚多久能见效？",
+                            "reviewer": "运营/合规负责人",
+                            "action": "pending",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        decisions_path = runs_dir / "p0-review-decisions.json"
+        decisions_path.write_text(
+            json.dumps(
+                {
+                    "version": "hxy-p0-review-decisions.v1",
+                    "items": [
+                        {
+                            "source_case_id": "compliance-effect-001",
+                            "source_task_id": "authority-gap-compliance-effect-001",
+                            "action": "pending",
+                        }
+                    ],
+                    "write_to_database": False,
+                    "publish_allowed": False,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        before_decisions = decisions_path.read_text(encoding="utf-8")
+
+        response = self.client.post(
+            "/api/v1/hxy/p0/decision-preview",
+            json={
+                "decisions": {
+                    "version": "hxy-p0-review-decisions.v1",
+                    "items": [
+                        {
+                            "source_case_id": "compliance-effect-001",
+                            "source_task_id": "authority-gap-compliance-effect-001",
+                            "action": "approve",
+                            "reviewer": "运营/合规负责人",
+                            "publication_metadata": {},
+                        }
+                    ],
+                }
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-p0-decision-preview.v1")
+        self.assertFalse(body["valid"])
+        self.assertFalse(body["write_to_database"])
+        self.assertFalse(body["publish_allowed"])
+        self.assertFalse(body["official_use_allowed"])
+        self.assertTrue(body["requires_human_review"])
+        self.assertEqual(body["validation"]["error_count"], 1)
+        self.assertEqual(body["validation"]["errors"][0]["code"], "missing_publication_metadata")
+        self.assertEqual(decisions_path.read_text(encoding="utf-8"), before_decisions)
+        self.assertEqual(len(self.repo.saved_review_tasks), 0)
+
+    def test_operating_brain_governance_run_package_endpoint_returns_auditable_package(self):
+        inbox = self.root / "knowledge" / "raw" / "inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
+        (inbox / "brand.md").write_text("荷小悦品牌资料", encoding="utf-8")
+        (self.root / "quarantine" / "knowledge-assets" / "structured").mkdir(parents=True)
+        (self.root / "quarantine" / "knowledge-assets" / "structured" / "claims.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "claim_id": "claim-no-evidence",
+                        "claim_type": "brand_positioning",
+                        "claim": "荷小悦是社区轻恢复品牌",
+                        "status": "current_candidate",
+                        "confidence": 0.62,
+                        "evidence_ids": [],
+                    }
+                ],
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        response = self.client.get("/api/operating-brain/governance-run-package?run_id=test-run")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-governance-run-package.v1")
+        self.assertEqual(body["run_id"], "test-run")
+        self.assertIn("incremental_compile_plan", body)
+        self.assertIn("governance_report", body)
+        self.assertIn("recommended_persistence", body)
+        self.assertIn("review_task_drafts", body)
+        self.assertGreaterEqual(body["summary"]["blocking_issues"], 1)
+
+    def test_operating_brain_governance_run_package_can_create_review_tasks_when_requested(self):
+        (self.root / "quarantine" / "knowledge-assets" / "structured").mkdir(parents=True)
+        (self.root / "quarantine" / "knowledge-assets" / "structured" / "claims.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "claim_id": "claim-no-evidence",
+                        "claim_type": "brand_positioning",
+                        "claim": "荷小悦是社区轻恢复品牌",
+                        "status": "current_candidate",
+                        "confidence": 0.62,
+                        "evidence_ids": [],
+                    }
+                ],
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        preview = self.client.get("/api/operating-brain/governance-run-package?run_id=test-run&create_tasks=true")
+        self.assertEqual(preview.status_code, 200)
+        self.assertNotIn("created_review_tasks", preview.json())
+        self.assertEqual(len(self.repo.saved_review_tasks), 0)
+
+        response = self.client.post("/api/operating-brain/governance-run-package/review-tasks?run_id=test-run")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertIn("created_review_tasks", body)
+        self.assertGreaterEqual(len(body["created_review_tasks"]), 1)
+        self.assertGreaterEqual(len(self.repo.saved_review_tasks), 1)
+        task = self.repo.saved_review_tasks[0]
+        self.assertEqual(task["intent"], "knowledge_governance")
+        self.assertEqual(task["reason"], "claim_missing_evidence")
+        self.assertEqual(task["priority"], "high")
+        self.assertIn("correction_package", task)
+
+    def test_operating_brain_governance_review_task_creation_requires_auth(self):
+        response = self.client.post(
+            "/api/operating-brain/governance-run-package/review-tasks?run_id=test-run",
+            headers={"Authorization": ""},
+        )
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_operating_brain_governance_review_task_creation_requires_configured_token(self):
+        os.environ.pop("HXY_API_TOKEN", None)
+        module = importlib.import_module("apps.api.hxy_knowledge_api")
+        app = module.create_app(root_dir=self.root, repository_factory=lambda: self.repo)
+        client = TestClient(app)
+
+        response = client.post("/api/operating-brain/governance-run-package/review-tasks?run_id=test-run")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("HXY_API_TOKEN", response.json()["detail"])
+
+    def test_operating_brain_process_memory_preview_does_not_create_review_task(self):
+        response = self.client.post(
+            "/api/operating-brain/process-memory/preview",
+            json={
+                "text": "不要再用满电回家这个表达，太抽象。以后品牌表达要口语化。",
+                "source": "chat",
+                "actor": "founder",
+                "target_domain": "brand_strategy",
+                "confidence": 0.82,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-process-memory-preview.v1")
+        self.assertEqual(body["record"]["memory_type"], "rejection")
+        self.assertEqual(body["promotion_draft"]["target_status"], "current_candidate")
+        self.assertFalse(body["promotion_draft"]["official_use_allowed"])
+        self.assertEqual(len(self.repo.saved_review_tasks), 0)
+
+    def test_operating_brain_ingest_loop_status_returns_missing_when_not_run(self):
+        response = self.client.get("/api/operating-brain/ingest-loop/status")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-ingest-loop-status.v1")
+        self.assertEqual(body["status"], "missing")
+        self.assertFalse(body["official_use_allowed"])
+
+    def test_operating_brain_ingest_loop_run_requires_auth_and_stops_at_review(self):
+        (self.root / "knowledge" / "raw" / "inbox" / "brand.md").write_text(
+            "荷小悦是社区轻养生品牌。不能说治疗失眠。",
+            encoding="utf-8",
+        )
+
+        response = self.client.post("/api/operating-brain/ingest-loop/run")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-ingest-loop-state.v1")
+        self.assertEqual(body["status"], "review_required")
+        self.assertFalse(body["official_use_allowed"])
+
+    def test_operating_brain_brand_decision_review_requires_auth_and_does_not_approve(self):
+        response = self.client.post(
+            "/api/operating-brain/brand-decision/review",
+            json={
+                "artifact_type": "storefront",
+                "stage": "first_store_opening",
+                "text": "荷小悦 草本泡脚按摩\n草本真现煮，按出真功夫",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-brand-decision-review.v1")
+        self.assertEqual(body["artifact_type"], "storefront")
+        self.assertFalse(body["official_use_allowed"])
+        self.assertTrue(body["requires_human_review"])
+        self.assertTrue((self.root / "knowledge" / "brand" / "reviews").exists())
+
+    def test_operating_brain_workspace_event_creates_and_lists_latest_topic(self):
+        response = self.client.post(
+            "/api/operating-brain/workspace/events",
+            json={
+                "topic": "清泡调补养公域素材讨论",
+                "actor": "founder",
+                "role": "operator",
+                "visibility": "public_org",
+                "input": "整理一次 AI 工作区讨论，先作为过程记忆。",
+                "ai_output": {"summary": "需要沉淀素材方向，但不能直接进入正式知识。"},
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-workspace-event-created.v1")
+        self.assertFalse(body["event"]["official_use_allowed"])
+
+        list_response = self.client.get("/api/operating-brain/workspace/events?limit=10")
+
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(list_response.json()["items"][0]["topic"], "清泡调补养公域素材讨论")
+
+    def test_operating_brain_workspace_event_list_redacts_restricted_payload(self):
+        create_response = self.client.post(
+            "/api/operating-brain/workspace/events",
+            json={
+                "topic": "敏感配置排查",
+                "actor": "ops",
+                "role": "operator",
+                "visibility": "public_org",
+                "input": "本次排查发现 HXY_API_TOKEN=secret-value，不能公开展示。",
+                "ai_output": {"summary": "需要红线处理。"},
+            },
+        )
+        self.assertEqual(create_response.status_code, 200)
+
+        response = self.client.get("/api/operating-brain/workspace/events?limit=10")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertNotIn("secret-value", response.text)
+        self.assertEqual(body["items"][0]["visibility"], "redacted_public")
+
+    def test_operating_brain_workspace_event_review_task_does_not_approve_knowledge(self):
+        create_response = self.client.post(
+            "/api/operating-brain/workspace/events",
+            json={
+                "topic": "员工话术候选",
+                "actor": "founder",
+                "role": "operator",
+                "visibility": "public_org",
+                "input": "候选话术需要运营负责人复核后才可外用。",
+            },
+        )
+        self.assertEqual(create_response.status_code, 200)
+        event_id = create_response.json()["event"]["event_id"]
+
+        response = self.client.post(f"/api/operating-brain/workspace/events/{event_id}/review-task")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["status"], "review_task_created")
+        self.assertFalse(body["official_use_allowed"])
+        self.assertEqual(self.repo.saved_review_task["reason"], "workspace_event_review")
+        self.assertEqual(self.repo.saved_review_task["intent"], "workspace_event_review")
+
+    def test_operating_brain_workspace_event_review_task_rejects_private_draft(self):
+        create_response = self.client.post(
+            "/api/operating-brain/workspace/events",
+            json={
+                "topic": "创始人私密草稿",
+                "visibility": "private_draft",
+                "input": "这只是私人推演，不允许进入复核流。",
+            },
+        )
+        self.assertEqual(create_response.status_code, 200)
+        event_id = create_response.json()["event"]["event_id"]
+
+        response = self.client.post(f"/api/operating-brain/workspace/events/{event_id}/review-task")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(len(self.repo.saved_review_tasks), 0)
+
+    def test_operating_brain_workspace_event_process_memory_rejects_private_draft(self):
+        create_response = self.client.post(
+            "/api/operating-brain/workspace/events",
+            json={
+                "topic": "创始人私密草稿",
+                "actor": "founder",
+                "role": "founder",
+                "visibility": "private_draft",
+                "input": "这只是私人推演，不允许进入过程记忆处理。",
+            },
+        )
+        self.assertEqual(create_response.status_code, 200)
+        event_id = create_response.json()["event"]["event_id"]
+
+        response = self.client.post(f"/api/operating-brain/workspace/events/{event_id}/process-memory")
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_operating_brain_workspace_event_detail_hides_private_draft(self):
+        create_response = self.client.post(
+            "/api/operating-brain/workspace/events",
+            json={
+                "topic": "创始人私密草稿",
+                "visibility": "private_draft",
+                "input": "HXY_API_TOKEN=private-secret",
+                "ai_output": {"summary": "内部草稿内容"},
+            },
+        )
+        self.assertEqual(create_response.status_code, 200)
+        event_id = create_response.json()["event"]["event_id"]
+
+        response = self.client.get(f"/api/operating-brain/workspace/events/{event_id}")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertNotIn("private-secret", response.text)
+
+    def test_operating_brain_workspace_event_process_memory_preview_for_public_event(self):
+        create_response = self.client.post(
+            "/api/operating-brain/workspace/events",
+            json={
+                "topic": "品牌表达过程记录",
+                "actor": "founder",
+                "role": "operator",
+                "visibility": "public_org",
+                "input": "以后品牌表达要更口语化，但仍需复核后才能成为正式知识。",
+                "ai_output": {"summary": "形成一条过程记忆预览。"},
+            },
+        )
+        self.assertEqual(create_response.status_code, 200)
+        event_id = create_response.json()["event"]["event_id"]
+
+        response = self.client.post(f"/api/operating-brain/workspace/events/{event_id}/process-memory")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-process-memory-preview.v1")
+        self.assertEqual(body["status"], "process_memory_preview_created")
+        self.assertIn("process memory cannot be formal knowledge", json.dumps(body["boundary"], ensure_ascii=False))
+
+    def test_operating_brain_process_memory_promotion_creates_review_task_with_auth(self):
+        response = self.client.post(
+            "/api/operating-brain/process-memory/promote",
+            json={
+                "text": "待验证假设：清泡调补养是荷小悦核爆点，需要复述测试。",
+                "source": "strategy_discussion",
+                "actor": "founder",
+                "target_domain": "brand_strategy",
+                "confidence": 0.76,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-process-memory-promotion-result.v1")
+        self.assertEqual(body["review_task_id"], "review-task-test-id")
+        self.assertEqual(self.repo.saved_review_task["intent"], "process_memory_promotion")
+        self.assertEqual(self.repo.saved_review_task["reason"], "promote_process_memory")
+        self.assertIn("correction_package", self.repo.saved_review_task)
+        self.assertEqual(
+            self.repo.saved_review_task["correction_package"]["source_memory_id"],
+            body["record"]["memory_id"],
+        )
+
+    def test_operating_brain_process_memory_promotion_requires_configured_token(self):
+        os.environ.pop("HXY_API_TOKEN", None)
+        module = importlib.import_module("apps.api.hxy_knowledge_api")
+        app = module.create_app(root_dir=self.root, repository_factory=lambda: self.repo)
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/operating-brain/process-memory/promote",
+            json={"text": "以后表达要口语化。"},
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("HXY_API_TOKEN", response.json()["detail"])
+
     def test_operating_brain_issues_endpoint_returns_lifecycle_issue_queue(self):
         okf_dir = self.root / "knowledge" / "okf" / "core"
         okf_dir.mkdir(parents=True)
@@ -669,7 +1530,7 @@ used_by:
         self.assertEqual(body["memory_target"], "training_card")
         self.assertIn("治疗", body["risk_boundary"])
 
-    def test_answer_cards_endpoint_returns_builtin_and_repository_cards(self):
+    def test_answer_cards_endpoint_returns_only_repository_approved_cards(self):
         self.repo.answer_cards.append(
             {
                 "card_id": "repo-card-1",
@@ -691,14 +1552,10 @@ used_by:
 
         self.assertEqual(response.status_code, 200)
         body = response.json()
-        self.assertGreaterEqual(body["count"], 7)
+        self.assertEqual(body["count"], 1)
         questions = {item["question_pattern"] for item in body["items"]}
-        self.assertIn("清泡调补养怎么讲？", questions)
         self.assertIn("门店例会怎么开？", questions)
-        builtin = next(item for item in body["items"] if item["question_pattern"] == "清泡调补养怎么讲？")
         repo_card = next(item for item in body["items"] if item["question_pattern"] == "门店例会怎么开？")
-        self.assertTrue(builtin["builtin"])
-        self.assertEqual(builtin["source"], "builtin")
         self.assertFalse(repo_card["builtin"])
         self.assertEqual(repo_card["source"], "repository")
 
@@ -1642,8 +2499,11 @@ used_by:
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("text/html", response.headers["content-type"])
-        self.assertIn("荷小悦 0-1 验证台", response.text)
+        self.assertIn("HXYOS 首店", response.text)
+        self.assertIn("首店今日动作台", response.text)
+        self.assertIn("开始录入", response.text)
         self.assertIn("/api/operating-brain/brand-answer-cards", response.text)
+        self.assertIn("/api/operating-brain/startup-advance", response.text)
 
     def test_summary_assets_and_search_use_repository(self):
         summary = self.client.get("/api/knowledge/summary")
@@ -1754,7 +2614,7 @@ used_by:
         self.assertEqual(body["answer_id"], "answer-test-id")
         self.assertEqual(self.repo.saved_answer["intent"], "brand_positioning")
 
-    def test_chat_answers_golden_question_from_builtin_authority_card_before_search(self):
+    def test_chat_does_not_treat_builtin_golden_question_as_approved_authority(self):
         response = self.client.post(
             "/api/knowledge/chat",
             json={"question": "清泡调补养怎么讲？", "scenario": "门店员工培训"},
@@ -1762,28 +2622,22 @@ used_by:
 
         self.assertEqual(response.status_code, 200)
         body = response.json()
-        self.assertTrue(body["from_answer_card"])
-        self.assertTrue(body["authority_card"]["builtin"])
-        self.assertEqual(body["answer_status"], "已批准")
-        self.assertEqual(body["review_status"], "approved_v1")
-        self.assertEqual(body["version"], "v1.0")
-        self.assertIn("store_staff", body["role_versions"])
-        self.assertIn("治疗失眠", body["forbidden_terms"])
-        self.assertEqual(body["quality_score"]["level"], "high")
-        self.assertEqual(self.repo.search_calls, [])
+        self.assertFalse(body["from_answer_card"])
+        self.assertTrue(body["needs_review"])
+        self.assertNotEqual(body["answer_status"], "已批准")
+        self.assertGreaterEqual(len(self.repo.search_calls), 1)
         self.assertIn("model_route", body)
-        self.assertEqual(body["model_route"]["task_type"], "authority_answer")
+        self.assertEqual(body["model_route"]["task_type"], "rag_answer")
         self.assertFalse(body["model_route"]["should_call_model"])
         self.assertIn("answer_pipeline", body)
         pipeline = body["answer_pipeline"]
-        self.assertEqual(pipeline["policy_decision"]["action"], "answer")
-        self.assertEqual(pipeline["answer_builder"]["answer_type"], "authority_answer")
-        self.assertEqual(pipeline["guardrail_result"]["action"], "send")
-        self.assertIn("权威答案卡", pipeline["evidence_plan"]["sources"])
+        self.assertEqual(pipeline["policy_decision"]["action"], "needs_review")
+        self.assertEqual(pipeline["answer_builder"]["answer_type"], "reference_draft")
+        self.assertIn("参考资料", pipeline["evidence_plan"]["sources"])
         self.assertNotIn("policy_decision", body["answer"])
         self.assertNotIn("evidence_plan", body["answer"])
 
-    def test_chat_matches_builtin_authority_card_even_when_intent_is_generic(self):
+    def test_chat_does_not_match_builtin_authority_card_even_when_intent_is_generic(self):
         response = self.client.post(
             "/api/knowledge/chat",
             json={"question": "荷小悦是什么？", "scenario": "用户端宣传"},
@@ -1791,13 +2645,12 @@ used_by:
 
         self.assertEqual(response.status_code, 200)
         body = response.json()
-        self.assertTrue(body["from_answer_card"])
-        self.assertTrue(body["authority_card"]["builtin"])
-        self.assertEqual(body["intent"], "brand_positioning")
-        self.assertEqual(body["answer_status"], "已批准")
-        self.assertEqual(self.repo.search_calls, [])
+        self.assertFalse(body["from_answer_card"])
+        self.assertTrue(body["needs_review"])
+        self.assertNotEqual(body["answer_status"], "已批准")
+        self.assertGreaterEqual(len(self.repo.search_calls), 1)
 
-    def test_chat_uses_brand_authority_card_for_brand_stage_questions(self):
+    def test_chat_does_not_use_brand_asset_cards_as_approved_authority(self):
         response = self.client.post(
             "/api/knowledge/chat",
             json={"question": "为什么选择社区小店？", "scenario": "创始人内部决策"},
@@ -1805,13 +2658,10 @@ used_by:
 
         self.assertEqual(response.status_code, 200)
         body = response.json()
-        self.assertTrue(body["from_answer_card"])
-        self.assertTrue(body["authority_card"]["builtin"])
-        self.assertEqual(body["authority_card"]["source"], "brand_assets")
-        self.assertEqual(body["intent"], "store_model")
-        self.assertEqual(body["answer_status"], "已批准")
-        self.assertIn("社区小店", body["answer"])
-        self.assertEqual(self.repo.search_calls, [])
+        self.assertFalse(body["from_answer_card"])
+        self.assertTrue(body["needs_review"])
+        self.assertNotEqual(body["answer_status"], "已批准")
+        self.assertGreaterEqual(len(self.repo.search_calls), 1)
 
     def test_chat_marks_weak_rag_answer_insufficient_instead_of_hard_answering(self):
         self.repo.search_items = [
@@ -1850,6 +2700,40 @@ used_by:
         self.assertEqual(pipeline["policy_decision"]["action"], "needs_review")
         self.assertFalse(pipeline["guardrail_result"]["passed"])
         self.assertIn("create_review_task", pipeline["evolution_actions"])
+
+    def test_chat_treats_reference_material_as_unapproved_draft_even_when_relevant(self):
+        self.repo.search_items = [
+            {
+                "chunk_id": "hxy-inbox:positioning:chunk:0",
+                "asset_id": "hxy-inbox:positioning",
+                "title": "荷小悦定位讨论稿",
+                "source_path": "knowledge/raw/inbox/positioning.md",
+                "normalized_path": "knowledge/normalized/brand/preparation/positioning.md",
+                "domain": "brand",
+                "stage": "preparation",
+                "status": "reference",
+                "source_type": "reference_material",
+                "content": "荷小悦是面向社区高疲劳人群的轻养生服务空间，核心围绕泡脚和轻恢复体验。",
+                "score": 90,
+            }
+        ]
+
+        response = self.client.post(
+            "/api/knowledge/chat",
+            json={"question": "荷小悦是什么？", "scenario": "品牌定位", "limit": 1},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertFalse(body["from_answer_card"])
+        self.assertTrue(body["needs_review"])
+        self.assertIn(body["answer_status"], {"待复核", "资料不足"})
+        pipeline = body["answer_pipeline"]
+        self.assertEqual(pipeline["policy_decision"]["action"], "needs_review")
+        self.assertEqual(pipeline["answer_builder"]["answer_type"], "reference_draft")
+        self.assertIn("参考资料", pipeline["evidence_plan"]["sources"])
+        self.assertIn("create_answer_card_draft", pipeline["evolution_actions"])
+        self.assertEqual(body["evidence"][0]["status"], "reference")
 
     def test_chat_uses_model_only_after_retrieval_and_quality_gate(self):
         module = importlib.import_module("apps.api.hxy_knowledge_api")
@@ -1934,7 +2818,8 @@ used_by:
         self.assertEqual(router.generate_calls[0]["metadata"]["intent"], body["intent"])
         self.assertEqual(body["policy_review"]["action"], "pass")
         self.assertNotIn("chunk_id", body["answer"])
-        self.assertEqual(body["answer_pipeline"]["answer_builder"]["answer_type"], "rag_answer")
+        self.assertEqual(body["answer_pipeline"]["answer_builder"]["answer_type"], "reference_draft")
+        self.assertEqual(body["answer_pipeline"]["policy_decision"]["action"], "needs_review")
 
     def test_chat_policy_review_can_reject_model_answer_without_relaxing_local_rules(self):
         module = importlib.import_module("apps.api.hxy_knowledge_api")

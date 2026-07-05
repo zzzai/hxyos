@@ -281,7 +281,17 @@ def brand_authority_cards() -> list[dict[str, Any]]:
                 "status": "approved",
                 "source": "brand_assets",
                 "reasoning": ["来自开店前品牌黄金问题集，用于统一团队品牌口径。"],
-                "evidence": [{"title": "荷小悦品牌资产中心 v1", "domain": module, "strength": "high"}],
+                "evidence": [
+                    {
+                        "title": "荷小悦品牌资产中心 v1",
+                        "domain": module,
+                        "strength": "high",
+                        "status": "approved",
+                        "source_type": "approved_internal_asset",
+                        "owner": "品牌负责人",
+                        "version": "v1.0",
+                    }
+                ],
                 "corrections": [],
                 "next_actions": list(meta["next_actions"]),
             }

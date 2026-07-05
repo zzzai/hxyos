@@ -15,6 +15,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from hxy_knowledge.answer_pipeline import build_answer_pipeline
+from hxy_knowledge.brand_decision import review_brand_artifact, write_brand_review_record
 from hxy_knowledge.brand_assets import brand_authority_cards, build_brand_asset_center
 from hxy_knowledge.answer_engine import (
     answer_status_for,
@@ -28,15 +29,25 @@ from hxy_knowledge.answer_engine import (
 )
 from hxy_knowledge.answer_engine import classify_intent
 from hxy_knowledge.config import get_settings
+from hxy_knowledge.compliance_rules import load_brand_risk_rules
 from hxy_knowledge.eval_runner import run_golden_evals
+from hxy_knowledge.enterprise_governance import (
+    build_enterprise_governance_report,
+    build_file_manifest,
+    build_governance_run_package,
+    build_incremental_compile_plan,
+)
 from hxy_knowledge.golden_questions import authority_cards
 from hxy_knowledge.golden_questions import golden_questions
+from hxy_knowledge.ingest_loop import run_ingest_loop
 from hxy_knowledge.importer import load_current_records
+from hxy_knowledge.loop_engine import build_p0_governance_status, validate_p0_review_decisions
 from hxy_knowledge.memory_ingest import build_instant_memory_records
 from hxy_knowledge.model_router import ModelRouter
 from hxy_knowledge.okf import load_okf_documents, summarize_okf_lifecycle
 from hxy_knowledge.operating_brain import operating_brain_capabilities
 from hxy_knowledge.operating_issues import build_operating_issues, issue_from_intake
+from hxy_knowledge.process_memory import build_memory_promotion_draft, build_process_memory_record
 from hxy_knowledge.reliability import insufficient_answer, score_answer_quality
 from hxy_knowledge.repository import KnowledgeRepository
 from hxy_knowledge.source_brief import build_source_brief
@@ -51,6 +62,12 @@ from hxy_knowledge.training_curriculum import (
 )
 from hxy_knowledge.understanding_engine import understand_text
 from hxy_knowledge.workbench import classify_workbench_intake
+from hxy_knowledge.workspace_events import (
+    create_workspace_event,
+    get_workspace_event,
+    list_workspace_events,
+    redact_workspace_event,
+)
 
 
 RepositoryFactory = Callable[[], Any]
@@ -111,6 +128,60 @@ class OperatingIssueIntakeRequest(BaseModel):
     role: str = "team"
 
 
+class IncrementalCompilePlanRequest(BaseModel):
+    previous_manifest: dict[str, Any] = Field(default_factory=dict)
+    current_manifest: dict[str, Any] = Field(default_factory=dict)
+    relations: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class CompilerReviewDecisionRequest(BaseModel):
+    action: str
+    reviewer: str = "unknown"
+    note: str = ""
+    revised_claim: str = ""
+
+
+class ProcessMemoryRequest(BaseModel):
+    text: str = ""
+    source: str = "chat"
+    actor: str = "unknown"
+    observed_at: str | None = None
+    confidence: float = Field(default=0.5, ge=0, le=1)
+    target_domain: str = "general"
+
+
+class WorkspaceEventRequest(BaseModel):
+    topic: str = ""
+    actor: str = "unknown"
+    role: str = "team"
+    visibility: str = "public_org"
+    input: str = ""
+    ai_output: dict[str, Any] = Field(default_factory=dict)
+    evidence: list[Any] = Field(default_factory=list)
+    risk_flags: list[Any] = Field(default_factory=list)
+    corrections: list[Any] = Field(default_factory=list)
+    generated_tasks: list[Any] = Field(default_factory=list)
+    memory_action: dict[str, Any] = Field(default_factory=dict)
+    review_action: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkspaceEventReviewTaskRequest(BaseModel):
+    reviewer: str = "unknown"
+    note: str = ""
+
+
+class WorkspaceEventProcessMemoryRequest(BaseModel):
+    actor: str = "unknown"
+    target_domain: str = "general"
+    confidence: float = Field(default=0.5, ge=0, le=1)
+
+
+class BrandDecisionRequest(BaseModel):
+    artifact_type: str = "opening_content"
+    stage: str = "first_store_opening"
+    text: str = ""
+
+
 class SourceBriefRequest(BaseModel):
     question: str = ""
     scenario: str = "经营问答"
@@ -164,6 +235,10 @@ class TrainingManagerAcceptanceRequest(BaseModel):
     score: int = Field(default=0, ge=0, le=100)
     note: str = ""
     operating_metric_links: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class P0DecisionPreviewRequest(BaseModel):
+    decisions: dict[str, Any] = Field(default_factory=dict)
 
 
 def _safe_inbox_destination(inbox_dir: Path, file_name: str) -> Path:
@@ -929,6 +1004,38 @@ def _list_repository_answer_cards(repo: Any, *, status: str | None, limit: int) 
     if not callable(list_cards):
         return []
     return list_cards(status=status, limit=limit)
+
+
+def _load_json_array(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if isinstance(payload, dict):
+        for key in ["items", "assets", "claims", "evidence", "relations"]:
+            value = payload.get(key)
+            if isinstance(value, list):
+                return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def _load_structured_governance_inputs(root_dir: Path) -> dict[str, list[dict[str, Any]]]:
+    structured_roots = [
+        root_dir / "quarantine" / "knowledge-assets" / "structured",
+        root_dir / "knowledge" / "structured",
+    ]
+    result = {"claims": [], "evidence": [], "relations": []}
+    for structured_root in structured_roots:
+        if not structured_root.exists():
+            continue
+        result["claims"].extend(_load_json_array(structured_root / "claims.json"))
+        result["evidence"].extend(_load_json_array(structured_root / "evidence.json"))
+        result["relations"].extend(_load_json_array(structured_root / "relations.json"))
+    return result
 
 
 def _answer_from_authority_card(
@@ -2040,6 +2147,332 @@ def dedupe_review_tasks(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return deduped
 
 
+def _read_json_file(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+
+
+def _benchmark_status_from_report(report: dict[str, Any] | None) -> dict[str, Any]:
+    if not report:
+        return {
+            "version": "hxy-brain-benchmark-status.v1",
+            "status": "missing",
+            "summary": {"case_count": 0, "passed_count": 0, "failed_count": 0, "pass_rate": 0.0},
+            "next_actions": [
+                "运行 scripts/run-hxy-brain-benchmark.py 生成 knowledge/reports/benchmark-latest.json。",
+                "用真实答案运行 benchmark，和纯 RAG / 资料工作台做对照。",
+            ],
+        }
+    pass_rate = float(report.get("pass_rate") or 0)
+    min_pass_rate = float((report.get("failure_thresholds") or {}).get("min_pass_rate") or 0.85)
+    next_actions = []
+    if pass_rate < min_pass_rate:
+        next_actions.append("Benchmark 通过率低于阈值，优先处理失败 case。")
+    next_actions.append("保留每次 benchmark report，作为 HXYOS 是否有效的证伪证据。")
+    return {
+        "version": "hxy-brain-benchmark-status.v1",
+        "status": "ready",
+        "summary": {
+            "case_count": int(report.get("case_count") or 0),
+            "passed_count": int(report.get("passed_count") or 0),
+            "failed_count": int(report.get("failed_count") or 0),
+            "pass_rate": pass_rate,
+            "min_pass_rate": min_pass_rate,
+        },
+        "next_actions": next_actions,
+        "report": report,
+    }
+
+
+def _compiler_status_from_report(report: dict[str, Any] | None) -> dict[str, Any]:
+    if not report:
+        return {
+            "version": "hxy-knowledge-compiler-status.v1",
+            "status": "missing",
+            "summary": {
+                "extract_count": 0,
+                "claim_count": 0,
+                "approved_count": 0,
+                "graph_node_count": 0,
+                "graph_edge_count": 0,
+            },
+            "next_actions": [
+                "将 HXY 原始资料放入 knowledge/raw/inbox。",
+                "运行 scripts/compile-hxy-knowledge.py 生成 knowledge/wiki 和 compiler report。",
+            ],
+        }
+    next_actions = [
+        "编译产物默认只能作为 reference/current_candidate，复核后才允许 approved。",
+        "运行知识治理 lint，检查缺来源、缺负责人、过度承诺和生命周期错误。",
+    ]
+    if int(report.get("extract_count") or 0) == 0:
+        next_actions.insert(0, "当前没有可编译资料，先把 .md/.txt 原始资料放入 knowledge/raw/inbox。")
+    return {
+        "version": "hxy-knowledge-compiler-status.v1",
+        "status": "ready",
+        "summary": {
+            "extract_count": int(report.get("extract_count") or 0),
+            "claim_count": int(report.get("claim_count") or 0),
+            "approved_count": int(report.get("approved_count") or 0),
+            "graph_node_count": int(report.get("graph_node_count") or 0),
+            "graph_edge_count": int(report.get("graph_edge_count") or 0),
+        },
+        "next_actions": next_actions,
+        "report": report,
+    }
+
+
+def _compiler_review_queue_from_payload(payload: dict[str, Any] | None, *, limit: int) -> dict[str, Any]:
+    if not payload:
+        return {
+            "version": "hxy-review-queue.v1",
+            "status": "missing",
+            "count": 0,
+            "items": [],
+            "next_actions": ["运行知识编译器生成 knowledge/wiki/review-queue.json。"],
+        }
+    items = []
+    for item in payload.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        public = dict(item)
+        public.setdefault("status", "needs_review")
+        public["official_use_allowed"] = False
+        public["requires_human_review"] = True
+        items.append(public)
+    return {
+        "version": "hxy-review-queue.v1",
+        "status": "ready",
+        "count": len(items[:limit]),
+        "total": len(items),
+        "reviewable_claim_count": int(payload.get("reviewable_claim_count") or len(items)),
+        "noise_claim_count": int(payload.get("noise_claim_count") or 0),
+        "group_counts": payload.get("group_counts") or {},
+        "items": items[:limit],
+        "authority_rule": "review_queue_items_are_candidates_not_approved_knowledge",
+    }
+
+
+def _compiler_compliance_review_pack_from_payload(payload: dict[str, Any] | None, *, limit: int) -> dict[str, Any]:
+    if not payload:
+        return {
+            "version": "hxy-compliance-review-pack.v1",
+            "status": "missing",
+            "count": 0,
+            "total": 0,
+            "items": [],
+            "official_use_allowed": False,
+            "publish_allowed": False,
+            "requires_human_review": True,
+            "next_actions": ["运行知识编译器生成 knowledge/wiki/compliance-review-pack.json。"],
+            "authority_rule": "compliance_review_pack_is_not_approved_knowledge",
+        }
+    items = []
+    for item in payload.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        public = dict(item)
+        public["official_use_allowed"] = False
+        public["publish_allowed"] = False
+        public["requires_human_review"] = True
+        public.setdefault("risk_level", "P0")
+        public.setdefault("required_decision", "approve_as_rule, needs_revision, or reject")
+        items.append(public)
+    return {
+        **payload,
+        "version": payload.get("version") or "hxy-compliance-review-pack.v1",
+        "status": payload.get("status") or ("needs_human_review" if items else "empty"),
+        "count": len(items[:limit]),
+        "total": len(items),
+        "items": items[:limit],
+        "official_use_allowed": False,
+        "publish_allowed": False,
+        "requires_human_review": True,
+        "authority_rule": "compliance_review_pack_is_not_approved_knowledge",
+    }
+
+
+def _p0_reviewer_todo_from_payload(payload: dict[str, Any] | None, *, run_id: str) -> dict[str, Any]:
+    if not payload:
+        return {
+            "version": "hxy-p0-reviewer-todo.v1",
+            "status": "missing",
+            "run_id": run_id,
+            "item_count": 0,
+            "pending_count": 0,
+            "actioned_count": 0,
+            "items": [],
+            "official_use_allowed": False,
+            "publish_allowed": False,
+            "write_to_database": False,
+            "requires_human_review": True,
+            "next_actions": [
+                "运行 scripts/run-hxy-p0-governance-safe-next.py 生成 p0-reviewer-todo.json。",
+                "生成后仍需人工编辑 p0-review-decisions.json，不能由 API 自动批准。",
+            ],
+            "authority_rule": "p0_reviewer_todo_does_not_publish_approved_cards",
+        }
+    items = []
+    for item in payload.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        public = dict(item)
+        public["official_use_allowed"] = False
+        public["publish_allowed"] = False
+        public["write_to_database"] = False
+        public.setdefault("next_human_action", "choose approve, reject, or needs_revision manually")
+        items.append(public)
+    return {
+        **payload,
+        "version": payload.get("version") or "hxy-p0-reviewer-todo.v1",
+        "status": "ready",
+        "run_id": run_id,
+        "item_count": int(payload.get("item_count") or len(items)),
+        "pending_count": int(payload.get("pending_count") or 0),
+        "actioned_count": int(payload.get("actioned_count") or 0),
+        "items": items,
+        "official_use_allowed": False,
+        "publish_allowed": False,
+        "write_to_database": False,
+        "requires_human_review": True,
+        "authority_rule": "p0_reviewer_todo_does_not_publish_approved_cards",
+    }
+
+
+def _p0_governance_notification_from_status(status: dict[str, Any], *, run_id: str) -> dict[str, Any]:
+    details = status.get("details") if isinstance(status.get("details"), dict) else {}
+    pending_count = int(details.get("pending_count") or 0)
+    actioned_count = int(details.get("actioned_count") or 0)
+    status_api = f"/api/v1/hxy/p0/governance-status?run_id={run_id}"
+    reviewer_todo_api = f"/api/v1/hxy/p0/reviewer-todo?run_id={run_id}"
+    lines = [
+        "HXY P0 Governance Status",
+        f"Run: {run_id}",
+        f"Current step: {status.get('current_step') or 'unknown'}",
+        f"Blocked: {'yes' if status.get('blocked') else 'no'}",
+        f"Pending: {pending_count}",
+        f"Actioned: {actioned_count}",
+        "write_to_database: false",
+        "publish_allowed: false",
+        f"Next action: {status.get('next_action') or ''}",
+        f"Status API: {status_api}",
+        f"Reviewer todo API: {reviewer_todo_api}",
+    ]
+    return {
+        "version": "hxy-p0-governance-notification.v1",
+        "channel": "hermes_feishu",
+        "run_id": run_id,
+        "text": "\n".join(lines),
+        "links": {
+            "status_api": status_api,
+            "reviewer_todo_api": reviewer_todo_api,
+        },
+        "current_step": status.get("current_step") or "unknown",
+        "blocked": bool(status.get("blocked")),
+        "pending_count": pending_count,
+        "actioned_count": actioned_count,
+        "send_allowed": False,
+        "official_use_allowed": False,
+        "publish_allowed": False,
+        "write_to_database": False,
+        "requires_human_review": True,
+        "authority_rule": "notification_payload_is_read_only_and_does_not_send_messages",
+    }
+
+
+def _benchmark_corrections_from_payload(payload: dict[str, Any] | None, *, limit: int) -> dict[str, Any]:
+    if not payload:
+        return {
+            "version": "hxy-benchmark-corrections.v1",
+            "status": "missing",
+            "count": 0,
+            "total": 0,
+            "items": [],
+            "next_actions": ["运行 scripts/run-hxy-loop.py benchmark_improvement 生成 benchmark-corrections.json。"],
+        }
+    items = []
+    for task in payload.get("tasks") or []:
+        if not isinstance(task, dict):
+            continue
+        public = dict(task)
+        public.setdefault("status", "open")
+        public["official_use_allowed"] = False
+        public["requires_human_review"] = True
+        public["correction_package"] = {
+            "version": payload.get("version") or "hxy-benchmark-correction-package.v1",
+            "benchmark_version": payload.get("benchmark_version") or "",
+            "source_task_id": public.get("task_id") or "",
+            "required_action": public.get("required_action") or "",
+            "failed_checks": public.get("failed_checks") or [],
+            "warnings": public.get("warnings") or [],
+        }
+        items.append(public)
+    return {
+        "version": "hxy-benchmark-corrections.v1",
+        "status": "ready",
+        "count": len(items[:limit]),
+        "total": len(items),
+        "benchmark_version": payload.get("benchmark_version") or "",
+        "items": items[:limit],
+        "authority_rule": "benchmark_corrections_are_review_tasks_not_approved_knowledge",
+        "next_actions": [
+            "优先处理 missing_citation、lifecycle_not_explicit 和合规失败项。",
+            "修正必须进入人工复核或 approved answer card 流程。",
+        ],
+    }
+
+
+def _answer_card_draft_from_review_item(item: dict[str, Any], revised_claim: str = "") -> dict[str, Any]:
+    claim = (revised_claim or str(item.get("claim") or "")).strip()
+    review_group = str(item.get("review_group") or "general")
+    question_by_group = {
+        "brand_positioning": "荷小悦的品牌定位应该怎么说？",
+        "product_system": "清泡调补养或产品体系应该怎么解释？",
+        "store_model": "荷小悦门店模型的关键判断是什么？",
+        "competitor_research": "这条竞品信息对荷小悦有什么参考价值？",
+        "unit_economics": "这条单店模型或投资测算信息能否作为内部判断依据？",
+        "employee_script": "员工应该如何按标准口径表达？",
+        "risk_boundary": "这条表达有哪些合规风险，应该如何改写？",
+    }
+    answer = (
+        f"当前为草稿，不能直接发布。候选复核内容：{claim} "
+        "需要负责人确认来源、适用范围和风险边界后，才可进入 approved 答案卡。"
+    )
+    return {
+        "version": "hxy-answer-card-draft.v1",
+        "question_pattern": question_by_group.get(review_group, "这条候选知识是否可以进入荷小悦标准口径？"),
+        "intent": item.get("domain") or review_group,
+        "audience": "internal",
+        "answer": answer,
+        "status": "draft",
+        "official_use_allowed": False,
+        "requires_human_review": True,
+        "source_claim_ids": [item.get("claim_id")],
+        "sources": item.get("sources") or [],
+        "risk_flags": item.get("risk_flags") or [],
+        "review_group": review_group,
+        "recommended_reviewer": item.get("recommended_reviewer") or "运营负责人",
+    }
+
+
+def _append_compiler_review_decision(path: Path, decision: dict[str, Any]) -> dict[str, Any]:
+    payload = _read_json_file(path) or {"version": "hxy-compiler-review-decisions.v1", "items": []}
+    items = payload.get("items") if isinstance(payload.get("items"), list) else []
+    items.append(decision)
+    next_payload = {
+        "version": "hxy-compiler-review-decisions.v1",
+        "count": len(items),
+        "items": items,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(next_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return next_payload
+
+
 def create_app(
     root_dir: Path | None = None,
     repository_factory: RepositoryFactory | None = None,
@@ -2050,6 +2483,8 @@ def create_app(
     project_root = Path(__file__).resolve().parents[2]
     inbox_dir = resolved_root / "knowledge" / "raw" / "inbox"
     inbox_dir.mkdir(parents=True, exist_ok=True)
+    workspace_event_store = resolved_root / "knowledge" / "workspace" / "events.jsonl"
+    ingest_loop_state_path = resolved_root / "knowledge" / "runs" / "ingest-loop-latest" / "loop-state.json"
     make_repository = repository_factory or _default_repository_factory(settings.database_url)
     model_router = model_router or ModelRouter()
     require_api_token = _require_api_token(settings.api_token)
@@ -2063,6 +2498,16 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    def _resolve_p0_run_dir(run_id: str) -> tuple[str, Path]:
+        normalized_run_id = run_id.strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", normalized_run_id):
+            raise HTTPException(status_code=400, detail="Invalid run_id")
+        runs_root = (resolved_root / "knowledge" / "runs").resolve()
+        run_dir = (runs_root / normalized_run_id).resolve()
+        if not run_dir.is_relative_to(runs_root):
+            raise HTTPException(status_code=400, detail="Invalid run_id")
+        return normalized_run_id, run_dir
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
@@ -2163,6 +2608,10 @@ def create_app(
     async def operating_brain_brand_assets_endpoint() -> dict[str, Any]:
         return build_brand_asset_center()
 
+    @app.get("/api/operating-brain/brand-risk-rules")
+    async def operating_brain_brand_risk_rules_endpoint() -> dict[str, Any]:
+        return load_brand_risk_rules(root_dir=resolved_root)
+
     @app.get("/api/operating-brain/brand-answer-cards")
     async def operating_brain_brand_answer_cards_endpoint(
         limit: int = Query(default=100, ge=1, le=200),
@@ -2203,6 +2652,466 @@ def create_app(
             for document in documents[:50]
         ]
         return summary
+
+    @app.get("/api/operating-brain/knowledge-governance")
+    async def operating_brain_knowledge_governance_endpoint() -> dict[str, Any]:
+        repo = make_repository()
+        list_assets = getattr(repo, "assets", None)
+        assets = list_assets(limit=500) if callable(list_assets) else []
+        structured = _load_structured_governance_inputs(resolved_root)
+        answer_cards = [
+            _public_answer_card(card, source="brand_assets")
+            for card in brand_authority_cards()
+        ]
+        answer_cards.extend(
+            _public_answer_card(card, source="repository")
+            for card in _list_repository_answer_cards(repo, status=None, limit=500)
+        )
+        okf_documents = load_okf_documents(resolved_root / "knowledge" / "okf")
+        report = build_enterprise_governance_report(
+            assets=assets,
+            claims=structured["claims"],
+            evidence=structured["evidence"],
+            relations=structured["relations"],
+            answer_cards=answer_cards,
+            okf_documents=okf_documents,
+        )
+        report["source"] = {
+            "assets": "repository",
+            "structured": "quarantine/knowledge-assets/structured + knowledge/structured",
+            "answer_cards": "brand_assets + repository",
+        }
+        return report
+
+    @app.post("/api/operating-brain/incremental-compile-plan")
+    async def operating_brain_incremental_compile_plan_endpoint(request: IncrementalCompilePlanRequest) -> dict[str, Any]:
+        return build_incremental_compile_plan(
+            previous_manifest=request.previous_manifest,
+            current_manifest=request.current_manifest,
+            relations=request.relations,
+        )
+
+    @app.get("/api/operating-brain/file-manifest")
+    async def operating_brain_file_manifest_endpoint() -> dict[str, Any]:
+        return build_file_manifest(
+            inbox_dir,
+            root_dir=resolved_root,
+            ignore_globs=["*.tmp", "*.part", ".DS_Store", "~$*"],
+        )
+
+    @app.get("/api/operating-brain/benchmark")
+    async def operating_brain_benchmark_endpoint() -> dict[str, Any]:
+        report = _read_json_file(resolved_root / "knowledge" / "reports" / "benchmark-latest.json")
+        return _benchmark_status_from_report(report)
+
+    @app.get("/api/operating-brain/benchmark/corrections")
+    async def operating_brain_benchmark_corrections_endpoint(
+        limit: int = Query(default=20, ge=1, le=100),
+    ) -> dict[str, Any]:
+        payload = _read_json_file(
+            resolved_root / "knowledge" / "runs" / "benchmark-loop-latest" / "benchmark-corrections.json"
+        )
+        return _benchmark_corrections_from_payload(payload, limit=limit)
+
+    @app.get("/api/v1/hxy/p0/reviewer-todo")
+    async def hxy_p0_reviewer_todo_endpoint(
+        run_id: str = Query(default="benchmark-loop-latest", min_length=1, max_length=80),
+    ) -> dict[str, Any]:
+        normalized_run_id, run_dir = _resolve_p0_run_dir(run_id)
+        payload = _read_json_file(run_dir / "p0-reviewer-todo.json")
+        return _p0_reviewer_todo_from_payload(payload, run_id=normalized_run_id)
+
+    @app.get("/api/v1/hxy/p0/governance-status")
+    async def hxy_p0_governance_status_endpoint(
+        run_id: str = Query(default="benchmark-loop-latest", min_length=1, max_length=80),
+    ) -> dict[str, Any]:
+        normalized_run_id, run_dir = _resolve_p0_run_dir(run_id)
+        status = build_p0_governance_status(
+            run_dir,
+            benchmark_path=resolved_root / "knowledge" / "benchmarks" / "hxy-brain-benchmark-v1.json",
+            report_path=resolved_root / "knowledge" / "reports" / "benchmark-latest.json",
+        )
+        return {
+            **status,
+            "run_id": normalized_run_id,
+            "p0_reviewer_todo_url": f"/api/v1/hxy/p0/reviewer-todo?run_id={normalized_run_id}",
+            "official_use_allowed": False,
+            "publish_allowed": False,
+            "write_to_database": False,
+        }
+
+    @app.get("/api/v1/hxy/p0/notification")
+    async def hxy_p0_notification_endpoint(
+        run_id: str = Query(default="benchmark-loop-latest", min_length=1, max_length=80),
+    ) -> dict[str, Any]:
+        normalized_run_id, run_dir = _resolve_p0_run_dir(run_id)
+        status = build_p0_governance_status(
+            run_dir,
+            benchmark_path=resolved_root / "knowledge" / "benchmarks" / "hxy-brain-benchmark-v1.json",
+            report_path=resolved_root / "knowledge" / "reports" / "benchmark-latest.json",
+        )
+        return _p0_governance_notification_from_status(status, run_id=normalized_run_id)
+
+    @app.post("/api/v1/hxy/p0/decision-preview")
+    async def hxy_p0_decision_preview_endpoint(
+        request: P0DecisionPreviewRequest,
+        run_id: str = Query(default="benchmark-loop-latest", min_length=1, max_length=80),
+    ) -> dict[str, Any]:
+        normalized_run_id, run_dir = _resolve_p0_run_dir(run_id)
+        stub = _read_json_file(run_dir / "p0-review-decisions.stub.json")
+        if not stub:
+            raise HTTPException(status_code=404, detail="p0-review-decisions.stub.json not found")
+        validation = validate_p0_review_decisions(stub, request.decisions)
+        return {
+            "version": "hxy-p0-decision-preview.v1",
+            "run_id": normalized_run_id,
+            "preview_only": True,
+            "valid": bool(validation.get("valid")),
+            "validation": validation,
+            "official_use_allowed": False,
+            "publish_allowed": False,
+            "write_to_database": False,
+            "requires_human_review": True,
+            "authority_rule": "decision_preview_validates_payload_without_writing_manual_decisions",
+        }
+
+    @app.get("/api/operating-brain/knowledge-compiler/status")
+    async def operating_brain_knowledge_compiler_status_endpoint() -> dict[str, Any]:
+        report = _read_json_file(resolved_root / "knowledge" / "reports" / "compiler-latest.json")
+        return _compiler_status_from_report(report)
+
+    @app.get("/api/operating-brain/knowledge-compiler/review-queue")
+    async def operating_brain_knowledge_compiler_review_queue_endpoint(
+        limit: int = Query(default=20, ge=1, le=100),
+    ) -> dict[str, Any]:
+        payload = _read_json_file(resolved_root / "knowledge" / "wiki" / "review-queue.json")
+        return _compiler_review_queue_from_payload(payload, limit=limit)
+
+    @app.get("/api/operating-brain/knowledge-compiler/compliance-review-pack")
+    async def operating_brain_knowledge_compiler_compliance_review_pack_endpoint(
+        limit: int = Query(default=20, ge=1, le=100),
+    ) -> dict[str, Any]:
+        payload = _read_json_file(resolved_root / "knowledge" / "wiki" / "compliance-review-pack.json")
+        return _compiler_compliance_review_pack_from_payload(payload, limit=limit)
+
+    @app.get("/api/operating-brain/ingest-loop/status")
+    async def operating_brain_ingest_loop_status_endpoint() -> dict[str, Any]:
+        payload = _read_json_file(ingest_loop_state_path)
+        if not payload:
+            return {
+                "version": "hxy-ingest-loop-status.v1",
+                "status": "missing",
+                "official_use_allowed": False,
+                "next_actions": ["运行资料入库 Loop，把 inbox 资料编译到人工复核队列。"],
+            }
+        return {
+            "version": "hxy-ingest-loop-status.v1",
+            **payload,
+            "official_use_allowed": False,
+            "authority_rule": "ingest_loop_outputs_are_candidates_until_human_review",
+        }
+
+    @app.post("/api/operating-brain/ingest-loop/run", dependencies=[Depends(require_api_token)])
+    async def operating_brain_ingest_loop_run_endpoint() -> dict[str, Any]:
+        return run_ingest_loop(
+            raw_dir=resolved_root / "knowledge" / "raw" / "inbox",
+            wiki_dir=resolved_root / "knowledge" / "wiki",
+            report_path=resolved_root / "knowledge" / "reports" / "ingest-latest.json",
+            runs_dir=resolved_root / "knowledge" / "runs",
+            run_id="ingest-loop-latest",
+            root_dir=resolved_root,
+        )
+
+    @app.post("/api/operating-brain/brand-decision/review", dependencies=[Depends(require_api_token)])
+    async def operating_brain_brand_decision_review_endpoint(request: BrandDecisionRequest) -> dict[str, Any]:
+        review = review_brand_artifact(request.model_dump())
+        review_path = write_brand_review_record(review, reviews_dir=resolved_root / "knowledge" / "brand" / "reviews")
+        return {**review, "review_path": review_path.as_posix()}
+
+    @app.post(
+        "/api/operating-brain/knowledge-compiler/review-queue/{claim_id}/decision",
+        dependencies=[Depends(require_api_token)],
+    )
+    async def operating_brain_knowledge_compiler_review_decision_endpoint(
+        claim_id: str,
+        request: CompilerReviewDecisionRequest,
+    ) -> dict[str, Any]:
+        action = request.action.strip()
+        if action not in {"pass_to_draft", "reject", "needs_revision"}:
+            raise HTTPException(status_code=400, detail="action must be pass_to_draft, reject, or needs_revision")
+        queue = _compiler_review_queue_from_payload(
+            _read_json_file(resolved_root / "knowledge" / "wiki" / "review-queue.json"),
+            limit=100,
+        )
+        item = next((entry for entry in queue.get("items", []) if str(entry.get("claim_id")) == claim_id), None)
+        if not item:
+            raise HTTPException(status_code=404, detail="review queue claim not found")
+        answer_card_draft = _answer_card_draft_from_review_item(item, request.revised_claim) if action == "pass_to_draft" else None
+        decision = {
+            "version": "hxy-compiler-review-decision.v1",
+            "claim_id": claim_id,
+            "action": action,
+            "reviewer": request.reviewer.strip() or "unknown",
+            "note": request.note.strip(),
+            "revised_claim": request.revised_claim.strip(),
+            "decided_at": datetime.now(timezone.utc).isoformat(),
+            "source_item": item,
+            "answer_card_draft": answer_card_draft,
+            "official_use_allowed": False,
+            "authority_rule": "compiler_review_decision_never_auto_approves_knowledge",
+        }
+        _append_compiler_review_decision(
+            resolved_root / "knowledge" / "wiki" / "review-decisions.json",
+            decision,
+        )
+        return {
+            "version": "hxy-compiler-review-decision.v1",
+            "decision": decision,
+            "answer_card_draft": answer_card_draft,
+            "status": "recorded",
+        }
+
+    def _build_current_governance_run_package(run_id: str) -> tuple[dict[str, Any], Any]:
+        repo = make_repository()
+        list_assets = getattr(repo, "assets", None)
+        assets = list_assets(limit=500) if callable(list_assets) else []
+        structured = _load_structured_governance_inputs(resolved_root)
+        answer_cards = [
+            _public_answer_card(card, source="brand_assets")
+            for card in brand_authority_cards()
+        ]
+        answer_cards.extend(
+            _public_answer_card(card, source="repository")
+            for card in _list_repository_answer_cards(repo, status=None, limit=500)
+        )
+        okf_documents = load_okf_documents(resolved_root / "knowledge" / "okf")
+        governance_report = build_enterprise_governance_report(
+            assets=assets,
+            claims=structured["claims"],
+            evidence=structured["evidence"],
+            relations=structured["relations"],
+            answer_cards=answer_cards,
+            okf_documents=okf_documents,
+        )
+        current_manifest = build_file_manifest(
+            inbox_dir,
+            root_dir=resolved_root,
+            ignore_globs=["*.tmp", "*.part", ".DS_Store", "~$*"],
+        )
+        package = build_governance_run_package(
+            run_id=run_id,
+            previous_manifest={},
+            current_manifest=current_manifest,
+            governance_report=governance_report,
+            relations=structured["relations"],
+        )
+        return package, repo
+
+    @app.get("/api/operating-brain/governance-run-package")
+    async def operating_brain_governance_run_package_endpoint(
+        run_id: str = Query(default="current", min_length=1, max_length=80),
+    ) -> dict[str, Any]:
+        package, _repo = _build_current_governance_run_package(run_id)
+        return package
+
+    @app.post("/api/operating-brain/governance-run-package/review-tasks", dependencies=[Depends(require_api_token)])
+    async def operating_brain_governance_run_package_review_tasks_endpoint(
+        run_id: str = Query(default="current", min_length=1, max_length=80),
+    ) -> dict[str, Any]:
+        if not settings.api_token:
+            raise HTTPException(status_code=503, detail="HXY_API_TOKEN is required for governance review task creation")
+        package, repo = _build_current_governance_run_package(run_id)
+        created = []
+        for draft in package.get("review_task_drafts", [])[:20]:
+            task_id = repo.create_review_task(
+                {
+                    "question": draft.get("question") or "",
+                    "intent": draft.get("intent") or "knowledge_governance",
+                    "reason": draft.get("reason") or "knowledge_governance",
+                    "priority": draft.get("priority") or "medium",
+                    "correction_package": draft.get("correction_package") or {},
+                    "payload_json": draft.get("payload_json") or {},
+                }
+            )
+            created.append(
+                {
+                    "task_id": task_id,
+                    "dedupe_key": draft.get("dedupe_key") or "",
+                    "reason": draft.get("reason") or "",
+                    "priority": draft.get("priority") or "medium",
+                }
+            )
+        package["created_review_tasks"] = created
+        return package
+
+    def _build_process_memory_preview(request: ProcessMemoryRequest) -> dict[str, Any]:
+        text = request.text.strip()
+        if not text:
+            raise HTTPException(status_code=400, detail="text is required")
+        record = build_process_memory_record(
+            text,
+            source=request.source.strip() or "chat",
+            actor=request.actor.strip() or "unknown",
+            observed_at=request.observed_at,
+            confidence=request.confidence,
+        )
+        promotion_draft = build_memory_promotion_draft(
+            record,
+            target_domain=request.target_domain.strip() or "general",
+        )
+        return {
+            "version": "hxy-process-memory-preview.v1",
+            "record": record,
+            "promotion_draft": promotion_draft,
+            "boundary": "过程记忆只能作为上下文和晋升候选，不能直接作为企业正式知识使用。",
+        }
+
+    @app.post("/api/operating-brain/process-memory/preview")
+    async def operating_brain_process_memory_preview_endpoint(request: ProcessMemoryRequest) -> dict[str, Any]:
+        return _build_process_memory_preview(request)
+
+    @app.post("/api/operating-brain/process-memory/promote", dependencies=[Depends(require_api_token)])
+    async def operating_brain_process_memory_promote_endpoint(request: ProcessMemoryRequest) -> dict[str, Any]:
+        if not settings.api_token:
+            raise HTTPException(status_code=503, detail="HXY_API_TOKEN is required for process memory promotion")
+        preview = _build_process_memory_preview(request)
+        review_task = preview["promotion_draft"]["review_task"]
+        repo = make_repository()
+        review_task_id = repo.create_review_task(
+            {
+                "question": review_task["question"],
+                "intent": review_task["intent"],
+                "reason": review_task["reason"],
+                "priority": review_task["priority"],
+                "correction_package": review_task["correction_package"],
+                "payload_json": {
+                    "source": "process_memory",
+                    "record": preview["record"],
+                    "promotion_draft": preview["promotion_draft"],
+                    "correction_package": review_task["correction_package"],
+                },
+            }
+        )
+        return {
+            "version": "hxy-process-memory-promotion-result.v1",
+            "record": preview["record"],
+            "promotion_draft": preview["promotion_draft"],
+            "review_task_id": review_task_id,
+            "status": "review_task_created",
+        }
+
+    @app.post("/api/operating-brain/workspace/events", dependencies=[Depends(require_api_token)])
+    async def operating_brain_workspace_event_create_endpoint(request: WorkspaceEventRequest) -> dict[str, Any]:
+        event = create_workspace_event(request.model_dump(), store_path=workspace_event_store)
+        return {
+            "version": "hxy-workspace-event-created.v1",
+            "event": event,
+            "public_event": redact_workspace_event(event),
+            "authority_rule": "workspace_events_are_episodic_memory_not_approved_knowledge",
+        }
+
+    @app.get("/api/operating-brain/workspace/events")
+    async def operating_brain_workspace_event_list_endpoint(
+        limit: int = Query(default=20, ge=1, le=100),
+        q: str = "",
+        visibility: str | None = None,
+    ) -> dict[str, Any]:
+        return list_workspace_events(workspace_event_store, limit=limit, query=q, visibility=visibility)
+
+    @app.get("/api/operating-brain/workspace/events/{event_id}")
+    async def operating_brain_workspace_event_get_endpoint(event_id: str) -> dict[str, Any]:
+        event = get_workspace_event(workspace_event_store, event_id)
+        if not event or event.get("visibility") == "private_draft":
+            raise HTTPException(status_code=404, detail="workspace event not found")
+        return {
+            "version": "hxy-workspace-event-detail.v1",
+            "event": redact_workspace_event(event),
+            "authority_rule": "workspace_events_are_episodic_memory_not_approved_knowledge",
+        }
+
+    @app.post(
+        "/api/operating-brain/workspace/events/{event_id}/review-task",
+        dependencies=[Depends(require_api_token)],
+    )
+    async def operating_brain_workspace_event_review_task_endpoint(
+        event_id: str,
+        request: WorkspaceEventReviewTaskRequest | None = None,
+    ) -> dict[str, Any]:
+        event = get_workspace_event(workspace_event_store, event_id)
+        if not event:
+            raise HTTPException(status_code=404, detail="workspace event not found")
+        if event.get("visibility") == "private_draft":
+            raise HTTPException(status_code=400, detail="private_draft cannot be converted to review task directly")
+        request = request or WorkspaceEventReviewTaskRequest()
+        task_id = make_repository().create_review_task(
+            {
+                "question": event.get("topic") or "公共 AI 工作间复核任务",
+                "intent": "workspace_event_review",
+                "reason": "workspace_event_review",
+                "priority": "high" if event.get("risk_flags") else "medium",
+                "correction_package": {
+                    "source": "workspace_event",
+                    "event_id": event_id,
+                    "risk_flags": event.get("risk_flags") or [],
+                    "reviewer": request.reviewer,
+                    "note": request.note,
+                    "authority_rule": "workspace_event_review_task_is_not_approved_knowledge",
+                },
+                "payload_json": {
+                    "source": "workspace_event",
+                    "event": event,
+                    "official_use_allowed": False,
+                },
+            }
+        )
+        return {
+            "version": "hxy-workspace-event-review-task-result.v1",
+            "status": "review_task_created",
+            "review_task_id": task_id,
+            "official_use_allowed": False,
+            "authority_rule": "review_task_is_not_approved_knowledge",
+        }
+
+    @app.post(
+        "/api/operating-brain/workspace/events/{event_id}/process-memory",
+        dependencies=[Depends(require_api_token)],
+    )
+    async def operating_brain_workspace_event_process_memory_endpoint(
+        event_id: str,
+        request: WorkspaceEventProcessMemoryRequest | None = None,
+    ) -> dict[str, Any]:
+        event = get_workspace_event(workspace_event_store, event_id)
+        if not event:
+            raise HTTPException(status_code=404, detail="workspace event not found")
+        if event.get("visibility") == "private_draft":
+            raise HTTPException(status_code=400, detail="private_draft cannot be converted to process memory directly")
+        request = request or WorkspaceEventProcessMemoryRequest()
+        ai_output = event.get("ai_output") if isinstance(event.get("ai_output"), dict) else {}
+        text = "\n".join(
+            part
+            for part in [
+                str(event.get("topic") or ""),
+                str(event.get("input") or ""),
+                str(ai_output.get("summary") or ""),
+            ]
+            if part
+        )
+        preview = _build_process_memory_preview(
+            ProcessMemoryRequest(
+                text=text,
+                source=f"workspace_event:{event_id}",
+                actor=request.actor,
+                confidence=request.confidence,
+                target_domain=request.target_domain,
+            )
+        )
+        preview["source_event_id"] = event_id
+        preview["status"] = "process_memory_preview_created"
+        preview["authority_rule"] = "process_memory_is_context_only_not_approved_knowledge"
+        preview["boundary"] = (
+            f"{preview['boundary']} process memory cannot be formal knowledge without human review."
+        )
+        return preview
 
     @app.get("/api/operating-brain/issues")
     async def operating_brain_issues_endpoint() -> dict[str, Any]:
@@ -2631,20 +3540,6 @@ def create_app(
         domain_hint = str(frontdoor.get("intent") or rule_domain_hint)
         if domain_hint not in _FRONTDOOR_INTENTS:
             domain_hint = rule_domain_hint
-        early_builtin_card = _builtin_authority_card(question, domain_hint) or _builtin_authority_card(question, "any")
-        if early_builtin_card:
-            answer = _answer_from_authority_card(
-                question=question,
-                used_query=question,
-                scenario=scenario,
-                understanding=understanding,
-                card=early_builtin_card,
-            )
-            _attach_model_route(answer, model_router.route("authority_answer"))
-            _attach_answer_pipeline(answer, role="store_staff" if "员工" in scenario or "培训" in scenario else "team")
-            answer_id = repo.save_answer_run(answer)
-            answer["answer_id"] = answer_id
-            return answer
         items = _repository_search(
             repo,
             question,
@@ -2683,20 +3578,6 @@ def create_app(
                 scenario=scenario,
                 understanding=understanding,
                 card=card,
-            )
-            _attach_model_route(answer, model_router.route("authority_answer"))
-            _attach_answer_pipeline(answer, role="team")
-            answer_id = repo.save_answer_run(answer)
-            answer["answer_id"] = answer_id
-            return answer
-        builtin_card = _builtin_authority_card(question, intent)
-        if builtin_card:
-            answer = _answer_from_authority_card(
-                question=question,
-                used_query=used_query,
-                scenario=scenario,
-                understanding=understanding,
-                card=builtin_card,
             )
             _attach_model_route(answer, model_router.route("authority_answer"))
             _attach_answer_pipeline(answer, role="team")
@@ -2794,16 +3675,11 @@ def create_app(
 
     @app.get("/api/knowledge/answer-cards")
     async def list_answer_cards(status: str | None = "approved", limit: int = Query(default=100, ge=1, le=500)) -> dict[str, Any]:
-        builtin_items = [
-            _public_answer_card(card, source="builtin")
-            for card in authority_cards()
-            if not status or card.get("status") == status
-        ]
         repo_items = [
             _public_answer_card(card, source="repository")
             for card in _list_repository_answer_cards(make_repository(), status=status, limit=limit)
         ]
-        items = [*repo_items, *builtin_items]
+        items = [*repo_items]
         return {"items": items[:limit], "count": len(items[:limit])}
 
     @app.post("/api/knowledge/answer-cards", dependencies=[Depends(require_api_token)])

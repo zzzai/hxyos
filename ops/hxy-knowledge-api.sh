@@ -30,6 +30,9 @@ cd "${ROOT_DIR}"
 export HXY_ROOT_DIR="${ROOT_DIR}"
 export HXY_DATABASE_URL
 export HXY_API_TOKEN
+export HXY_MODEL_ROUTER_ENABLED="${HXY_MODEL_ROUTER_ENABLED:-}"
+export HXY_MODEL_API_KEY="${HXY_MODEL_API_KEY:-}"
+export HXY_MODEL_CONFIG_PATH="${HXY_MODEL_CONFIG_PATH:-}"
 export PYTHONPATH="${ROOT_DIR}/apps/api:${PYTHONPATH:-}"
 
 exec "${PYTHON_BIN}" -m uvicorn apps.api.hxy_knowledge_api:app \

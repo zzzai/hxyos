@@ -142,6 +142,185 @@ class HxyOperatingBrainDocsTest(unittest.TestCase):
         ]:
             self.assertIn(phrase, combined)
 
+    def test_huashu_design_article_is_mapped_to_execution_surface_only(self):
+        path = ROOT / "docs" / "project-brain" / "architecture" / "04-hxyos-execution-surface-design-skill.md"
+        index_path = ROOT / "docs" / "project-brain" / "PROJECT-INDEX.md"
+
+        self.assertTrue(path.exists())
+        text = path.read_text(encoding="utf-8")
+        index = index_path.read_text(encoding="utf-8")
+        combined = "\n".join([text, index])
+
+        for phrase in [
+            "Huashu Design",
+            "Execution Surface",
+            "外部参考资料",
+            "不能作为 HXY 权威知识",
+            "不改变 Week 1 对外话术风险优先级",
+            "品牌资产协议",
+            "反 AI Slop",
+            "Playwright 验证",
+            "五维设计评审",
+            "HXY UI Prototype Skill",
+            "knowledge/raw/external-references",
+        ]:
+            self.assertIn(phrase, combined)
+
+    def test_ai_native_dev_article_is_mapped_to_dev_harness_only(self):
+        path = ROOT / "docs" / "project-brain" / "agents" / "04-ai-native-dev-harness.md"
+        index_path = ROOT / "docs" / "project-brain" / "PROJECT-INDEX.md"
+
+        self.assertTrue(path.exists())
+        text = path.read_text(encoding="utf-8")
+        index = index_path.read_text(encoding="utf-8")
+        combined = "\n".join([text, index])
+
+        for phrase in [
+            "Code is cheap",
+            "AI Native Dev Harness",
+            "外部参考资料",
+            "不能作为",
+            "HXY 权威业务知识",
+            "No Spec, No Code",
+            "Minimum Chaos Unit",
+            "Codemap",
+            "Checkpoint",
+            "New Chat / Handoff",
+            "多层 Safety Net",
+            "scripts/run-hxy-loop.py",
+            "frontend_regression",
+            "startup.html",
+            "首店今日动作台",
+        ]:
+            self.assertIn(phrase, combined)
+
+    def test_agent_memory_contract_defines_cognitive_layers_retrieval_and_forgetting(self):
+        path = ROOT / "docs" / "architecture" / "hxy-operating-memory-and-skills.md"
+        self.assertTrue(path.exists())
+        text = path.read_text(encoding="utf-8")
+
+        for phrase in [
+            "Agent Memory Cognitive Contract",
+            "不是数据库三级缓存",
+            "Working Memory",
+            "Short-Term Memory",
+            "Long-Term Memory",
+            "上下文预算",
+            "semantic relevance",
+            "recency",
+            "importance",
+            "authority status",
+            "遗忘不是删除",
+            "decay_score",
+            "hot / warm / cold",
+            "过程记忆不能作为权威依据",
+            "正确的信息在正确时间出现在正确位置",
+        ]:
+            self.assertIn(phrase, text)
+
+    def test_p0_answer_card_governance_runbook_documents_manual_gates(self):
+        path = ROOT / "docs" / "operations" / "hxy-p0-answer-card-governance-runbook.md"
+        index_path = ROOT / "docs" / "project-brain" / "PROJECT-INDEX.md"
+        self.assertTrue(path.exists())
+        self.assertTrue(index_path.exists())
+
+        text = path.read_text(encoding="utf-8")
+        index = index_path.read_text(encoding="utf-8")
+        combined = "\n".join([text, index])
+
+        for phrase in [
+            "HXY P0 Answer Card Governance Runbook",
+            "p0-review-decisions.stub.json",
+            "p0-review-decisions.sample.json",
+            "p0-review-decisions.json",
+            "validate-hxy-p0-review-decisions.py sample",
+            "validate-hxy-p0-review-decisions.py review-packet",
+            "p0-manual-review-packet.md",
+            "validate-hxy-p0-review-decisions.py init-decisions",
+            "validate-hxy-p0-review-decisions.py edit-guide",
+            "p0-decision-edit-guide.md",
+            "validate-hxy-p0-review-decisions.py decision-audit",
+            "p0-review-decisions.audit.json",
+            "p0-review-decisions.audit.md",
+            "needs_decision_audit",
+            "stale_decision_audit",
+            "audit_fingerprint_digest",
+            "sample_fingerprint_digest",
+            "validate-hxy-p0-review-decisions.py reviewer-worksheet",
+            "p0-reviewer-worksheet.md",
+            "validate-hxy-p0-review-decisions.py reviewer-todo",
+            "p0-reviewer-todo.json",
+            "GET /api/v1/hxy/p0/reviewer-todo",
+            "GET /api/v1/hxy/p0/governance-status",
+            "POST /api/v1/hxy/p0/decision-preview",
+            "decision_preview_validates_payload_without_writing_manual_decisions",
+            "run-hxy-p0-governance-safe-next.py",
+            "report-hxy-p0-governance-dry-run.py",
+            "p0-governance-dry-run-report.json",
+            "dry_run_report_does_not_execute_safe_next",
+            "human_decision_required",
+            "validate-hxy-p0-review-decisions.py decision-report",
+            "p0-review-decisions.report.md",
+            "needs_decision_report",
+            "stale_decision_report",
+            "decision_fingerprint_digest",
+            "validate-hxy-p0-review-decisions.py validate",
+            "p0-publication-preflight.json",
+            "p0-approved-card-publication-package.json",
+            "publish-hxy-p0-answer-cards.py dry-run",
+            "p0-approved-card-publication-dry-run.json",
+            "publish-hxy-p0-answer-cards.py publish",
+            "--confirm-manual-publication",
+            "published-answer-cards.reviewed.json",
+            "import-hxy-p0-reviewed-answer-cards.py gate",
+            "reviewed-answer-cards.import-gate.json",
+            "write_to_database: false",
+            "would_import_count: 0",
+            "fingerprint",
+            "blocked_at_empty_manual_decisions",
+            "不得跳过 import gate",
+            "不得把 dry-run payload 当 approved answer card",
+            "不得自动批准 candidate / draft / process memory",
+            "flowchart TD",
+            "manual_decisions",
+            "reviewed_file",
+            "import_gate",
+            "HXY P0 Answer Card Governance Runbook",
+        ]:
+            self.assertIn(phrase, combined)
+
+    def test_p0_manual_review_template_documents_human_decision_inputs(self):
+        path = ROOT / "docs" / "operations" / "hxy-p0-manual-review-template.md"
+        index_path = ROOT / "docs" / "project-brain" / "PROJECT-INDEX.md"
+        self.assertTrue(path.exists())
+        self.assertTrue(index_path.exists())
+
+        text = path.read_text(encoding="utf-8")
+        index = index_path.read_text(encoding="utf-8")
+        combined = "\n".join([text, index])
+
+        for phrase in [
+            "HXY P0 Manual Review Template",
+            "p0-review-decisions.json",
+            "compliance-medical-001",
+            "compliance-effect-001",
+            "compliance-marketing-001",
+            "risk-002",
+            "approve",
+            "reject",
+            "needs_revision",
+            "pending",
+            "source_references",
+            "knowledge_version",
+            "responsible_owner",
+            "effective_scope",
+            "risk_review_status",
+            "不得自动批准 candidate / draft / process memory",
+            "write_to_database: false",
+            "publish_allowed: false",
+        ]:
+            self.assertIn(phrase, combined)
+
 
 if __name__ == "__main__":
     unittest.main()

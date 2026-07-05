@@ -48,13 +48,19 @@
 | 文件 | 作用 |
 |---|---|
 | `README.md` | 项目边界和目录说明 |
+| `2026-07-03-current-status.md` | 当前 HXYOS 知识底座、P0 治理、API、工作台和验证状态快照 |
+| `../product/hxyos-prd.md` | HXYOS 产品需求基准，定义公共 AI 工作间、核心知识发布、0+4+1 记忆、Loop 和 Benchmark 产品红线 |
+| `../operations/hxy-p0-answer-card-governance-runbook.md` | HXY P0 Answer Card Governance Runbook，规定 P0 权威答案卡从 stub、manual decisions、governance dry-run report、preflight、dry-run、reviewed file 到 import gate 的人工治理链路 |
+| `../operations/hxy-p0-manual-review-template.md` | HXY P0 Manual Review Template，给人工 reviewer 填写 P0 决策、元数据和风险边界 |
 | `architecture/01-target-architecture.md` | 超智大脑目标架构 |
+| `architecture/04-hxyos-execution-surface-design-skill.md` | Huashu Design 外部参考资料的 Execution Surface 映射，限定为 HXY UI Prototype Skill，不作为权威知识 |
 | `knowledge/01-knowledge-base-design.md` | 知识库设计 |
 | `semantic/01-ontos-lite.md` | 轻量本体设计 |
 | `data/01-data-agent-design.md` | 数据智能体设计 |
 | `agents/01-agent-map.md` | 业务智能体地图 |
 | `agents/02-execution-loop.md` | Loop Engineering 执行闭环 |
 | `agents/03-claude-code-workflow.md` | Claude Code harness / loop / handoff |
+| `agents/04-ai-native-dev-harness.md` | AI Native Dev Harness，吸收 Code is cheap 文章为 HXYOS 开发 Loop 纪律，定义 spec、codemap、checkpoint、minimum chaos unit 和 safety net |
 | `roadmap/01-stage-roadmap.md` | 从筹备期到万店规模路线图 |
 | `governance/01-quality-and-safety.md` | 质量、安全、审计治理 |
 | `assets/01-current-asset-register.md` | 当前资产清单与事实/假设边界 |
@@ -87,3 +93,4 @@
 7. 接入更多营销/管理书籍后，拆出营销动作和管理动作 Agent。
 8. 用 `agents/02-execution-loop.md` 统一任务闭环、停止条件和评价标准。
 9. 用 `agents/03-claude-code-workflow.md` 统一 Claude Code 舞台、角色分工和交接格式。
+10. 用 `agents/04-ai-native-dev-harness.md` 把对话式开发升级为 HXYOS Dev Harness，优先重做 `startup.html` 成首店今日动作台，再补 `frontend_regression` loop。

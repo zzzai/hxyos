@@ -104,9 +104,40 @@ class HxyKnowledgeServiceTest(unittest.TestCase):
             self.assertTrue(card["applicable_scenarios"])
             self.assertTrue(card["next_actions"])
             self.assertIsInstance(card["forbidden_terms"], list)
+            self.assertTrue(card["evidence"])
+            for evidence in card["evidence"]:
+                self.assertEqual(evidence["status"], "approved")
+                self.assertEqual(evidence["source_type"], "approved_internal_asset")
+                self.assertEqual(evidence["owner"], "品牌负责人")
+                self.assertEqual(evidence["version"], "v1.0")
         answer_text = " ".join(card["answer"] for card in cards)
         for unsafe in ["稳赚", "零风险", "一定回本", "药到病除", "包治"]:
             self.assertNotIn(unsafe, answer_text)
+
+    def test_compliance_rules_load_forbidden_terms_from_risk_materials(self):
+        compliance_rules = load_module("hxy_compliance_rules", "apps/api/hxy_knowledge/compliance_rules.py")
+
+        result = compliance_rules.load_brand_risk_rules(root_dir=ROOT)
+
+        self.assertEqual(result["version"], "hxy-brand-risk-rules.v1")
+        self.assertFalse(result["official_use_allowed"])
+        self.assertTrue(result["requires_human_review"])
+        serialized_rules = json.dumps(result["rules"], ensure_ascii=False)
+        for term in ["祛湿排毒", "改善睡眠", "治疗脚气", "年轻十岁", "医美级"]:
+            self.assertIn(term, serialized_rules)
+        self.assertIn("knowledge/raw/inbox/荷小悦资料/09_知识库与参考资料/09_风险与合规/荷小悦禁用表达库.md", result["source_paths"])
+
+    def test_compliance_rules_check_text_uses_loaded_terms_and_skips_boundary_language(self):
+        compliance_rules = load_module("hxy_compliance_rules_check", "apps/api/hxy_knowledge/compliance_rules.py")
+
+        risky = compliance_rules.check_brand_risk_text("草本泡脚可以祛湿排毒，改善睡眠，一次见效。", root_dir=ROOT)
+        safe = compliance_rules.check_brand_risk_text("我们不做祛湿排毒承诺，也不能替代医疗治疗。", root_dir=ROOT)
+
+        self.assertEqual(risky["status"], "bad")
+        self.assertIn("保证", {hit["type"] for hit in risky["hits"]})
+        self.assertIn("祛湿排毒", json.dumps(risky["hits"], ensure_ascii=False))
+        self.assertEqual(safe["status"], "ok")
+        self.assertEqual(safe["hits"], [])
 
     def test_training_curriculum_defines_levels_modules_and_adaptive_retrain(self):
         curriculum = load_module("hxy_training_curriculum", "apps/api/hxy_knowledge/training_curriculum.py")
@@ -709,6 +740,190 @@ class HxyKnowledgeServiceTest(unittest.TestCase):
         self.assertEqual(result["guardrail_result"]["action"], "revise_or_review")
         self.assertIn("create_review_task", result["evolution_actions"])
         self.assertIn("create_answer_card_draft", result["evolution_actions"])
+
+    def test_answer_pipeline_uses_compliance_rules_for_loaded_forbidden_expressions(self):
+        pipeline_module = load_module("hxy_answer_pipeline_compliance_rules", "apps/api/hxy_knowledge/answer_pipeline.py")
+
+        risky = pipeline_module.build_answer_pipeline(
+            question="草本泡脚有什么功效？",
+            scenario="用户端宣传",
+            role="store_staff",
+            intent="product_system",
+            answer="草本泡脚可以祛湿排毒，改善睡眠，一次见效。",
+            evidence=[{"domain": "approved_answer_card", "title": "合规边界", "strength": "high"}],
+            confidence="high",
+            needs_review=False,
+            from_answer_card=True,
+            model_route={"task_type": "authority_answer", "should_call_model": False},
+        )
+        safe = pipeline_module.build_answer_pipeline(
+            question="草本泡脚有什么功效？",
+            scenario="用户端宣传",
+            role="store_staff",
+            intent="product_system",
+            answer="我们不做祛湿排毒承诺，也不能替代医疗治疗。可以说草本现煮，泡着舒服。",
+            evidence=[{"domain": "approved_answer_card", "title": "合规边界", "strength": "high"}],
+            confidence="high",
+            needs_review=False,
+            from_answer_card=True,
+            model_route={"task_type": "authority_answer", "should_call_model": False},
+        )
+
+        self.assertEqual(risky["policy_decision"]["action"], "needs_review")
+        self.assertIn("医疗功效", risky["policy_decision"]["risk_flags"])
+        self.assertIn("夸大表达", risky["policy_decision"]["risk_flags"])
+        self.assertFalse(risky["guardrail_result"]["passed"])
+        self.assertIn("高风险表达", " ".join(risky["guardrail_result"]["findings"]))
+        self.assertEqual(safe["policy_decision"]["action"], "answer")
+        self.assertTrue(safe["guardrail_result"]["passed"])
+
+    def test_answer_pipeline_treats_reference_material_as_unapproved_draft(self):
+        pipeline_module = load_module("hxy_answer_pipeline_reference", "apps/api/hxy_knowledge/answer_pipeline.py")
+
+        result = pipeline_module.build_answer_pipeline(
+            question="荷小悦是什么？",
+            scenario="品牌定位",
+            role="founder",
+            intent="positioning",
+            answer="荷小悦是社区轻养生服务空间，当前定位仍需要核定。",
+            evidence=[
+                {
+                    "domain": "brand",
+                    "title": "荷小悦定位讨论稿",
+                    "status": "reference",
+                    "stage": "reference",
+                    "source_type": "reference_material",
+                    "strength": "medium",
+                }
+            ],
+            confidence="medium",
+            needs_review=False,
+            from_answer_card=False,
+            model_route={"task_type": "answer_synthesis", "should_call_model": True},
+        )
+
+        self.assertEqual(result["policy_decision"]["action"], "needs_review")
+        self.assertTrue(result["policy_decision"]["requires_review"])
+        self.assertIn("参考资料", result["evidence_plan"]["sources"])
+        self.assertEqual(result["answer_builder"]["answer_type"], "reference_draft")
+        self.assertIn("create_review_task", result["evolution_actions"])
+        self.assertIn("create_answer_card_draft", result["evolution_actions"])
+        self.assertEqual(result["loop_contract"]["stop_condition"]["stop_reason"], "review_required")
+
+    def test_answer_pipeline_treats_preparation_stage_as_reference_material(self):
+        pipeline_module = load_module("hxy_answer_pipeline_preparation", "apps/api/hxy_knowledge/answer_pipeline.py")
+
+        result = pipeline_module.build_answer_pipeline(
+            question="清泡调补养怎么讲？",
+            scenario="产品口径",
+            role="team",
+            intent="product_system",
+            answer="清泡调补养是一套产品分层表达。",
+            evidence=[
+                {
+                    "domain": "product",
+                    "title": "清泡调补养讨论稿",
+                    "stage": "preparation",
+                    "strength": "high",
+                }
+            ],
+            confidence="high",
+            needs_review=False,
+            from_answer_card=False,
+            model_route={"task_type": "rag_answer", "should_call_model": False},
+        )
+
+        self.assertEqual(result["policy_decision"]["action"], "needs_review")
+        self.assertEqual(result["answer_builder"]["answer_type"], "reference_draft")
+        self.assertIn("参考资料", result["evidence_plan"]["sources"])
+
+    def test_answer_pipeline_treats_process_memory_as_context_hint_not_authority(self):
+        pipeline_module = load_module("hxy_answer_pipeline_process_memory", "apps/api/hxy_knowledge/answer_pipeline.py")
+
+        result = pipeline_module.build_answer_pipeline(
+            question="荷小悦品牌表达以后要注意什么？",
+            scenario="品牌口径",
+            role="founder",
+            intent="brand_positioning",
+            answer="过程记忆提醒：表达要口语化，但这不是核定品牌结论。",
+            evidence=[
+                {
+                    "domain": "process_memory",
+                    "title": "创始人偏好记录",
+                    "status": "process",
+                    "stage": "context_hint",
+                    "source_type": "process_memory",
+                    "official_use_allowed": False,
+                    "strength": "low",
+                }
+            ],
+            confidence="medium",
+            needs_review=False,
+            from_answer_card=False,
+            model_route={"task_type": "answer_synthesis", "should_call_model": True},
+        )
+
+        self.assertEqual(result["policy_decision"]["action"], "needs_review")
+        self.assertIn("过程记忆", result["evidence_plan"]["sources"])
+        self.assertNotIn("权威答案卡", result["evidence_plan"]["sources"])
+        self.assertEqual(result["answer_builder"]["answer_type"], "context_draft")
+        self.assertIn("create_review_task", result["evolution_actions"])
+
+    def test_answer_pipeline_requires_review_for_disputed_or_conflicting_evidence(self):
+        pipeline_module = load_module("hxy_answer_pipeline_conflict", "apps/api/hxy_knowledge/answer_pipeline.py")
+
+        result = pipeline_module.build_answer_pipeline(
+            question="清泡调补养到底怎么讲？",
+            scenario="产品口径",
+            role="store_staff",
+            intent="product_system",
+            answer="清泡调补养可以作为产品分层，但不同资料对表达顺序存在冲突。",
+            evidence=[
+                {
+                    "domain": "product",
+                    "title": "清泡调补养旧版材料",
+                    "status": "disputed",
+                    "contradicts": ["清泡调补养新版材料"],
+                    "strength": "medium",
+                }
+            ],
+            confidence="medium",
+            needs_review=False,
+            from_answer_card=False,
+            model_route={"task_type": "answer_synthesis", "should_call_model": True},
+        )
+
+        self.assertEqual(result["policy_decision"]["action"], "needs_review")
+        self.assertIn("证据冲突", result["policy_decision"]["risk_flags"])
+        self.assertIn("证据冲突", " ".join(result["guardrail_result"]["findings"]))
+        self.assertEqual(result["answer_builder"]["answer_type"], "reference_draft")
+        self.assertIn("create_review_task", result["evolution_actions"])
+
+    def test_answer_engine_evidence_preserves_lifecycle_fields(self):
+        answer_engine = load_module("hxy_answer_engine_lifecycle", "apps/api/hxy_knowledge/answer_engine.py")
+
+        evidence = answer_engine.build_evidence(
+            [
+                {
+                    "chunk_id": "chunk-1",
+                    "asset_id": "asset-1",
+                    "title": "荷小悦定位讨论稿",
+                    "source_path": "knowledge/raw/inbox/positioning.md",
+                    "normalized_path": "knowledge/normalized/brand/preparation/positioning.md",
+                    "domain": "brand",
+                    "stage": "preparation",
+                    "status": "reference",
+                    "source_type": "reference_material",
+                    "content": "荷小悦是社区轻养生服务空间。",
+                    "score": 80,
+                }
+            ],
+            intent="brand_positioning",
+        )
+
+        self.assertEqual(evidence[0]["stage"], "preparation")
+        self.assertEqual(evidence[0]["status"], "reference")
+        self.assertEqual(evidence[0]["source_type"], "reference_material")
 
     def test_workbench_intake_routes_team_value_workflows(self):
         workbench = load_module("hxy_workbench", "apps/api/hxy_knowledge/workbench.py")
@@ -1689,6 +1904,754 @@ replaced_by: franchise-model-v2
         self.assertEqual(intake_issue["domain"], "training")
         self.assertEqual(intake_issue["priority"], "high")
         self.assertIn("治疗", intake_issue["risk_boundary"])
+
+    def test_enterprise_governance_lint_blocks_reference_approval_and_scores_quality(self):
+        governance = load_module("hxy_enterprise_governance", "apps/api/hxy_knowledge/enterprise_governance.py")
+        assets = [
+            {
+                "asset_id": "asset-reference",
+                "title": "外部 LLM Wiki 方法论",
+                "source_path": "knowledge/raw/inbox/wechat-articles/llm-wiki/article.md",
+                "domain": "external",
+                "stage": "evergreen",
+                "status": "reference",
+                "quality_score": 0.83,
+                "quality_grade": "A",
+                "metadata": {"source_type": "external_article"},
+            },
+            {
+                "asset_id": "asset-approved",
+                "title": "荷小悦是什么",
+                "source_path": "knowledge/okf/core/hxy-positioning.md",
+                "domain": "brand",
+                "stage": "preparation",
+                "status": "approved",
+                "quality_score": 0.91,
+                "quality_grade": "A",
+                "metadata": {"owner": "品牌负责人", "sources": ["source-a"]},
+            },
+        ]
+        claims = [
+            {
+                "claim_id": "claim-no-owner",
+                "claim_type": "brand_positioning",
+                "claim": "荷小悦是社区轻恢复品牌",
+                "status": "current_candidate",
+                "confidence": 0.62,
+                "evidence_ids": [],
+                "needs_validation": True,
+            },
+            {
+                "claim_id": "claim-risky",
+                "claim_type": "product_service",
+                "claim": "清泡可以治疗失眠，保证有效",
+                "status": "current_candidate",
+                "confidence": 0.78,
+                "evidence_ids": ["e1"],
+                "needs_validation": False,
+            },
+        ]
+        evidence = [
+            {"evidence_id": "e1", "source_id": "asset-reference", "snippet": "外部文章方法论"},
+        ]
+        answer_cards = [
+            {
+                "card_id": "card-reference",
+                "question_pattern": "LLM Wiki 能不能直接作为荷小悦结论？",
+                "status": "approved",
+                "intent": "knowledge_governance",
+                "evidence": [{"asset_id": "asset-reference", "status": "reference"}],
+            }
+        ]
+
+        report = governance.build_enterprise_governance_report(
+            assets=assets,
+            claims=claims,
+            evidence=evidence,
+            relations=[],
+            answer_cards=answer_cards,
+            okf_documents=[
+                {
+                    "id": "core/bad-approved",
+                    "title": "缺负责人 OKF",
+                    "status": "approved",
+                    "owner": "未指定",
+                    "last_confirmed": "",
+                    "evidence": ["source-a"],
+                }
+            ],
+            today="2026-06-27",
+        )
+
+        self.assertEqual(report["version"], "hxy-enterprise-knowledge-governance.v1")
+        self.assertEqual(report["summary"]["asset_count"], 2)
+        self.assertEqual(report["summary"]["claim_count"], 2)
+        self.assertGreaterEqual(report["summary"]["blocking_issue_count"], 2)
+        self.assertLess(report["quality_score"], 1.0)
+        issue_codes = {item["code"] for item in report["lint_issues"]}
+        self.assertIn("reference_used_as_approved_source", issue_codes)
+        self.assertIn("claim_missing_evidence", issue_codes)
+        self.assertIn("claim_overclaim_risk", issue_codes)
+        self.assertIn("okf_approved_missing_owner", issue_codes)
+        self.assertIn("okf_approved_missing_last_confirmed", issue_codes)
+        self.assertFalse(report["release_gate"]["can_publish"])
+        self.assertIn("approved", report["release_gate"]["blocked_statuses"])
+        action_types = {item["action_type"] for item in report["evolution_actions"]}
+        self.assertIn("create_review_task", action_types)
+        self.assertIn("draft_answer_card_revision", action_types)
+        self.assertIn("downgrade_to_reference", action_types)
+        self.assertIn("review_task_drafts", report)
+        self.assertGreaterEqual(len(report["review_task_drafts"]), 1)
+        self.assertEqual(report["review_task_drafts"][0]["intent"], "knowledge_governance")
+        self.assertEqual(report["issue_summary"]["version"], "hxy-governance-issue-summary.v1")
+        self.assertGreaterEqual(report["issue_summary"]["blocking_issue_count"], 2)
+
+    def test_enterprise_governance_keeps_candidate_overclaims_review_only_not_publish_blocking(self):
+        governance = load_module("hxy_enterprise_governance_candidate_overclaim", "apps/api/hxy_knowledge/enterprise_governance.py")
+
+        report = governance.build_enterprise_governance_report(
+            assets=[],
+            claims=[
+                {
+                    "claim_id": "candidate-risky",
+                    "claim": "讨论稿里出现冬病夏治和保证有效，这只能作为待复核候选。",
+                    "status": "current_candidate",
+                    "confidence": 0.72,
+                    "evidence_ids": ["evidence-1"],
+                }
+            ],
+            evidence=[{"evidence_id": "evidence-1"}],
+            relations=[],
+            answer_cards=[],
+            today="2026-06-27",
+        )
+
+        issues = [item for item in report["lint_issues"] if item["code"] == "claim_overclaim_risk"]
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0]["severity"], "high")
+        self.assertFalse(issues[0]["blocks_release"])
+        self.assertTrue(report["release_gate"]["can_publish"])
+        self.assertEqual(report["summary"]["blocking_issue_count"], 0)
+        self.assertIn("draft_answer_card_revision", {item["action_type"] for item in report["evolution_actions"]})
+
+    def test_enterprise_governance_blocks_approved_overclaims_and_process_memory_as_authority(self):
+        governance = load_module("hxy_enterprise_governance_approved_overclaim", "apps/api/hxy_knowledge/enterprise_governance.py")
+
+        report = governance.build_enterprise_governance_report(
+            assets=[],
+            claims=[
+                {
+                    "claim_id": "approved-risky",
+                    "claim": "荷小悦可以保证有效。",
+                    "status": "approved",
+                    "confidence": 0.92,
+                    "evidence_ids": ["evidence-1"],
+                }
+            ],
+            evidence=[{"evidence_id": "evidence-1"}],
+            relations=[],
+            answer_cards=[
+                {
+                    "card_id": "card-process-memory",
+                    "question_pattern": "品牌表达偏好是什么？",
+                    "status": "approved",
+                    "evidence": [
+                        {
+                            "asset_id": "memory-1",
+                            "status": "process",
+                            "source_type": "process_memory",
+                            "official_use_allowed": False,
+                        }
+                    ],
+                }
+            ],
+            today="2026-06-27",
+        )
+
+        blocking_codes = {item["code"] for item in report["lint_issues"] if item.get("blocks_release")}
+        self.assertIn("claim_overclaim_risk", blocking_codes)
+        self.assertIn("process_memory_used_as_approved_source", blocking_codes)
+        self.assertFalse(report["release_gate"]["can_publish"])
+
+    def test_governance_builds_overclaim_correction_packages_for_reviewers(self):
+        governance = load_module("hxy_enterprise_governance_overclaim_packages", "apps/api/hxy_knowledge/enterprise_governance.py")
+        claim = {
+            "claim_id": "claim-risk",
+            "claim_type": "brand_positioning",
+            "claim": "主色是荷花粉，温柔、治愈、女性化。三伏天可说冬病夏治。",
+            "status": "current_candidate",
+            "confidence": 0.78,
+            "evidence_ids": ["evidence-risk"],
+        }
+
+        packages = governance.build_overclaim_correction_packages(
+            claims=[claim],
+            evidence=[{"evidence_id": "evidence-risk", "title": "荷小悦 品牌策划全案"}],
+        )
+
+        self.assertEqual(len(packages), 1)
+        package = packages[0]
+        self.assertEqual(package["version"], "hxy-overclaim-correction-package.v1")
+        self.assertEqual(package["claim_id"], "claim-risk")
+        self.assertEqual(package["claim_type"], "brand_positioning")
+        self.assertEqual(package["source_evidence_ids"], ["evidence-risk"])
+        self.assertEqual(package["source_titles"], ["荷小悦 品牌策划全案"])
+        self.assertIn("治愈", package["risk_terms"])
+        self.assertIn("冬病夏治", package["risk_terms"])
+        self.assertIn("medical_effect", package["risk_types"])
+        self.assertIn("治愈", package["risk_excerpt"])
+        self.assertEqual(package["promotion_allowed"], False)
+        self.assertEqual(package["recommended_action"], "archive_or_reextract")
+        self.assertIn("放松", package["safe_expression_suggestion"])
+        self.assertIn("不能进入 approved", package["review_notes"][0])
+
+    def test_enterprise_governance_report_includes_overclaim_correction_packages(self):
+        governance = load_module("hxy_enterprise_governance_overclaim_report", "apps/api/hxy_knowledge/enterprise_governance.py")
+
+        report = governance.build_enterprise_governance_report(
+            assets=[],
+            claims=[
+                {
+                    "claim_id": "candidate-risky",
+                    "claim_type": "product_service",
+                    "claim": "清泡可以治疗失眠，保证有效。",
+                    "status": "current_candidate",
+                    "confidence": 0.72,
+                    "evidence_ids": ["evidence-1"],
+                }
+            ],
+            evidence=[{"evidence_id": "evidence-1", "title": "产品讨论稿"}],
+            relations=[],
+            answer_cards=[],
+            today="2026-06-27",
+        )
+
+        self.assertIn("risk_correction_packages", report)
+        self.assertEqual(len(report["risk_correction_packages"]), 1)
+        package = report["risk_correction_packages"][0]
+        self.assertEqual(package["claim_id"], "candidate-risky")
+        self.assertEqual(package["recommended_action"], "archive_or_reextract")
+        self.assertFalse(package["promotion_allowed"])
+        risk_draft = next(draft for draft in report["review_task_drafts"] if draft["reason"] == "claim_overclaim_risk")
+        self.assertEqual(risk_draft["correction_package"]["overclaim_correction_package"]["claim_id"], "candidate-risky")
+
+    def test_enterprise_governance_moves_remediated_overclaims_to_audit_not_active_risk(self):
+        governance = load_module("hxy_enterprise_governance_remediated_overclaim", "apps/api/hxy_knowledge/enterprise_governance.py")
+
+        report = governance.build_enterprise_governance_report(
+            assets=[],
+            claims=[
+                {
+                    "claim_id": "remediated-risk",
+                    "claim_type": "product_service",
+                    "claim": "清泡可以治疗失眠，保证有效。",
+                    "status": "disputed",
+                    "confidence": 0.72,
+                    "evidence_ids": ["evidence-1"],
+                    "governance_remediation": {
+                        "reason": "claim_overclaim_risk",
+                        "promotion_allowed": False,
+                        "recommended_next_action": "archive_or_reextract",
+                    },
+                }
+            ],
+            evidence=[{"evidence_id": "evidence-1", "title": "产品讨论稿"}],
+            relations=[],
+            answer_cards=[],
+            today="2026-06-27",
+        )
+
+        self.assertEqual([issue for issue in report["lint_issues"] if issue["code"] == "claim_overclaim_risk"], [])
+        self.assertEqual(len(report["risk_correction_packages"]), 0)
+        self.assertEqual(len(report["remediated_risk_claims"]), 1)
+        self.assertEqual(report["remediated_risk_claims"][0]["claim_id"], "remediated-risk")
+        self.assertEqual(report["triage_plan"]["workstreams"][1]["issue_count"], 0)
+
+    def test_incremental_compile_plan_detects_added_changed_deleted_and_dependents(self):
+        governance = load_module("hxy_enterprise_governance_incremental", "apps/api/hxy_knowledge/enterprise_governance.py")
+        previous_manifest = {
+            "assets": [
+                {
+                    "asset_id": "asset-a",
+                    "relative_path": "knowledge/raw/inbox/a.docx",
+                    "sha256": "old-a",
+                    "normalized_path": "knowledge/normalized/brand/a.md",
+                },
+                {
+                    "asset_id": "asset-b",
+                    "relative_path": "knowledge/raw/inbox/b.docx",
+                    "sha256": "same-b",
+                    "normalized_path": "knowledge/normalized/product/b.md",
+                },
+                {
+                    "asset_id": "asset-c",
+                    "relative_path": "knowledge/raw/inbox/c.docx",
+                    "sha256": "gone-c",
+                    "normalized_path": "knowledge/normalized/store_model/c.md",
+                },
+            ]
+        }
+        current_manifest = {
+            "assets": [
+                {
+                    "asset_id": "asset-a",
+                    "relative_path": "knowledge/raw/inbox/a.docx",
+                    "sha256": "new-a",
+                    "normalized_path": "knowledge/normalized/brand/a.md",
+                },
+                {
+                    "asset_id": "asset-b",
+                    "relative_path": "knowledge/raw/inbox/b.docx",
+                    "sha256": "same-b",
+                    "normalized_path": "knowledge/normalized/product/b.md",
+                },
+                {
+                    "asset_id": "asset-d",
+                    "relative_path": "knowledge/raw/inbox/d.docx",
+                    "sha256": "new-d",
+                    "normalized_path": "knowledge/normalized/external/d.md",
+                },
+            ]
+        }
+        relations = [
+            {"relation_type": "supports", "from_id": "asset-a", "to_id": "claim-a"},
+            {"relation_type": "used_by", "from_id": "claim-a", "to_id": "answer-card-a"},
+        ]
+
+        plan = governance.build_incremental_compile_plan(
+            previous_manifest=previous_manifest,
+            current_manifest=current_manifest,
+            relations=relations,
+        )
+
+        self.assertEqual(plan["version"], "hxy-incremental-compile-plan.v1")
+        self.assertEqual(plan["summary"]["added"], 1)
+        self.assertEqual(plan["summary"]["changed"], 1)
+        self.assertEqual(plan["summary"]["deleted"], 1)
+        self.assertEqual(plan["summary"]["unchanged"], 1)
+        self.assertEqual({item["asset_id"] for item in plan["added"]}, {"asset-d"})
+        self.assertEqual({item["asset_id"] for item in plan["changed"]}, {"asset-a"})
+        self.assertEqual({item["asset_id"] for item in plan["deleted"]}, {"asset-c"})
+        stages = {task["stage"] for task in plan["tasks"]}
+        self.assertIn("extract", stages)
+        self.assertIn("compile_claims", stages)
+        self.assertIn("rebuild_relations", stages)
+        self.assertIn("lint", stages)
+        affected_ids = {item["id"] for item in plan["affected_nodes"]}
+        self.assertIn("claim-a", affected_ids)
+        self.assertIn("answer-card-a", affected_ids)
+
+    def test_enterprise_governance_distinguishes_compiled_memory_layers(self):
+        governance = load_module("hxy_enterprise_governance_layers", "apps/api/hxy_knowledge/enterprise_governance.py")
+        layers = governance.classify_memory_layer(
+            [
+                {"status": "raw", "source_path": "knowledge/raw/inbox/a.pdf"},
+                {"status": "reference", "source_path": "knowledge/normalized/external/a.md"},
+                {"status": "current_candidate", "claim_id": "claim-a"},
+                {"status": "approved", "card_id": "card-a"},
+                {"status": "action_asset", "card_type": "training_card"},
+            ]
+        )
+
+        self.assertEqual(layers["version"], "hxy-memory-layer-classification.v1")
+        self.assertEqual(layers["counts"]["L0_raw_material"], 1)
+        self.assertEqual(layers["counts"]["L1_structured_extract"], 1)
+        self.assertEqual(layers["counts"]["L2_candidate_claim"], 1)
+        self.assertEqual(layers["counts"]["L3_approved_knowledge"], 1)
+        self.assertEqual(layers["counts"]["L4_action_asset"], 1)
+        self.assertEqual(layers["policy"]["direct_answer_allowed"], ["L3_approved_knowledge", "L4_action_asset"])
+        self.assertIn("L1_structured_extract", layers["policy"]["requires_review"])
+
+    def test_build_file_manifest_hashes_raw_materials_with_stable_ids(self):
+        governance = load_module("hxy_enterprise_governance_manifest", "apps/api/hxy_knowledge/enterprise_governance.py")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            raw = root / "knowledge" / "raw" / "inbox"
+            raw.mkdir(parents=True)
+            (raw / "brand.md").write_text("荷小悦品牌定位", encoding="utf-8")
+            (raw / "notes.tmp").write_text("ignore me", encoding="utf-8")
+            nested = raw / "external"
+            nested.mkdir()
+            (nested / "method.md").write_text("外部方法论参考", encoding="utf-8")
+
+            manifest = governance.build_file_manifest(
+                raw,
+                root_dir=root,
+                today="2026-06-27",
+                ignore_globs=["*.tmp"],
+            )
+
+        self.assertEqual(manifest["version"], "hxy-file-manifest.v1")
+        self.assertEqual(manifest["generated_at"], "2026-06-27")
+        self.assertEqual(manifest["summary"]["asset_count"], 2)
+        self.assertEqual(manifest["summary"]["ignored_count"], 1)
+        paths = [item["relative_path"] for item in manifest["assets"]]
+        self.assertEqual(paths, ["knowledge/raw/inbox/brand.md", "knowledge/raw/inbox/external/method.md"])
+        for asset in manifest["assets"]:
+            self.assertTrue(asset["asset_id"].startswith("hxy-file:"))
+            self.assertEqual(len(asset["sha256"]), 64)
+            self.assertEqual(asset["status"], "raw")
+            self.assertEqual(asset["memory_layer"], "L0_raw_material")
+
+    def test_okf_frontmatter_lint_blocks_approved_knowledge_without_governance_fields(self):
+        governance = load_module("hxy_enterprise_governance_okf_lint", "apps/api/hxy_knowledge/enterprise_governance.py")
+        documents = [
+            {
+                "id": "core/hxy-positioning",
+                "title": "荷小悦定位",
+                "domain": "brand",
+                "status": "approved",
+                "confidence": 0.82,
+                "last_confirmed": "",
+                "owner": "未指定",
+                "evidence": ["source-a"],
+                "body": "荷小悦是社区轻恢复品牌。",
+            },
+            {
+                "id": "product/qingpao",
+                "title": "清泡",
+                "domain": "product",
+                "status": "approved",
+                "confidence": 0.88,
+                "last_confirmed": "2026-06-01",
+                "owner": "产品负责人",
+                "evidence": ["source-b"],
+                "body": "清泡用于日常放松，不承诺治疗。",
+            },
+        ]
+
+        issues = governance.lint_okf_documents(documents)
+
+        self.assertEqual({item["code"] for item in issues}, {"okf_approved_missing_owner", "okf_approved_missing_last_confirmed"})
+        self.assertTrue(all(item["blocks_release"] for item in issues))
+        self.assertEqual({item["target_id"] for item in issues}, {"core/hxy-positioning"})
+
+    def test_build_governance_run_package_combines_manifest_plan_report_and_persistence_payload(self):
+        governance = load_module("hxy_enterprise_governance_run_package", "apps/api/hxy_knowledge/enterprise_governance.py")
+
+        previous_manifest = {
+            "assets": [
+                {"asset_id": "hxy-file:old", "relative_path": "knowledge/raw/inbox/old.md", "sha256": "old"},
+            ]
+        }
+        current_manifest = {
+            "assets": [
+                {"asset_id": "hxy-file:old", "relative_path": "knowledge/raw/inbox/old.md", "sha256": "new"},
+            ]
+        }
+        report = governance.build_enterprise_governance_report(
+            assets=[
+                {
+                    "asset_id": "asset-approved",
+                    "title": "荷小悦是什么",
+                    "status": "approved",
+                    "metadata": {"owner": "品牌负责人", "sources": ["source-a"]},
+                }
+            ],
+            claims=[],
+            evidence=[],
+            relations=[],
+            answer_cards=[],
+            today="2026-06-27",
+        )
+
+        package = governance.build_governance_run_package(
+            run_id="governance-2026-06-27",
+            previous_manifest=previous_manifest,
+            current_manifest=current_manifest,
+            governance_report=report,
+            relations=[],
+            today="2026-06-27",
+        )
+
+        self.assertEqual(package["version"], "hxy-governance-run-package.v1")
+        self.assertEqual(package["run_id"], "governance-2026-06-27")
+        self.assertEqual(package["summary"]["changed_assets"], 1)
+        self.assertEqual(package["summary"]["blocking_issues"], 0)
+        self.assertEqual(package["release_gate"]["can_publish"], True)
+        self.assertIn("incremental_compile_plan", package)
+        self.assertIn("governance_report", package)
+        self.assertIn("review_task_drafts", package)
+        self.assertEqual(
+            package["recommended_persistence"],
+            {
+                "manifest_path": "knowledge/reports/governance-2026-06-27/manifest.json",
+                "plan_path": "knowledge/reports/governance-2026-06-27/incremental-plan.json",
+                "report_path": "knowledge/reports/governance-2026-06-27/governance-report.json",
+                "package_path": "knowledge/reports/governance-2026-06-27/run-package.json",
+            },
+        )
+
+    def test_governance_review_task_drafts_turn_blocking_issues_into_actionable_review_payloads(self):
+        governance = load_module("hxy_enterprise_governance_review_tasks", "apps/api/hxy_knowledge/enterprise_governance.py")
+        report = {
+            "version": "hxy-enterprise-knowledge-governance.v1",
+            "lint_issues": [
+                {
+                    "code": "claim_missing_evidence",
+                    "severity": "high",
+                    "target_type": "claim",
+                    "target_id": "claim-a",
+                    "message": "候选主张缺少证据。",
+                    "action": "补齐 evidence_ids。",
+                    "blocks_release": True,
+                },
+                {
+                    "code": "business_material_still_reference",
+                    "severity": "medium",
+                    "target_type": "asset",
+                    "target_id": "asset-b",
+                    "message": "关键业务资料仍是参考态。",
+                    "action": "编译为候选主张。",
+                    "blocks_release": False,
+                },
+                {
+                    "code": "claim_missing_evidence",
+                    "severity": "high",
+                    "target_type": "claim",
+                    "target_id": "claim-a",
+                    "message": "候选主张缺少证据。",
+                    "action": "补齐 evidence_ids。",
+                    "blocks_release": True,
+                },
+            ],
+        }
+
+        drafts = governance.build_governance_review_task_drafts(report, run_id="governance-run")
+
+        self.assertEqual(len(drafts), 2)
+        first = drafts[0]
+        self.assertEqual(first["version"], "hxy-governance-review-task-draft.v1")
+        self.assertEqual(first["intent"], "knowledge_governance")
+        self.assertEqual(first["reason"], "claim_missing_evidence")
+        self.assertEqual(first["priority"], "high")
+        self.assertIn("claim-a", first["question"])
+        self.assertEqual(first["correction_package"]["version"], "hxy-governance-correction-package.v1")
+        self.assertEqual(first["correction_package"]["source_run_id"], "governance-run")
+        self.assertEqual(first["correction_package"]["normalized_question"], "知识治理复核claimclaim-a")
+        self.assertEqual(first["correction_package"]["target_id"], "claim-a")
+        self.assertEqual(first["correction_package"]["recommended_reviewer"], "知识管理员/业务负责人")
+        self.assertIn("补齐 evidence_ids", " ".join(first["correction_package"]["recommended_actions"]))
+        self.assertTrue(first["correction_package"]["requires_human_approval"])
+        self.assertEqual(first["dedupe_key"], "knowledge_governance:claim_missing_evidence:claim:claim-a")
+        self.assertEqual(drafts[1]["priority"], "medium")
+
+    def test_governance_review_task_drafts_prioritize_risk_and_batch_low_confidence(self):
+        governance = load_module("hxy_enterprise_governance_review_task_priority", "apps/api/hxy_knowledge/enterprise_governance.py")
+        report = {
+            "version": "hxy-enterprise-knowledge-governance.v1",
+            "lint_issues": [
+                {
+                    "code": "claim_low_confidence",
+                    "severity": "medium",
+                    "target_type": "claim",
+                    "target_id": "claim-low-a",
+                    "message": "候选主张置信度低。",
+                    "action": "补证据、复核或降低召回权重。",
+                    "blocks_release": False,
+                },
+                {
+                    "code": "claim_low_confidence",
+                    "severity": "medium",
+                    "target_type": "claim",
+                    "target_id": "claim-low-b",
+                    "message": "候选主张置信度低。",
+                    "action": "补证据、复核或降低召回权重。",
+                    "blocks_release": False,
+                },
+                {
+                    "code": "claim_overclaim_risk",
+                    "severity": "high",
+                    "target_type": "claim",
+                    "target_id": "claim-risk",
+                    "message": "候选主张包含医疗、效果或收益过度承诺。",
+                    "action": "改写为状态建议/体验表达，并提交合规复核。",
+                    "blocks_release": False,
+                },
+            ],
+        }
+
+        drafts = governance.build_governance_review_task_drafts(report, run_id="governance-run")
+
+        self.assertEqual(len(drafts), 2)
+        self.assertEqual(drafts[0]["reason"], "claim_overclaim_risk")
+        self.assertEqual(drafts[0]["priority"], "high")
+        self.assertEqual(drafts[0]["dedupe_key"], "knowledge_governance:claim_overclaim_risk:claim:claim-risk")
+        self.assertEqual(drafts[1]["reason"], "claim_low_confidence")
+        self.assertEqual(drafts[1]["priority"], "medium")
+        self.assertEqual(drafts[1]["dedupe_key"], "knowledge_governance_batch:claim_low_confidence:claim")
+        self.assertEqual(drafts[1]["correction_package"]["target_count"], 2)
+        self.assertEqual(drafts[1]["correction_package"]["sample_target_ids"], ["claim-low-a", "claim-low-b"])
+
+    def test_governance_issue_summary_groups_issues_into_readable_next_actions(self):
+        governance = load_module("hxy_enterprise_governance_issue_summary", "apps/api/hxy_knowledge/enterprise_governance.py")
+        issues = [
+            {
+                "code": "claim_missing_evidence",
+                "severity": "high",
+                "target_type": "claim",
+                "target_id": "claim-a",
+                "message": "候选主张缺少证据。",
+                "action": "补齐 evidence_ids。",
+                "blocks_release": True,
+            },
+            {
+                "code": "claim_missing_evidence",
+                "severity": "high",
+                "target_type": "claim",
+                "target_id": "claim-b",
+                "message": "候选主张缺少证据。",
+                "action": "补齐 evidence_ids。",
+                "blocks_release": True,
+            },
+            {
+                "code": "claim_low_confidence",
+                "severity": "medium",
+                "target_type": "claim",
+                "target_id": "claim-c",
+                "message": "候选主张置信度低。",
+                "action": "补证据、复核或降低召回权重。",
+                "blocks_release": False,
+            },
+        ]
+
+        summary = governance.summarize_governance_issues(issues, limit=2)
+
+        self.assertEqual(summary["version"], "hxy-governance-issue-summary.v1")
+        self.assertEqual(summary["total_issue_count"], 3)
+        self.assertEqual(summary["blocking_issue_count"], 2)
+        self.assertEqual(summary["top_groups"][0]["code"], "claim_missing_evidence")
+        self.assertEqual(summary["top_groups"][0]["count"], 2)
+        self.assertEqual(summary["top_groups"][0]["blocking_count"], 2)
+        self.assertEqual(summary["top_groups"][0]["sample_targets"], ["claim-a", "claim-b"])
+        self.assertIn("补齐 evidence_ids", summary["top_groups"][0]["recommended_action"])
+        self.assertEqual(len(summary["next_actions"]), 2)
+        self.assertEqual(summary["next_actions"][0]["priority"], "high")
+
+    def test_governance_triage_plan_turns_many_issues_into_focused_workstreams(self):
+        governance = load_module("hxy_enterprise_governance_triage", "apps/api/hxy_knowledge/enterprise_governance.py")
+        report = {
+            "version": "hxy-enterprise-knowledge-governance.v1",
+            "lint_issues": [
+                {
+                    "code": "reference_used_as_approved_source",
+                    "severity": "critical",
+                    "target_type": "answer_card",
+                    "target_id": "card-a",
+                    "message": "已批准答案卡引用了未核定参考资料。",
+                    "action": "降级复核。",
+                    "blocks_release": True,
+                },
+                {
+                    "code": "claim_overclaim_risk",
+                    "severity": "high",
+                    "target_type": "claim",
+                    "target_id": "claim-risk",
+                    "message": "候选主张包含医疗、效果或收益过度承诺。",
+                    "action": "改写为状态建议/体验表达，并提交合规复核。",
+                    "blocks_release": False,
+                },
+                {
+                    "code": "claim_low_confidence",
+                    "severity": "medium",
+                    "target_type": "claim",
+                    "target_id": "claim-low-a",
+                    "message": "候选主张置信度低。",
+                    "action": "补证据、复核或降低召回权重。",
+                    "blocks_release": False,
+                },
+                {
+                    "code": "claim_low_confidence",
+                    "severity": "medium",
+                    "target_type": "claim",
+                    "target_id": "claim-low-b",
+                    "message": "候选主张置信度低。",
+                    "action": "补证据、复核或降低召回权重。",
+                    "blocks_release": False,
+                },
+            ],
+        }
+
+        triage = governance.build_governance_triage_plan(report)
+
+        self.assertEqual(triage["version"], "hxy-governance-triage-plan.v1")
+        streams = {item["key"]: item for item in triage["workstreams"]}
+        self.assertEqual(streams["release_blockers"]["issue_count"], 1)
+        self.assertEqual(streams["risk_review"]["issue_count"], 1)
+        self.assertEqual(streams["quality_backlog"]["issue_count"], 2)
+        self.assertEqual(streams["quality_backlog"]["task_mode"], "batch")
+        self.assertEqual(triage["recommended_sequence"][0], "release_blockers")
+        self.assertIn("risk_review", triage["recommended_sequence"])
+
+    def test_process_memory_adapter_classifies_memory_and_adds_governance_fields(self):
+        memory = load_module("hxy_process_memory", "apps/api/hxy_knowledge/process_memory.py")
+
+        record = memory.build_process_memory_record(
+            "不要再用满电回家这个表达，太抽象。以后品牌表达要口语化、简单、好传播。",
+            source="chat",
+            actor="founder",
+            observed_at="2026-06-27T10:00:00+08:00",
+            confidence=0.82,
+        )
+
+        self.assertEqual(record["version"], "hxy-process-memory.v1")
+        self.assertEqual(record["memory_type"], "rejection")
+        self.assertEqual(record["status"], "process")
+        self.assertEqual(record["source"], "chat")
+        self.assertEqual(record["actor"], "founder")
+        self.assertEqual(record["confidence"], 0.82)
+        self.assertTrue(record["promotable"])
+        self.assertFalse(record["reviewed"])
+        self.assertEqual(record["official_use_allowed"], False)
+        self.assertEqual(record["governance"]["formal_knowledge_status"], "not_official")
+        self.assertEqual(record["governance"]["promotion_required"], True)
+        self.assertIn("过程记忆不能直接作为企业正式结论", record["governance"]["usage_boundary"])
+        self.assertTrue(record["memory_id"].startswith("hxy-process-memory:"))
+
+    def test_process_memory_adapter_covers_core_memory_types(self):
+        memory = load_module("hxy_process_memory_types", "apps/api/hxy_knowledge/process_memory.py")
+
+        samples = {
+            "preference": "以后荷小悦表达要更口语化，少用抽象战略词。",
+            "historical_decision": "历史决策：首店优先做社区店，不先做高端 SPA。",
+            "hypothesis": "待验证假设：社区高疲劳人群愿意为草本泡脚加轻恢复付费。",
+            "retrospective": "门店复盘：员工讲不清清泡调补养，顾客就难以升级。",
+        }
+
+        types = {
+            memory.build_process_memory_record(text, source="chat")["memory_type"]
+            for text in samples.values()
+        }
+
+        self.assertEqual(types, set(samples))
+
+    def test_process_memory_promotion_draft_requires_review_before_official_knowledge(self):
+        memory = load_module("hxy_process_memory_promotion", "apps/api/hxy_knowledge/process_memory.py")
+        record = memory.build_process_memory_record(
+            "待验证假设：清泡调补养是荷小悦核爆点，需要员工复述和用户复述验证。",
+            source="strategy_discussion",
+            actor="founder",
+            observed_at="2026-06-27T10:00:00+08:00",
+            confidence=0.76,
+        )
+
+        draft = memory.build_memory_promotion_draft(record, target_domain="brand_strategy")
+
+        self.assertEqual(draft["version"], "hxy-memory-promotion-draft.v1")
+        self.assertEqual(draft["source_memory_id"], record["memory_id"])
+        self.assertEqual(draft["target_domain"], "brand_strategy")
+        self.assertEqual(draft["target_status"], "current_candidate")
+        self.assertEqual(draft["requires_human_review"], True)
+        self.assertEqual(draft["official_use_allowed"], False)
+        self.assertIn("不能直接进入 approved", draft["risk_boundary"])
+        self.assertEqual(draft["review_task"]["intent"], "process_memory_promotion")
+        self.assertEqual(draft["review_task"]["reason"], "promote_process_memory")
+        self.assertEqual(draft["review_task"]["priority"], "medium")
+        self.assertEqual(
+            draft["review_task"]["correction_package"]["normalized_question"],
+            f"过程记忆晋升{record['memory_id']}",
+        )
 
 
 if __name__ == "__main__":
