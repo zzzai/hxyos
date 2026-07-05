@@ -3,24 +3,35 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>荷小悦智慧大脑</title>
+  <title>HXYOS 资料台</title>
   <style>
     :root {
-      --bg: #f6f7f4;
+      --bg: #f4f6f5;
       --surface: #ffffff;
-      --surface-soft: #eef3ef;
-      --ink: #20241f;
-      --muted: #656d63;
-      --line: #d8ddd4;
-      --accent: #16745d;
-      --accent-dark: #0f5d4a;
-      --warn: #a45b19;
+      --surface-soft: #eef2f0;
+      --surface-strong: #16211d;
+      --ink: #111815;
+      --ink-soft: #34403b;
+      --muted: #65716c;
+      --line: #d7ddda;
+      --line-strong: #aeb9b4;
+      --accent: #0f6b55;
+      --accent-dark: #0a4f40;
+      --accent-soft: #e4f3ee;
+      --warn: #8f5315;
+      --warn-soft: #fff4e2;
       --danger: #a43e32;
-      --shadow: 0 10px 28px rgba(29, 44, 35, 0.08);
+      --danger-soft: #fff1ee;
+      --shadow: 0 18px 48px rgba(17, 24, 21, 0.08);
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
     }
 
     * {
       box-sizing: border-box;
+    }
+
+    html {
+      background: var(--bg);
     }
 
     body {
@@ -34,17 +45,18 @@
 
     button,
     input,
-    select {
+    select,
+    textarea {
       font: inherit;
     }
 
     button {
       border: 0;
-      border-radius: 8px;
+      border-radius: 7px;
       cursor: pointer;
-      min-height: 40px;
-      padding: 0 14px;
-      transition: transform 120ms ease, background-color 120ms ease, border-color 120ms ease;
+      min-height: 38px;
+      padding: 0 13px;
+      transition: transform 120ms ease, background-color 160ms ease, border-color 160ms ease, color 160ms ease;
       white-space: nowrap;
     }
 
@@ -57,71 +69,262 @@
       opacity: 0.58;
     }
 
-    .shell {
-      width: min(1440px, calc(100vw - 32px));
-      margin: 0 auto;
-      padding: 20px 0 36px;
-    }
-
-    .topbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-      min-height: 64px;
-      border-bottom: 1px solid var(--line);
-    }
-
-    .brand {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      min-width: 0;
-    }
-
-    .brand h1 {
-      margin: 0;
-      font-size: 22px;
-      line-height: 1.2;
-      font-weight: 700;
-    }
-
-    .brand span {
-      color: var(--muted);
-      font-size: 13px;
-    }
-
-    .api-control {
-      display: grid;
-      grid-template-columns: auto minmax(220px, 360px) auto;
-      align-items: end;
-      gap: 8px;
-    }
-
     label {
       display: grid;
       gap: 6px;
       color: var(--muted);
       font-size: 12px;
-      line-height: 1.2;
+      line-height: 1.25;
     }
 
     input,
-    select {
+    select,
+    textarea {
       width: 100%;
-      min-height: 40px;
+      min-height: 38px;
       border: 1px solid var(--line);
-      border-radius: 8px;
+      border-radius: 7px;
       background: var(--surface);
       color: var(--ink);
-      padding: 0 12px;
+      padding: 0 11px;
       outline: none;
     }
 
     input:focus,
-    select:focus {
+    select:focus,
+    textarea:focus {
       border-color: var(--accent);
-      box-shadow: 0 0 0 3px rgba(22, 116, 93, 0.12);
+      box-shadow: 0 0 0 3px rgba(15, 107, 85, 0.12);
+    }
+
+    textarea {
+      min-height: 116px;
+      padding: 10px 11px;
+      line-height: 1.5;
+      resize: vertical;
+    }
+
+    code {
+      display: inline-block;
+      max-width: 100%;
+      overflow-wrap: anywhere;
+      color: var(--ink);
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+
+    .knowledge-workbench {
+      width: min(1480px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 18px 0 40px;
+    }
+
+    .knowledge-front {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(300px, 390px);
+      gap: 18px;
+      align-items: stretch;
+      margin-bottom: 18px;
+    }
+
+    .front-hero,
+    .front-side {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .front-hero {
+      display: grid;
+      gap: 22px;
+      padding: 28px;
+    }
+
+    .front-kicker {
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 760;
+    }
+
+    .front-hero h1 {
+      margin: 0;
+      color: var(--ink);
+      font-size: clamp(38px, 5vw, 72px);
+      line-height: 1.02;
+      font-weight: 820;
+    }
+
+    .front-hero p {
+      max-width: 660px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.72;
+      overflow-wrap: anywhere;
+    }
+
+    .front-steps {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .front-step {
+      display: grid;
+      gap: 8px;
+      min-height: 134px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfb;
+      padding: 14px;
+    }
+
+    .front-step strong {
+      color: var(--ink);
+      font-size: 17px;
+      line-height: 1.3;
+    }
+
+    .front-step span {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+      overflow-wrap: anywhere;
+    }
+
+    .front-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .front-path {
+      display: inline-flex;
+      min-height: 38px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fbfcfb;
+      padding: 0 12px;
+      color: var(--ink-soft);
+      font-family: var(--mono);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+
+    .front-side {
+      display: grid;
+      gap: 14px;
+      align-content: start;
+      padding: 22px;
+    }
+
+    .front-side h2 {
+      margin: 0;
+      color: var(--ink);
+      font-size: 22px;
+      line-height: 1.25;
+    }
+
+    .front-side p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.65;
+      overflow-wrap: anywhere;
+    }
+
+    .front-list {
+      display: grid;
+      gap: 9px;
+    }
+
+    .front-list div {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfb;
+      padding: 11px 12px;
+      color: var(--ink-soft);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .front-note {
+      border-radius: 8px;
+      background: var(--warn-soft);
+      color: var(--warn);
+      padding: 12px;
+      font-size: 13px;
+      line-height: 1.58;
+    }
+
+    .advanced-tools {
+      margin-top: 18px;
+    }
+
+    .advanced-tools > summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 52px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      padding: 0 16px;
+      color: var(--ink);
+      font-weight: 760;
+      cursor: pointer;
+      list-style: none;
+    }
+
+    .advanced-tools > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .advanced-tools > summary small {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .workbench-topbar {
+      display: grid;
+      grid-template-columns: minmax(260px, 1fr) minmax(520px, 0.9fr);
+      gap: 18px;
+      align-items: end;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .brand {
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 25px;
+      line-height: 1.12;
+      font-weight: 760;
+    }
+
+    .brand span {
+      max-width: 720px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .api-control {
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) minmax(180px, 240px) auto auto;
+      align-items: end;
+      gap: 8px;
     }
 
     .primary {
@@ -140,8 +343,18 @@
     }
 
     .secondary:hover {
-      border-color: #b8c1b4;
-      background: #f9faf8;
+      border-color: var(--line-strong);
+      background: #f9fbfa;
+    }
+
+    .danger {
+      border: 1px solid rgba(164, 62, 50, 0.35);
+      background: var(--danger-soft);
+      color: var(--danger);
+    }
+
+    .danger:hover {
+      background: #ffe6e0;
     }
 
     .status-dot {
@@ -156,13 +369,97 @@
       background: var(--accent);
     }
 
-    .grid {
-      display: grid;
-      grid-template-columns: 1.1fr 0.9fr;
-      gap: 18px;
-      margin-top: 18px;
+    .tag,
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      width: fit-content;
+      max-width: 100%;
+      min-height: 24px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #f9fbfa;
+      padding: 0 8px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
     }
 
+    .status-pill.strong {
+      border-color: rgba(15, 107, 85, 0.22);
+      background: var(--accent-soft);
+      color: var(--accent-dark);
+      font-weight: 650;
+    }
+
+    .system-strip {
+      display: grid;
+      grid-template-columns: 1.15fr repeat(4, minmax(130px, 0.55fr));
+      gap: 1px;
+      margin-top: 16px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--line);
+      box-shadow: var(--shadow);
+    }
+
+    .system-cell {
+      min-height: 86px;
+      background: var(--surface);
+      padding: 14px 16px;
+    }
+
+    .system-cell span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .system-cell strong {
+      display: block;
+      margin-top: 10px;
+      color: var(--ink);
+      font-family: var(--mono);
+      font-size: 27px;
+      line-height: 1;
+      font-weight: 720;
+    }
+
+    .system-cell.control {
+      display: grid;
+      align-content: center;
+      gap: 10px;
+      background: var(--surface-strong);
+      color: #f8fbfa;
+    }
+
+    .system-cell.control span,
+    .system-cell.control .tag {
+      color: rgba(248, 251, 250, 0.72);
+    }
+
+    .system-cell.control .tag {
+      border-color: rgba(248, 251, 250, 0.18);
+      background: rgba(248, 251, 250, 0.08);
+    }
+
+    .system-cell.control .status-pill.strong {
+      border-color: rgba(228, 243, 238, 0.9);
+      background: #d8f0e8;
+      color: var(--accent-dark);
+    }
+
+    .gate-board {
+      display: grid;
+      grid-template-columns: minmax(0, 1.55fr) minmax(360px, 0.85fr);
+      gap: 18px;
+      margin-top: 18px;
+      align-items: start;
+    }
+
+    .gate-panel,
     .panel {
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -171,46 +468,137 @@
       overflow: hidden;
     }
 
+    .p0-gate {
+      border-color: rgba(143, 83, 21, 0.38);
+    }
+
+    .gate-header,
     .panel-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
-      min-height: 54px;
-      padding: 14px 16px;
+      gap: 14px;
+      min-height: 58px;
+      padding: 15px 16px;
       border-bottom: 1px solid var(--line);
+      background: #fcfdfc;
     }
 
+    .gate-copy,
     .panel-title {
-      display: flex;
-      align-items: center;
-      gap: 8px;
+      display: grid;
+      gap: 4px;
       min-width: 0;
-      font-weight: 700;
     }
 
+    .gate-copy h2,
+    .panel-title {
+      margin: 0;
+      color: var(--ink);
+      font-size: 17px;
+      line-height: 1.25;
+      font-weight: 750;
+    }
+
+    .gate-copy p,
     .panel-title small {
+      margin: 0;
       color: var(--muted);
       font-size: 12px;
+      line-height: 1.35;
       font-weight: 500;
     }
 
+    .gate-actions,
+    .review-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+      align-items: end;
+    }
+
+    .gate-actions label {
+      width: min(210px, 40vw);
+    }
+
+    .gate-body,
     .panel-body {
       padding: 16px;
     }
 
+    .gate-state {
+      border-color: rgba(143, 83, 21, 0.3);
+      background: var(--warn-soft);
+      color: #59330d;
+    }
+
+    .result {
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface-soft);
+      color: var(--muted);
+      padding: 10px 12px;
+      font-size: 13px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+
+    .result strong {
+      color: var(--ink);
+    }
+
+    .result.error {
+      border-color: rgba(164, 62, 50, 0.28);
+      background: var(--danger-soft);
+      color: var(--danger);
+    }
+
+    .result.ok {
+      border-color: rgba(15, 107, 85, 0.25);
+      background: var(--accent-soft);
+      color: var(--accent-dark);
+    }
+
+    .p0-work {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+      gap: 14px;
+      margin-top: 14px;
+    }
+
+    .work-block {
+      display: grid;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .work-block h3 {
+      margin: 0;
+      color: var(--ink-soft);
+      font-size: 13px;
+      line-height: 1.3;
+      font-weight: 720;
+    }
+
+    .health-panel .panel-body {
+      display: grid;
+      gap: 16px;
+    }
+
     .metrics {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 10px;
     }
 
     .metric {
-      min-height: 86px;
+      min-height: 74px;
       border: 1px solid var(--line);
       border-radius: 8px;
-      background: #fbfcfa;
-      padding: 12px;
+      background: #fbfcfb;
+      padding: 11px 12px;
     }
 
     .metric span {
@@ -222,37 +610,39 @@
 
     .metric strong {
       display: block;
-      margin-top: 12px;
-      font-size: 28px;
+      margin-top: 10px;
+      font-family: var(--mono);
+      font-size: 25px;
       line-height: 1;
-      font-weight: 750;
+      font-weight: 720;
     }
 
     .locations {
       display: grid;
-      gap: 10px;
-      margin-top: 16px;
+      gap: 8px;
     }
 
     .location-row {
       display: grid;
-      grid-template-columns: 120px 1fr;
+      grid-template-columns: 106px 1fr;
       gap: 12px;
       align-items: start;
       border-top: 1px solid var(--line);
-      padding-top: 10px;
+      padding-top: 9px;
       color: var(--muted);
       font-size: 13px;
       line-height: 1.45;
     }
 
-    code {
-      display: inline-block;
-      max-width: 100%;
-      overflow-wrap: anywhere;
-      color: var(--ink);
-      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-      font-size: 12px;
+    .tool-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+      margin-top: 18px;
+    }
+
+    .full {
+      grid-column: 1 / -1;
     }
 
     .actions {
@@ -265,30 +655,6 @@
       grid-template-columns: 1fr auto;
       gap: 10px;
       align-items: end;
-    }
-
-    .result {
-      min-height: 38px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--surface-soft);
-      color: var(--muted);
-      padding: 10px 12px;
-      font-size: 13px;
-      line-height: 1.4;
-      overflow-wrap: anywhere;
-    }
-
-    .result.error {
-      border-color: rgba(164, 62, 50, 0.28);
-      background: #fff4f1;
-      color: var(--danger);
-    }
-
-    .result.ok {
-      border-color: rgba(22, 116, 93, 0.25);
-      background: #eef8f3;
-      color: var(--accent-dark);
     }
 
     .search-tools {
@@ -320,7 +686,7 @@
     }
 
     th {
-      background: #f3f5f1;
+      background: #f1f4f2;
       color: var(--muted);
       font-weight: 650;
       white-space: nowrap;
@@ -333,19 +699,6 @@
     .path {
       color: var(--muted);
       font-size: 12px;
-    }
-
-    .tag {
-      display: inline-flex;
-      align-items: center;
-      min-height: 24px;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      background: #f9faf8;
-      padding: 0 8px;
-      color: var(--muted);
-      font-size: 12px;
-      white-space: nowrap;
     }
 
     .search-results {
@@ -380,23 +733,108 @@
       overflow-wrap: anywhere;
     }
 
-    .full {
-      grid-column: 1 / -1;
+    .review-list,
+    .correction-list {
+      display: grid;
+      gap: 10px;
+      max-height: 520px;
+      overflow: auto;
     }
 
-    @media (max-width: 980px) {
-      .topbar {
-        align-items: stretch;
-        flex-direction: column;
-        padding-bottom: 14px;
+    .review-item {
+      display: grid;
+      grid-template-columns: 150px 1fr auto;
+      gap: 12px;
+      align-items: start;
+      border-top: 1px solid var(--line);
+      padding-top: 12px;
+    }
+
+    .correction-item {
+      display: grid;
+      grid-template-columns: 160px 1fr;
+      gap: 12px;
+      align-items: start;
+      border-top: 1px solid var(--line);
+      padding-top: 12px;
+    }
+
+    .review-item:first-child,
+    .correction-item:first-child {
+      border-top: 0;
+      padding-top: 0;
+    }
+
+    .review-main,
+    .correction-main {
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .review-claim {
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
+
+    .correction-question {
+      line-height: 1.5;
+      font-weight: 650;
+      overflow-wrap: anywhere;
+    }
+
+    @media (max-width: 1180px) {
+      .knowledge-front,
+      .workbench-topbar,
+      .gate-board,
+      .p0-work,
+      .tool-grid {
+        grid-template-columns: 1fr;
       }
 
+      .system-strip {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 760px) {
+      .knowledge-workbench {
+        width: min(calc(100vw - 20px), 1480px);
+        padding-top: 12px;
+      }
+
+      .front-hero,
+      .front-side {
+        padding: 18px;
+      }
+
+      .front-steps,
+      .workbench-topbar,
       .api-control,
-      .grid,
+      .system-strip,
       .search-tools,
       .upload-row,
-      .metrics {
+      .metrics,
+      .review-item,
+      .correction-item {
         grid-template-columns: 1fr;
+      }
+
+      .gate-header,
+      .panel-header {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .gate-actions,
+      .review-actions {
+        justify-content: stretch;
+      }
+
+      .gate-actions label,
+      .review-actions button,
+      .gate-actions button {
+        width: 100%;
       }
 
       .location-row {
@@ -407,34 +845,158 @@
   </style>
 </head>
 <body>
-  <main class="shell">
-    <header class="topbar">
+  <main class="knowledge-workbench">
+    <section class="knowledge-front" aria-labelledby="knowledgeFrontTitle">
+      <div class="front-hero">
+        <div>
+          <div class="front-kicker">HXYOS 资料台</div>
+          <h1 id="knowledgeFrontTitle">资料变成知识</h1>
+        </div>
+        <p>这里不是把文件丢进库就结束。先把资料放进入口，系统先整理，不直接定稿，能用时再进入工作台。</p>
+
+        <div class="front-steps" aria-label="资料处理流程">
+          <div class="front-step">
+            <strong>先把资料放进入口</strong>
+            <span>PDF、文章、会议纪要和书摘先进入 HXY 自有目录。</span>
+          </div>
+          <div class="front-step">
+            <strong>系统先整理，不直接定稿</strong>
+            <span>先提取摘要、主题和可能有用的判断，不把参考资料当正式答案。</span>
+          </div>
+          <div class="front-step">
+            <strong>能用时再进入工作台</strong>
+            <span>需要查状态、搜索、处理例外时，再打开高级工具。</span>
+          </div>
+        </div>
+
+        <div class="front-actions">
+          <button class="primary" type="button" onclick="openAdvancedKnowledgeTools()">打开高级工具</button>
+          <span class="front-path">/root/hxy/knowledge/raw/inbox</span>
+        </div>
+      </div>
+
+      <aside class="front-side" aria-label="资料使用边界">
+        <h2>原始资料不是正式答案</h2>
+        <p>企业资料要先变成可追溯、可确认、可复用的内容，再用于前台话术、开业推进和经营判断。</p>
+        <div class="front-list">
+          <div>内部文件、公众号文章、PDF、电子书和会议记录都先作为参考。</div>
+          <div>营销、管理、战略类外部知识只提供视角，不直接替荷小悦下结论。</div>
+          <div>品牌口径、功效表达、价格和对外材料必须负责人确认后再用。</div>
+        </div>
+        <div class="front-note">聊天不能直接修改核心知识。资料进入系统后，先沉淀为可检查的中间结果。</div>
+      </aside>
+    </section>
+
+    <details id="advancedKnowledgeTools" class="advanced-tools">
+      <summary>
+        <span>进入高级工具</span>
+        <small>API、P0 闸门、搜索、入库和修正任务</small>
+      </summary>
+
+    <header class="workbench-topbar">
       <div class="brand">
-        <h1>荷小悦智慧大脑</h1>
-        <span>PostgreSQL + pgvector + FastAPI + 管理后台</span>
+        <h1>荷小悦知识治理工作台</h1>
+        <span>治理闸门优先。资料、过程记忆和候选卡只能作为上下文，正式知识必须经过人工复核、版本化和发布闸门。</span>
       </div>
       <div class="api-control">
         <label>
           API 地址
-          <input id="apiBase" type="url" value="http://127.0.0.1:18081">
+          <input id="apiBase" type="url" placeholder="默认使用当前预览服务">
+        </label>
+        <label>
+          API Token
+          <input id="apiToken" type="password" placeholder="用于上传和复核">
         </label>
         <button class="secondary" id="saveApi" type="button">保存</button>
         <span id="serviceState" class="tag"><span class="status-dot"></span>&nbsp;未连接</span>
       </div>
     </header>
 
-    <section class="grid">
-      <div class="panel">
+    <section class="system-strip" aria-label="系统状态">
+      <div class="system-cell control">
+        <span>当前工作模式</span>
+        <div><span class="status-pill strong">治理闸门优先</span></div>
+        <span>聊天不能修改核心知识，P0 人工决策为空时禁止发布。</span>
+      </div>
+      <div class="system-cell">
+        <span>资料文件</span>
+        <strong id="assetCount">0</strong>
+      </div>
+      <div class="system-cell">
+        <span>知识片段</span>
+        <strong id="chunkCount">0</strong>
+      </div>
+      <div class="system-cell">
+        <span>领域分类</span>
+        <strong id="domainCount">0</strong>
+      </div>
+      <div class="system-cell">
+        <span>待复核</span>
+        <strong id="reviewCount">0</strong>
+      </div>
+    </section>
+
+    <section class="gate-board" aria-label="治理闸门">
+      <article class="gate-panel p0-gate">
+        <div class="gate-header">
+          <div class="gate-copy">
+            <h2>P0 合规闸门</h2>
+            <p>P0 合规答案卡闸门。<span id="p0GovernanceMeta">blocked_at_empty_manual_decisions · 4 条 pending · 人工审核前不能发布</span></p>
+          </div>
+          <div class="gate-actions">
+            <label>
+              Run ID
+              <input id="p0RunId" type="text" value="benchmark-loop-latest">
+            </label>
+            <button class="secondary" id="refreshP0Governance" type="button">刷新 P0 闸门</button>
+            <button class="secondary" id="copyP0Notification" type="button">复制 P0 通知</button>
+          </div>
+        </div>
+        <div class="gate-body">
+          <div id="p0GovernanceStatus" class="result gate-state">
+            <strong>blocked_at_empty_manual_decisions</strong>
+            <div>4 条 pending。write_to_database: false。publish_allowed: false。requires_human_review。</div>
+            <div>今天只允许预检人工决策，不允许把未复核资料写成企业权威知识。</div>
+          </div>
+
+          <div class="p0-work">
+            <div class="work-block">
+              <h3>待人工处理</h3>
+              <div id="p0ReviewerTodo" class="correction-list">
+                <div class="result">等待读取 reviewer todo；requires_human_review。</div>
+              </div>
+            </div>
+            <div class="work-block">
+              <h3>人工决策 JSON 预检</h3>
+              <label>
+                决策草稿
+                <textarea id="p0DecisionPreviewInput">{
+  "version": "hxy-p0-review-decisions.v1",
+  "items": []
+}</textarea>
+              </label>
+              <div class="review-actions">
+                <button class="secondary" id="previewP0Decision" type="button">预检人工决策</button>
+              </div>
+              <div id="p0DecisionPreviewResult" class="result">
+                预检只调用 preview_only，不会写入 p0-review-decisions.json，不会发布答案卡。
+              </div>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <aside class="gate-panel health-panel">
         <div class="panel-header">
-          <div class="panel-title">知识库状态 <small id="lastSync">等待刷新</small></div>
+          <div class="panel-title">知识底座健康度 <small id="lastSync">等待刷新</small></div>
           <button class="secondary" id="refresh" type="button">刷新</button>
         </div>
         <div class="panel-body">
           <div class="metrics">
-            <div class="metric"><span>资料文件</span><strong id="assetCount">0</strong></div>
-            <div class="metric"><span>知识片段</span><strong id="chunkCount">0</strong></div>
-            <div class="metric"><span>领域分类</span><strong id="domainCount">0</strong></div>
-            <div class="metric"><span>待复核</span><strong id="reviewCount">0</strong></div>
+            <div class="metric"><span>资料文件</span><strong id="assetCountPanel">0</strong></div>
+            <div class="metric"><span>知识片段</span><strong id="chunkCountPanel">0</strong></div>
+            <div class="metric"><span>领域分类</span><strong id="domainCountPanel">0</strong></div>
+            <div class="metric"><span>待复核</span><strong id="reviewCountPanel">0</strong></div>
           </div>
           <div class="locations">
             <div class="location-row">
@@ -455,11 +1017,13 @@
             </div>
           </div>
         </div>
-      </div>
+      </aside>
+    </section>
 
+    <section class="tool-grid" aria-label="知识治理工具">
       <div class="panel">
         <div class="panel-header">
-          <div class="panel-title">资料操作 <small>上传后执行导入</small></div>
+          <div class="panel-title">资料入库工具 <small>上传后执行导入</small></div>
         </div>
         <div class="panel-body actions">
           <div class="upload-row">
@@ -471,6 +1035,82 @@
           </div>
           <button class="secondary" id="importBtn" type="button">导入 PostgreSQL</button>
           <div id="actionResult" class="result" role="status" aria-live="polite">等待操作</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">资料入库 Loop <small>候选资料不等于正式知识</small></div>
+          <div class="review-actions">
+            <button class="secondary" id="refreshIngestLoop" type="button">刷新状态</button>
+            <button class="primary" id="runIngestLoop" type="button">运行入库 Loop</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div id="ingestLoopStatus" class="result">等待读取资料入库 Loop 状态。</div>
+        </div>
+      </div>
+
+      <div class="panel full">
+        <div class="panel-header">
+          <div class="panel-title">候选知识复核 <small id="reviewQueueMeta">等待编译产物</small></div>
+          <button class="secondary" id="refreshReviewQueue" type="button">刷新复核队列</button>
+        </div>
+        <div class="panel-body">
+          <div id="reviewQueue" class="review-list">
+            <div class="result">等待刷新</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel full">
+        <div class="panel-header">
+          <div class="panel-title">合规审核包 <small id="complianceReviewPackMeta">只读审核包 · 等待编译产物</small></div>
+          <button class="secondary" id="refreshComplianceReviewPack" type="button">刷新审核包</button>
+        </div>
+        <div class="panel-body">
+          <div id="complianceReviewPack" class="correction-list">
+            <div class="result">等待刷新。approve_as_rule / needs_revision / reject 必须由负责人线下确认，不能自动发布。</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel full">
+        <div class="panel-header">
+          <div class="panel-title">Benchmark 修正任务 <small id="benchmarkCorrectionsMeta">等待评测产物</small></div>
+          <button class="secondary" id="refreshBenchmarkCorrections" type="button">刷新修正任务</button>
+        </div>
+        <div class="panel-body">
+          <div id="benchmarkCorrections" class="correction-list">
+            <div class="result">等待刷新</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel full">
+        <div class="panel-header">
+          <div class="panel-title">首店品牌决策 Loop <small>不替代 VI/SI 设计</small></div>
+          <button class="primary" id="runBrandDecision" type="button">运行品牌评审</button>
+        </div>
+        <div class="panel-body actions">
+          <div class="search-tools">
+            <label>
+              评审类型
+              <select id="brandDecisionType">
+                <option value="storefront">门头/店外表达</option>
+                <option value="first_order_menu">首单项目/菜单表达</option>
+                <option value="opening_content">开业内容/本地传播</option>
+                <option value="staff_script">员工接待/推荐话术</option>
+                <option value="design_company_output">设计公司 VI/SI 输出</option>
+              </select>
+            </label>
+            <label style="grid-column: span 3;">
+              待评审内容
+              <textarea id="brandDecisionText">荷小悦 草本泡脚按摩
+草本真现煮，按出真功夫</textarea>
+            </label>
+          </div>
+          <div id="brandDecisionResult" class="result">等待首店品牌动作评审。</div>
         </div>
       </div>
 
@@ -541,19 +1181,44 @@
         </div>
       </div>
     </section>
+    </details>
   </main>
 
   <script>
     const apiBaseInput = document.querySelector("#apiBase");
+    const apiTokenInput = document.querySelector("#apiToken");
     const serviceState = document.querySelector("#serviceState");
     const actionResult = document.querySelector("#actionResult");
     const assetTable = document.querySelector("#assetTable");
     const searchResults = document.querySelector("#searchResults");
+    const reviewQueue = document.querySelector("#reviewQueue");
+    const complianceReviewPack = document.querySelector("#complianceReviewPack");
+    const benchmarkCorrections = document.querySelector("#benchmarkCorrections");
+    const p0GovernanceStatus = document.querySelector("#p0GovernanceStatus");
+    const p0ReviewerTodo = document.querySelector("#p0ReviewerTodo");
+    const p0RunIdInput = document.querySelector("#p0RunId");
+    const p0DecisionPreviewInput = document.querySelector("#p0DecisionPreviewInput");
+    const p0DecisionPreviewResult = document.querySelector("#p0DecisionPreviewResult");
+    const ingestLoopStatus = document.querySelector("#ingestLoopStatus");
+    const brandDecisionResult = document.querySelector("#brandDecisionResult");
 
-    apiBaseInput.value = localStorage.getItem("hxyKnowledgeApiBase") || apiBaseInput.value;
+    function defaultApiBase() {
+      if (window.location.origin && window.location.origin !== "null") {
+        return window.location.origin;
+      }
+      return apiBaseInput.value;
+    }
+
+    apiBaseInput.value = localStorage.getItem("hxyKnowledgeApiBase") || defaultApiBase();
+    apiTokenInput.value = localStorage.getItem("hxyKnowledgeApiToken") || "";
 
     function apiBase() {
       return apiBaseInput.value.replace(/\/+$/, "");
+    }
+
+    function p0RunQuery() {
+      const runId = (p0RunIdInput.value.trim() || "benchmark-loop-latest");
+      return `?run_id=${encodeURIComponent(runId)}`;
     }
 
     function setResult(message, type = "") {
@@ -566,7 +1231,10 @@
     }
 
     async function requestJson(path, options = {}) {
-      const response = await fetch(`${apiBase()}${path}`, options);
+      const headers = new Headers(options.headers || {});
+      const token = apiTokenInput.value.trim();
+      if (token) headers.set("Authorization", `Bearer ${token}`);
+      const response = await fetch(`${apiBase()}${path}`, { ...options, headers });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(body.detail || `HTTP ${response.status}`);
@@ -580,6 +1248,10 @@
       document.querySelector("#chunkCount").textContent = summary.chunk_count ?? 0;
       document.querySelector("#domainCount").textContent = domains.length;
       document.querySelector("#reviewCount").textContent = summary.review_count ?? 0;
+      document.querySelector("#assetCountPanel").textContent = summary.asset_count ?? 0;
+      document.querySelector("#chunkCountPanel").textContent = summary.chunk_count ?? 0;
+      document.querySelector("#domainCountPanel").textContent = domains.length;
+      document.querySelector("#reviewCountPanel").textContent = summary.review_count ?? 0;
       document.querySelector("#lastSync").textContent = new Date().toLocaleString();
     }
 
@@ -618,6 +1290,179 @@
       `).join("");
     }
 
+    function renderReviewQueue(payload) {
+      const items = payload.items || [];
+      document.querySelector("#reviewQueueMeta").textContent = `${payload.count || 0} 条 · 候选不等于批准`;
+      document.querySelector("#reviewCount").textContent = payload.total ?? payload.count ?? 0;
+      document.querySelector("#reviewCountPanel").textContent = payload.total ?? payload.count ?? 0;
+      if (!items.length) {
+        reviewQueue.innerHTML = `<div class="result">暂无候选复核任务。先运行知识编译器生成 review-queue.json。</div>`;
+        return;
+      }
+      reviewQueue.innerHTML = items.map((item) => `
+        <article class="review-item" data-claim-id="${escapeHtml(item.claim_id || "")}">
+          <div>
+            <div class="tag">${escapeHtml(item.priority || "medium")}</div>
+            <div style="height:6px"></div>
+            <div class="tag">${escapeHtml(item.review_group || item.domain || "general")}</div>
+          </div>
+          <div class="review-main">
+            <div class="review-claim">${escapeHtml(item.claim || "")}</div>
+            <div class="path">
+              ${escapeHtml((item.risk_flags || []).join("、") || "无风险标签")} ·
+              <code>${escapeHtml((item.sources || [])[0] || "")}</code>
+            </div>
+          </div>
+          <div class="review-actions">
+            <button class="primary" type="button" data-action="pass_to_draft">转草稿</button>
+            <button class="secondary" type="button" data-action="needs_revision">需修改</button>
+            <button class="danger" type="button" data-action="reject">驳回</button>
+          </div>
+        </article>
+      `).join("");
+    }
+
+    function renderComplianceReviewPack(payload) {
+      const items = payload.items || [];
+      document.querySelector("#complianceReviewPackMeta").textContent = `${payload.count || 0} 条 · 只读审核包 · 不能自动发布`;
+      if (!items.length) {
+        complianceReviewPack.innerHTML = `<div class="result">暂无合规审核项。先运行资料入库 Loop 或知识编译器生成 compliance-review-pack.json。</div>`;
+        return;
+      }
+      complianceReviewPack.innerHTML = items.map((item) => `
+        <article class="correction-item">
+          <div>
+            <div class="tag">${escapeHtml(item.risk_level || "P0")}</div>
+            <div style="height:6px"></div>
+            <div class="tag">${escapeHtml(item.claim_id || "")}</div>
+          </div>
+          <div class="correction-main">
+            <div class="correction-question">${escapeHtml(item.review_question || "这条合规边界是否可以进入正式话术？")}</div>
+            <div class="review-claim">${escapeHtml(item.claim || "")}</div>
+            <div class="path">
+              ${escapeHtml((item.risk_flags || []).join("、") || "风险边界")} ·
+              ${escapeHtml(item.required_decision || "approve_as_rule, needs_revision, or reject")}
+            </div>
+            <div class="result">只读审核包。approve_as_rule / needs_revision / reject 必须由负责人确认；不能自动发布，不能自动进入 approved answer card。</div>
+          </div>
+        </article>
+      `).join("");
+    }
+
+    function renderBenchmarkCorrections(payload) {
+      const items = payload.items || [];
+      document.querySelector("#benchmarkCorrectionsMeta").textContent = `${payload.count || 0} 条 · 候选修正不等于批准`;
+      if (!items.length) {
+        benchmarkCorrections.innerHTML = `<div class="result">暂无 Benchmark 修正任务。先运行 benchmark_improvement loop。</div>`;
+        return;
+      }
+      benchmarkCorrections.innerHTML = items.map((item) => `
+        <article class="correction-item">
+          <div>
+            <div class="tag">${escapeHtml(item.case_id || item.task_id || "")}</div>
+            <div style="height:6px"></div>
+            <div class="tag">${escapeHtml(item.domain || "general")}</div>
+          </div>
+          <div class="correction-main">
+            <div class="correction-question">${escapeHtml(item.question || "")}</div>
+            <div class="path">
+              ${escapeHtml((item.failed_checks || []).join("、") || "无失败项")} ·
+              ${escapeHtml((item.warnings || []).join("、") || "无警告")} ·
+              recommended_reviewer: ${escapeHtml(item.recommended_reviewer || "知识管理员")}
+            </div>
+            <div class="result">
+              ${escapeHtml(item.required_action || "补充或修订 approved answer card，并重新运行 benchmark。")}
+            </div>
+          </div>
+        </article>
+      `).join("");
+    }
+
+    function renderP0GovernanceStatus(payload) {
+      const details = payload.details || {};
+      const pendingCount = details.pending_count ?? 0;
+      document.querySelector("#p0GovernanceMeta").textContent = `${payload.current_step || "unknown"} · ${pendingCount} 条 pending`;
+      p0GovernanceStatus.innerHTML = `
+        <strong>${escapeHtml(payload.current_step || "unknown")}</strong>
+        <div>Blocked：${payload.blocked ? "yes" : "no"} · Pending：${pendingCount} · Actioned：${details.actioned_count ?? 0}</div>
+        <div>write_to_database: ${String(Boolean(payload.write_to_database))} · publish_allowed: ${String(Boolean(payload.publish_allowed))} · requires_human_review: ${payload.blocked ? "true" : "false"}</div>
+        <div>${escapeHtml(payload.next_action || "等待下一步状态。")}</div>
+      `;
+    }
+
+    function renderP0GovernanceError(error) {
+      const message = escapeHtml(error.message || String(error));
+      document.querySelector("#p0GovernanceMeta").textContent = "读取失败 · 检查 run_id";
+      p0GovernanceStatus.innerHTML = `
+        <strong>读取失败</strong>
+        <div>${message}</div>
+        <div>请确认 Run ID 是否存在。该面板只读，不会写入 p0-review-decisions.json。</div>
+      `;
+      p0GovernanceStatus.className = "result error";
+      p0ReviewerTodo.innerHTML = `<div class="result error">未能读取 reviewer todo。requires_human_review 仍然成立。</div>`;
+    }
+
+    function renderP0ReviewerTodo(payload) {
+      const items = payload.items || [];
+      if (!items.length) {
+        p0ReviewerTodo.innerHTML = `<div class="result">暂无 P0 reviewer todo。生成 p0-reviewer-todo.json 后再刷新；requires_human_review。</div>`;
+        return;
+      }
+      p0ReviewerTodo.innerHTML = items.map((item) => `
+        <article class="correction-item">
+          <div>
+            <div class="tag">${escapeHtml(item.source_case_id || "")}</div>
+            <div style="height:6px"></div>
+            <div class="tag">${escapeHtml(item.current_action || "pending")}</div>
+          </div>
+          <div class="correction-main">
+            <div class="correction-question">${escapeHtml(item.question_pattern || "")}</div>
+            <div class="path">${escapeHtml((item.risk_flags || []).join("、") || "无风险标签")} · ${escapeHtml(item.next_human_action || "manual review required")}</div>
+            <div class="result">只读复核队列，不批准、不发布、不写库。edit_target: ${escapeHtml(item.edit_target || "")}</div>
+          </div>
+        </article>
+      `).join("");
+    }
+
+    function renderP0DecisionPreview(payload) {
+      const validation = payload.validation || {};
+      const errors = (validation.errors || []).slice(0, 5).map((item) => `<li>${escapeHtml(item.code || "error")}：${escapeHtml(item.message || "")}</li>`).join("");
+      p0DecisionPreviewResult.className = `result ${payload.valid ? "ok" : "error"}`;
+      p0DecisionPreviewResult.innerHTML = `
+        <strong>preview_only: ${String(Boolean(payload.preview_only))} · valid: ${String(Boolean(payload.valid))}</strong>
+        <div>error_count: ${validation.error_count ?? 0} · write_to_database: ${String(Boolean(payload.write_to_database))} · publish_allowed: ${String(Boolean(payload.publish_allowed))}</div>
+        <div>不会写入 p0-review-decisions.json；人工确认后仍需手动编辑决策文件。</div>
+        ${errors ? `<ul>${errors}</ul>` : ""}
+      `;
+    }
+
+    function renderIngestLoopStatus(payload) {
+      const status = payload.status || "missing";
+      const taskCount = payload.task_count || 0;
+      const claimCount = payload.claim_count || 0;
+      const reviewCount = payload.review_queue_count || 0;
+      const draftCount = payload.answer_card_draft_count || 0;
+      const stopReason = payload.stop_reason || "waiting_for_manual_run";
+      ingestLoopStatus.innerHTML = `
+        <strong>${escapeHtml(status)}</strong>
+        <div>资料：${taskCount} · 候选 claim：${claimCount} · 待复核：${reviewCount} · 答案卡草稿：${draftCount}</div>
+        <div>停止原因：${escapeHtml(stopReason)}</div>
+        <div>候选资料不等于正式知识，Loop 自动停在人工审核。</div>
+      `;
+    }
+
+    function renderBrandDecisionReview(payload) {
+      const riskText = (payload.risk_flags || []).join("、") || "无风险标签";
+      const directions = (payload.rewrite_direction || []).slice(0, 3).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+      brandDecisionResult.innerHTML = `
+        <strong>${escapeHtml(payload.status || "unknown")} · ${payload.score ?? 0}分</strong>
+        <div>评审类型：${escapeHtml(payload.artifact_type || "")} · 复核人：${escapeHtml(payload.reviewer_role || "")}</div>
+        <div>风险：${escapeHtml(riskText)}</div>
+        <div>不替代 VI/SI 设计，当前结果不是正式品牌标准。</div>
+        <ul>${directions}</ul>
+      `;
+    }
+
     function escapeHtml(value) {
       return String(value)
         .replaceAll("&", "&amp;")
@@ -631,12 +1476,24 @@
       try {
         await requestJson("/health");
         setServiceState(true, "已连接");
-        const [summary, assets] = await Promise.all([
+        const [summary, assets, queue, compliancePack, corrections, ingestLoop, p0Status, p0Todo] = await Promise.all([
           requestJson("/api/knowledge/summary"),
           requestJson("/api/knowledge/assets?limit=100"),
+          requestJson("/api/operating-brain/knowledge-compiler/review-queue?limit=20"),
+          requestJson("/api/operating-brain/knowledge-compiler/compliance-review-pack?limit=20"),
+          requestJson("/api/operating-brain/benchmark/corrections?limit=20"),
+          requestJson("/api/operating-brain/ingest-loop/status"),
+          requestJson(`/api/v1/hxy/p0/governance-status${p0RunQuery()}`),
+          requestJson(`/api/v1/hxy/p0/reviewer-todo${p0RunQuery()}`),
         ]);
         renderSummary(summary);
         renderAssets(assets.items || []);
+        renderReviewQueue(queue);
+        renderComplianceReviewPack(compliancePack);
+        renderBenchmarkCorrections(corrections);
+        renderIngestLoopStatus(ingestLoop);
+        renderP0GovernanceStatus(p0Status);
+        renderP0ReviewerTodo(p0Todo);
       } catch (error) {
         setServiceState(false, "未连接");
         setResult(error.message, "error");
@@ -691,17 +1548,188 @@
       }
     }
 
+    async function refreshReviewQueue() {
+      try {
+        const queue = await requestJson("/api/operating-brain/knowledge-compiler/review-queue?limit=20");
+        renderReviewQueue(queue);
+        setResult("复核队列已刷新", "ok");
+      } catch (error) {
+        setResult(error.message, "error");
+      }
+    }
+
+    async function refreshComplianceReviewPack() {
+      try {
+        const pack = await requestJson("/api/operating-brain/knowledge-compiler/compliance-review-pack?limit=20");
+        renderComplianceReviewPack(pack);
+        setResult("合规审核包已刷新。只读审核包，不能自动发布。", "ok");
+      } catch (error) {
+        setResult(error.message, "error");
+      }
+    }
+
+    async function refreshBenchmarkCorrections() {
+      try {
+        const corrections = await requestJson("/api/operating-brain/benchmark/corrections?limit=20");
+        renderBenchmarkCorrections(corrections);
+        setResult("Benchmark 修正任务已刷新", "ok");
+      } catch (error) {
+        setResult(error.message, "error");
+      }
+    }
+
+    async function refreshP0Governance() {
+      try {
+        p0GovernanceStatus.className = "result gate-state";
+        const [status, todo] = await Promise.all([
+          requestJson(`/api/v1/hxy/p0/governance-status${p0RunQuery()}`),
+          requestJson(`/api/v1/hxy/p0/reviewer-todo${p0RunQuery()}`),
+        ]);
+        renderP0GovernanceStatus(status);
+        renderP0ReviewerTodo(todo);
+        setResult("P0 合规答案卡闸门已刷新", "ok");
+      } catch (error) {
+        renderP0GovernanceError(error);
+        setResult(error.message, "error");
+      }
+    }
+
+    async function copyP0Notification() {
+      try {
+        const payload = await requestJson(`/api/v1/hxy/p0/notification${p0RunQuery()}`);
+        const text = payload.text || JSON.stringify(payload, null, 2);
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+          setResult("P0 通知已复制。该通知只读，不会批准、发布或写库。", "ok");
+          return;
+        }
+        setResult(text, "ok");
+      } catch (error) {
+        setResult(error.message, "error");
+      }
+    }
+
+    async function previewP0Decision() {
+      let decisions;
+      try {
+        decisions = JSON.parse(p0DecisionPreviewInput.value);
+      } catch (error) {
+        p0DecisionPreviewResult.className = "result error";
+        p0DecisionPreviewResult.textContent = `JSON 解析失败：${error.message}`;
+        return;
+      }
+      try {
+        const payload = await requestJson(`/api/v1/hxy/p0/decision-preview${p0RunQuery()}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ decisions }),
+        });
+        renderP0DecisionPreview(payload);
+        setResult("P0 人工决策预检完成；preview_only，不写库。", "ok");
+      } catch (error) {
+        p0DecisionPreviewResult.className = "result error";
+        p0DecisionPreviewResult.textContent = error.message;
+        setResult(error.message, "error");
+      }
+    }
+
+    async function refreshIngestLoop() {
+      try {
+        const payload = await requestJson("/api/operating-brain/ingest-loop/status");
+        renderIngestLoopStatus(payload);
+        setResult("资料入库 Loop 状态已刷新", "ok");
+      } catch (error) {
+        setResult(error.message, "error");
+      }
+    }
+
+    async function runIngestLoop() {
+      try {
+        setResult("正在运行资料入库 Loop...");
+        const payload = await requestJson("/api/operating-brain/ingest-loop/run", { method: "POST" });
+        renderIngestLoopStatus(payload);
+        await refreshReviewQueue();
+        await refreshComplianceReviewPack();
+        setResult("资料入库 Loop 已停在人工复核。", "ok");
+      } catch (error) {
+        setResult(error.message, "error");
+      }
+    }
+
+    async function runBrandDecision() {
+      const text = document.querySelector("#brandDecisionText").value.trim();
+      if (!text) {
+        brandDecisionResult.innerHTML = `<div class="result error">请输入待评审内容</div>`;
+        return;
+      }
+      try {
+        const payload = await requestJson("/api/operating-brain/brand-decision/review", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            artifact_type: document.querySelector("#brandDecisionType").value,
+            stage: "first_store_opening",
+            text,
+          }),
+        });
+        renderBrandDecisionReview(payload);
+        setResult("首店品牌决策 Loop 已生成复核记录。", "ok");
+      } catch (error) {
+        brandDecisionResult.innerHTML = `<div class="result error">${escapeHtml(error.message)}</div>`;
+        setResult(error.message, "error");
+      }
+    }
+
+    async function submitReviewDecision(claimId, action) {
+      if (!claimId) return;
+      const note = action === "pass_to_draft" ? "通过为答案卡草稿，未批准。" : "";
+      try {
+        const result = await requestJson(`/api/operating-brain/knowledge-compiler/review-queue/${encodeURIComponent(claimId)}/decision`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action, reviewer: "knowledge-workbench", note }),
+        });
+        const suffix = result.answer_card_draft ? `，已生成草稿：${result.answer_card_draft.question_pattern}` : "";
+        setResult(`已记录复核动作：${action}${suffix}`, "ok");
+        await refreshReviewQueue();
+      } catch (error) {
+        setResult(error.message, "error");
+      }
+    }
+
+    function openAdvancedKnowledgeTools() {
+      const advancedKnowledgeTools = document.querySelector("#advancedKnowledgeTools");
+      advancedKnowledgeTools.open = true;
+      advancedKnowledgeTools.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
     document.querySelector("#saveApi").addEventListener("click", () => {
       localStorage.setItem("hxyKnowledgeApiBase", apiBase());
+      localStorage.setItem("hxyKnowledgeApiToken", apiTokenInput.value.trim());
       setResult("API 地址已保存", "ok");
       refreshAll();
     });
     document.querySelector("#refresh").addEventListener("click", refreshAll);
+    document.querySelector("#refreshIngestLoop").addEventListener("click", refreshIngestLoop);
+    document.querySelector("#runIngestLoop").addEventListener("click", runIngestLoop);
+    document.querySelector("#runBrandDecision").addEventListener("click", runBrandDecision);
+    document.querySelector("#refreshReviewQueue").addEventListener("click", refreshReviewQueue);
+    document.querySelector("#refreshComplianceReviewPack").addEventListener("click", refreshComplianceReviewPack);
+    document.querySelector("#refreshBenchmarkCorrections").addEventListener("click", refreshBenchmarkCorrections);
+    document.querySelector("#refreshP0Governance").addEventListener("click", refreshP0Governance);
+    document.querySelector("#copyP0Notification").addEventListener("click", copyP0Notification);
+    document.querySelector("#previewP0Decision").addEventListener("click", previewP0Decision);
     document.querySelector("#uploadBtn").addEventListener("click", uploadFile);
     document.querySelector("#importBtn").addEventListener("click", importKnowledge);
     document.querySelector("#searchBtn").addEventListener("click", searchKnowledge);
     document.querySelector("#queryInput").addEventListener("keydown", (event) => {
       if (event.key === "Enter") searchKnowledge();
+    });
+    reviewQueue.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-action]");
+      if (!button) return;
+      const item = button.closest(".review-item");
+      submitReviewDecision(item?.dataset.claimId || "", button.dataset.action || "");
     });
 
     refreshAll();

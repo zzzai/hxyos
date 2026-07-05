@@ -1,3 +1,5 @@
+import subprocess
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -6,17 +8,100 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class HxyBrainFrontendTest(unittest.TestCase):
-    def test_admin_default_entry_is_startup_stage_project_advancer(self):
+    def test_frontdesk_is_minimal_execution_surface_without_governance_workflow(self):
+        page = ROOT / "apps" / "admin-web" / "frontdesk.html"
+        self.assertTrue(page.exists(), "frontdesk execution surface should exist")
+        html = page.read_text(encoding="utf-8")
+
+        for label in [
+            "<title>HXYOS 前台</title>",
+            "HXYOS 前台",
+            "前台速查",
+            "不用打字",
+            "顾客现在问什么？",
+            "第一次来应该选什么？",
+            "你们和普通按摩有什么不一样？",
+            "为什么有点贵？",
+            "做一次有没有效果？",
+            "草本泡脚有什么用？",
+            "直接说",
+            "下一句",
+            "别这样说",
+            "用标准说法",
+            "练一遍",
+            "我不会答，提交",
+            "现场问答框",
+            "自己输入顾客原话",
+            "按原话判断",
+            "id=\"frontdeskInput\"",
+            "id=\"frontdeskAskButton\"",
+            "askFrontdeskQuestion",
+            'data-question="first"',
+            'data-question="difference"',
+            'data-question="price"',
+            'data-question="effect"',
+            'data-question="herbal"',
+            'aria-pressed="true"',
+            'aria-pressed="false"',
+            'id="currentQuestion"',
+            'id="frontdeskOutput"',
+            "renderQuestion",
+            "activeQuestion",
+            "questionButtons",
+            "focus-visible",
+        ]:
+            self.assertIn(label, html)
+
+        for forbidden in [
+            "待审核",
+            "审核",
+            "发布",
+            "候选",
+            "证据链",
+            "知识图谱",
+            "版本流转",
+            "claim",
+            "reference",
+            "needs_review",
+            "approved answer card",
+            "复核队列",
+            "资料入库",
+            "风险评分",
+            "今天只做三件事",
+            "现场工作流",
+            "第 1 步",
+            "第 2 步",
+            "第 3 步",
+            "第 4 步",
+            "data-step",
+            'data-mode=',
+            "renderMode",
+        ]:
+            self.assertNotIn(forbidden, html)
+
+    def test_admin_default_entry_is_hxyos_task_gateway_with_qa_box(self):
         page = ROOT / "apps" / "admin-web" / "index.html"
         self.assertTrue(page.exists(), "admin default entry should exist")
         html = page.read_text(encoding="utf-8")
 
         for label in [
-            "<title>荷小悦 0-1 项目推进器</title>",
-            "荷小悦 0-1 项目推进器",
-            "当前阶段主入口",
-            "进入 0-1 验证台",
+            "<title>HXYOS 工作台</title>",
+            "HXYOS 工作台",
+            "今天要做什么？",
+            "前台怎么说",
+            "开业还差什么",
+            "这句话能不能发",
+            "资料变成知识",
+            "问答框",
+            "先问一句",
+            "id=\"homeQuestionInput\"",
+            "id=\"homeAskButton\"",
+            "id=\"homeAnswer\"",
+            "askHomeQuestion",
+            "frontdesk.html",
             "startup.html",
+            "brand-check.html",
+            "knowledge.html",
         ]:
             self.assertIn(label, html)
 
@@ -27,37 +112,152 @@ class HxyBrainFrontendTest(unittest.TestCase):
             "客户消费",
             "POS",
             "多店看板",
+            "http-equiv=\"refresh\"",
         ]:
             self.assertNotIn(label, html)
 
-    def test_startup_stage_product_focuses_on_positioning_validation_not_full_os(self):
+    def test_brand_check_is_front_stage_expression_checker_not_review_console(self):
+        page = ROOT / "apps" / "admin-web" / "brand-check.html"
+        self.assertTrue(page.exists(), "brand expression checker should exist")
+        html = page.read_text(encoding="utf-8")
+
+        for label in [
+            "<title>HXYOS 说法检查</title>",
+            "HXYOS 说法检查",
+            "这句话能不能发？",
+            "把准备发出去的话贴进来",
+            "立即检查",
+            "可以发",
+            "建议改",
+            "不要发",
+            "改成这样说",
+            "禁用词",
+            "医疗",
+            "保证",
+            "夸大",
+            "id=\"brandTextInput\"",
+            "id=\"brandCheckResult\"",
+            "runBrandCheck",
+            "defaultRiskRules",
+            "riskRules",
+            "loadBrandRiskRules",
+            "/api/operating-brain/brand-risk-rules",
+            "index.html",
+        ]:
+            self.assertIn(label, html)
+
+        for forbidden in [
+            "待审核",
+            "审核队列",
+            "发布队列",
+            "批准",
+            "claim",
+            "reference",
+            "needs_review",
+            "资料入库",
+            "知识图谱",
+            "审核人",
+            "招商",
+            "加盟",
+        ]:
+            self.assertNotIn(forbidden, html)
+
+    def test_brand_check_allows_boundary_language_for_forbidden_terms(self):
+        page = ROOT / "apps" / "admin-web" / "brand-check.html"
+        html = page.read_text(encoding="utf-8")
+        script = html.split("<script>", 1)[1].split("</script>", 1)[0]
+        runner = textwrap.dedent(
+            f"""
+            const vm = require("node:vm");
+            const elements = {{
+              brandTextInput: {{
+                value: "我们不做祛湿排毒承诺，也不能替代医疗治疗。可以说草本现煮，泡着舒服。",
+                focus() {{}}
+              }},
+              brandCheckResult: {{ innerHTML: "" }}
+            }};
+            const context = {{
+              console,
+              window: {{ location: {{ origin: "null" }} }},
+              fetch: async () => {{ throw new Error("offline"); }},
+              document: {{
+                getElementById(id) {{ return elements[id]; }}
+              }}
+            }};
+            vm.createContext(context);
+            vm.runInContext({script!r}, context);
+            vm.runInContext("runBrandCheck()", context);
+            process.stdout.write(elements.brandCheckResult.innerHTML);
+            """
+        )
+        result = subprocess.run(
+            ["node", "-e", runner],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertIn("可以发", result.stdout)
+        self.assertNotIn("不要发", result.stdout)
+
+    def test_knowledge_page_starts_with_front_stage_intake_not_governance_console(self):
+        page = ROOT / "apps" / "admin-web" / "knowledge.html"
+        self.assertTrue(page.exists(), "knowledge intake page should exist")
+        html = page.read_text(encoding="utf-8")
+
+        for label in [
+            "HXYOS 资料台",
+            "资料变成知识",
+            "先把资料放进入口",
+            "系统先整理，不直接定稿",
+            "能用时再进入工作台",
+            "原始资料不是正式答案",
+            "进入高级工具",
+            "id=\"advancedKnowledgeTools\"",
+            "openAdvancedKnowledgeTools",
+            "/root/hxy/knowledge/raw/inbox",
+        ]:
+            self.assertIn(label, html)
+
+        front_index = html.index("资料变成知识")
+        governance_index = html.index("P0 合规闸门")
+        self.assertLess(front_index, governance_index)
+
+    def test_startup_stage_product_focuses_on_today_action_not_full_os(self):
         page = ROOT / "apps" / "admin-web" / "startup.html"
         self.assertTrue(page.exists(), "startup stage product page should exist")
         html = page.read_text(encoding="utf-8")
 
         for label in [
-            "<title>荷小悦 0-1 验证台</title>",
-            "0-1 项目推进器",
-            "当前唯一主线",
-            "核爆点定位是否成立？",
+            "<title>HXYOS 首店</title>",
+            "HXYOS 首店",
+            "首店今日动作台",
+            "今天只推进一件事",
+            "验证核爆点定位是否成立",
+            "今日唯一动作",
+            "完成 5 个用户访谈，并录入原话",
+            "为什么先做这个",
             "待验证",
             "当前结论",
             "证据缺口",
-            "本周验证任务",
-            "结论版本",
+            "证据状态",
+            "用户原话",
+            "复述测试",
+            "付费理由",
+            "替代方案",
+            "今日拿到什么证据？",
+            "AI 推进草稿",
             "记录证据",
             "更新结论",
             "生成下一步",
             "沉淀为定位卡",
-            "用户访谈",
-            "定位表达测试",
-            "清泡调补养复述测试",
-            "查看依据",
-            "依据与质检",
-            "定位卡",
-            "话术卡",
-            "验证任务",
-            "阶段边界",
+            "id=\"startupEvidenceInput\"",
+            "id=\"startupAdvanceStatus\"",
+            "id=\"startupAdvanceResult\"",
+            "data-progress-action=\"record\"",
+            "data-progress-action=\"revise\"",
+            "data-progress-action=\"next\"",
+            "data-progress-action=\"card\"",
         ]:
             self.assertIn(label, html)
 
@@ -74,50 +274,44 @@ class HxyBrainFrontendTest(unittest.TestCase):
             "startupAdvanceStatus",
             "startupEvidenceInput",
             "startupAdvanceResult",
-            "main-thread",
-            "evidence-gap",
-            "validation-board",
-            "version-timeline",
-            "progress-actions",
+            "today-action-board",
+            "evidence-panel",
+            "startup-loop-actions",
             "data-progress-action",
-            "evidence-drawer",
-            "toggleEvidenceDrawer",
-            "overflow: hidden;",
-            "height: 100dvh;",
-            "grid-template-rows: auto minmax(0, 1fr);",
         ]:
             self.assertIn(item, html)
 
-        head_start = html.index("<header")
-        head_end = html.index("</header>", head_start)
-        header_html = html[head_start:head_end]
-        self.assertNotIn("stage-pills", header_html)
-        self.assertNotIn("只做当下阶段", header_html)
-        self.assertNotIn("不做招商/加盟", header_html)
-        self.assertNotIn("不开门店数据看板", header_html)
-        self.assertNotIn("不做复杂员工系统", header_html)
-        self.assertNotIn("不做客户消费分析", header_html)
-        self.assertNotIn("stage-pills", html)
-        self.assertNotIn("/api/knowledge/chat", html)
-        self.assertNotIn("startupQuestionInput", html)
-        self.assertNotIn("runStartupQuestion", html)
-        self.assertNotIn("data-startup-question", html)
-        self.assertNotIn("生成判断卡", html)
-        self.assertNotIn("继续追问", html)
-        self.assertNotIn("今天要定哪件事？", html)
-        self.assertNotIn("decision-box", html)
-        self.assertNotIn("decision-card", html)
-        self.assertNotIn('class="workspace"', html)
-        self.assertNotIn('class="rail"', html)
-        self.assertNotIn('class="inspector"', html)
-        self.assertNotIn("今日营业额", html)
-        self.assertNotIn("技师产能", html)
-        self.assertNotIn("客户消费记录", html)
-        self.assertNotIn("招商表达风险", html)
-        self.assertNotIn("招商话术", html)
-        self.assertNotIn("招商看", html)
-        self.assertNotIn("回本周期", html)
-        self.assertNotIn("合伙人", html)
+        for forbidden in [
+            "stage-pills",
+            "/api/knowledge/chat",
+            "startupQuestionInput",
+            "runStartupQuestion",
+            "data-startup-question",
+            "生成判断卡",
+            "继续追问",
+            "今天要定哪件事？",
+            "decision-box",
+            "decision-card",
+            'class="workspace"',
+            'class="rail"',
+            'class="inspector"',
+            "今日营业额",
+            "技师产能",
+            "客户消费记录",
+            "招商表达风险",
+            "招商话术",
+            "招商看",
+            "回本周期",
+            "合伙人",
+            "待审核",
+            "审核队列",
+            "发布",
+            "claim",
+            "reference",
+            "needs_review",
+            "知识图谱",
+        ]:
+            self.assertNotIn(forbidden, html)
 
     def test_startup_stage_actions_call_ai_progress_loop_not_static_drawer(self):
         html = (ROOT / "apps" / "admin-web" / "startup.html").read_text(encoding="utf-8")
@@ -154,9 +348,9 @@ class HxyBrainFrontendTest(unittest.TestCase):
 
     def test_startup_evidence_drawer_has_local_action_buttons_after_evidence_input(self):
         html = (ROOT / "apps" / "admin-web" / "startup.html").read_text(encoding="utf-8")
-        drawer_start = html.index('<aside class="evidence-drawer"')
-        drawer_end = html.index("</aside>", drawer_start)
-        drawer_html = html[drawer_start:drawer_end]
+        panel_start = html.index('<section class="evidence-panel"')
+        panel_end = html.index("</section>", panel_start)
+        drawer_html = html[panel_start:panel_end]
 
         input_index = drawer_html.index('id="startupEvidenceInput"')
         local_actions_index = drawer_html.index('class="startup-loop-actions"')
@@ -176,14 +370,48 @@ class HxyBrainFrontendTest(unittest.TestCase):
         mobile_start = html.index("@media (max-width: 900px)")
         mobile_css = html[mobile_start:]
 
-        self.assertIn("grid-template-rows: auto minmax(0, 1fr);", mobile_css)
-        self.assertIn(".project-shell", mobile_css)
-        self.assertIn(".validation-board", mobile_css)
+        self.assertIn(".startup-shell", mobile_css)
+        self.assertIn(".today-action-board", mobile_css)
+        self.assertIn(".evidence-panel", mobile_css)
         self.assertIn("grid-template-columns: 1fr;", mobile_css)
-        self.assertIn(".progress-actions", mobile_css)
-        self.assertIn("grid-template-columns: repeat(2, minmax(0, 1fr));", mobile_css)
-        self.assertIn(".app-subtitle", mobile_css)
+        self.assertIn(".startup-loop-actions", mobile_css)
+        self.assertIn("grid-template-columns: 1fr;", mobile_css)
+        self.assertIn(".top-meta", mobile_css)
         self.assertIn("display: none;", mobile_css)
+
+    def test_startup_primary_action_focuses_evidence_input_before_ai_loop(self):
+        html = (ROOT / "apps" / "admin-web" / "startup.html").read_text(encoding="utf-8")
+        action_start = html.index('<div class="action-strip">')
+        action_end = html.index('      <div class="focus-grid">', action_start)
+        action_html = html[action_start:action_end]
+
+        self.assertIn("开始录入", action_html)
+        self.assertIn("data-focus-evidence", action_html)
+        self.assertNotIn("data-progress-action", action_html)
+        self.assertIn("function focusEvidenceInput", html)
+        self.assertIn('document.querySelector("[data-focus-evidence]")', html)
+
+    def test_startup_supporting_assets_are_collapsed_below_main_workflow(self):
+        html = (ROOT / "apps" / "admin-web" / "startup.html").read_text(encoding="utf-8")
+
+        self.assertIn('<details class="support-panel" aria-label="首店支撑资料">', html)
+        self.assertIn("<summary>支撑资料</summary>", html)
+        self.assertNotIn('<aside class="support-panel"', html)
+        self.assertNotIn('<details class="support-panel" aria-label="首店支撑资料" open>', html)
+
+    def test_startup_mobile_hides_long_summary_copy(self):
+        html = (ROOT / "apps" / "admin-web" / "startup.html").read_text(encoding="utf-8")
+        mobile_start = html.index("@media (max-width: 900px)")
+        mobile_css = html[mobile_start:]
+
+        self.assertIn(".summary", mobile_css)
+        summary_mobile_start = mobile_css.index(".summary")
+        summary_mobile_end = mobile_css.index("}", summary_mobile_start)
+        summary_mobile_css = mobile_css[summary_mobile_start:summary_mobile_end]
+
+        self.assertIn("display: none;", summary_mobile_css)
+        self.assertIn("h1", mobile_css)
+        self.assertIn("font-size: clamp(30px, 9vw, 44px);", mobile_css)
 
     def test_brain_page_exposes_answer_evolution_controls(self):
         html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
@@ -201,6 +429,58 @@ class HxyBrainFrontendTest(unittest.TestCase):
         self.assertIn("source_answer_id", html)
         self.assertIn("defaultApiBase", html)
         self.assertIn("window.location.origin", html)
+
+    def test_brain_page_exposes_public_ai_workspace_event_stream(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+
+        for label in [
+            "公共 AI 工作间",
+            "最新 AI 工作",
+            "组织可见",
+            "风险标签",
+            "复核动作",
+            "记忆动作",
+            "不是正式知识",
+        ]:
+            self.assertTrue(label in html, f"missing workspace label: {label}")
+
+        for marker in [
+            'id="workspaceEvents"',
+            'id="refreshWorkspaceEvents"',
+            "/api/operating-brain/workspace/events",
+            "refreshWorkspaceEvents",
+            "renderWorkspaceEvents",
+            "createWorkspaceEvent",
+            "data-workspace-review",
+            "data-workspace-memory",
+        ]:
+            self.assertTrue(marker in html, f"missing workspace marker: {marker}")
+
+    def test_brain_page_api_token_is_available_for_workspace_write_actions(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+
+        for marker in [
+            'id="apiToken"',
+            "hxyBrainApiToken",
+            "apiTokenInput",
+            'headers.set("Authorization", `Bearer ${token}`)',
+            'localStorage.setItem("hxyBrainApiToken"',
+            "不影响本次回答",
+        ]:
+            self.assertTrue(marker in html, f"missing brain api token marker: {marker}")
+
+    def test_brain_page_workspace_copy_does_not_claim_authority(self):
+        html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
+
+        workspace_start = html.find("公共 AI 工作间")
+        self.assertNotEqual(workspace_start, -1, "brain page should expose public AI workspace section")
+        workspace_end = html.find("</section>", workspace_start)
+        self.assertNotEqual(workspace_end, -1, "public AI workspace section should be a section")
+        workspace_html = html[workspace_start:workspace_end]
+
+        self.assertIn("不是正式知识", workspace_html)
+        self.assertNotIn("权威知识发布", workspace_html)
+        self.assertNotIn("已批准口径", workspace_html)
 
     def test_brain_page_is_answer_first_operating_brain(self):
         html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")
@@ -1135,6 +1415,169 @@ class HxyBrainFrontendTest(unittest.TestCase):
         self.assertIn("上下文预算", detail_block)
         self.assertIn("停止条件", detail_block)
         self.assertIn("hard limit", detail_block)
+
+    def test_knowledge_workbench_renders_benchmark_correction_tasks(self):
+        html = (ROOT / "apps" / "admin-web" / "knowledge.html").read_text(encoding="utf-8")
+
+        for item in [
+            "Benchmark 修正任务",
+            'id="benchmarkCorrections"',
+            'id="benchmarkCorrectionsMeta"',
+            'id="refreshBenchmarkCorrections"',
+            "renderBenchmarkCorrections",
+            "/api/operating-brain/benchmark/corrections?limit=20",
+            "failed_checks",
+            "recommended_reviewer",
+            "候选修正不等于批准",
+        ]:
+            self.assertIn(item, html)
+
+    def test_knowledge_workbench_api_base_defaults_to_current_origin(self):
+        html = (ROOT / "apps" / "admin-web" / "knowledge.html").read_text(encoding="utf-8")
+
+        for marker in [
+            "function defaultApiBase",
+            "window.location.origin",
+            'localStorage.getItem("hxyKnowledgeApiBase") || defaultApiBase()',
+        ]:
+            self.assertIn(marker, html)
+
+        script_start = html.index("function defaultApiBase")
+        script_end = html.index("function apiBase", script_start)
+        default_block = html[script_start:script_end]
+        self.assertNotIn("18081", default_block)
+        self.assertNotIn('value="http://127.0.0.1:18081"', html)
+
+    def test_knowledge_workbench_prioritizes_governance_cockpit_over_upload_tools(self):
+        html = (ROOT / "apps" / "admin-web" / "knowledge.html").read_text(encoding="utf-8")
+
+        for marker in [
+            'class="knowledge-workbench"',
+            'class="system-strip"',
+            'class="gate-board"',
+            'class="gate-panel p0-gate"',
+            "P0 合规闸门",
+            "知识底座健康度",
+            "资料入库工具",
+            "治理闸门优先",
+            "blocked_at_empty_manual_decisions",
+            "4 条 pending",
+        ]:
+            self.assertIn(marker, html)
+
+        p0_index = html.index("P0 合规闸门")
+        upload_index = html.index("资料入库工具")
+        search_index = html.index("知识搜索")
+        asset_index = html.index("资料清单")
+        self.assertLess(p0_index, upload_index)
+        self.assertLess(upload_index, search_index)
+        self.assertLess(search_index, asset_index)
+
+        p0_panel_end = html.index("资料入库工具", p0_index)
+        p0_panel = html[p0_index:p0_panel_end]
+        self.assertNotIn('data-action="approve"', p0_panel)
+        self.assertNotIn('data-action="publish"', p0_panel)
+
+    def test_knowledge_workbench_renders_p0_governance_review_queue(self):
+        html = (ROOT / "apps" / "admin-web" / "knowledge.html").read_text(encoding="utf-8")
+
+        for item in [
+            "P0 合规答案卡闸门",
+            "人工审核前不能发布",
+            'id="p0GovernanceStatus"',
+            'id="p0ReviewerTodo"',
+            'id="refreshP0Governance"',
+            "renderP0GovernanceStatus",
+            "renderP0ReviewerTodo",
+            "refreshP0Governance",
+            "/api/v1/hxy/p0/governance-status",
+            "/api/v1/hxy/p0/reviewer-todo",
+            "blocked_at_empty_manual_decisions",
+            "write_to_database: false",
+            "publish_allowed: false",
+            "requires_human_review",
+        ]:
+            self.assertIn(item, html)
+
+        for item in [
+            'id="p0RunId"',
+            'id="copyP0Notification"',
+            'id="p0DecisionPreviewInput"',
+            'id="previewP0Decision"',
+            'id="p0DecisionPreviewResult"',
+            "copyP0Notification",
+            "previewP0Decision",
+            "refreshP0Governance",
+            "/api/v1/hxy/p0/notification",
+            "/api/v1/hxy/p0/decision-preview",
+            "p0RunQuery",
+            "renderP0GovernanceError",
+            "navigator.clipboard.writeText",
+            "复制 P0 通知",
+            "预检人工决策",
+            "preview_only",
+            "不会写入 p0-review-decisions.json",
+        ]:
+            self.assertIn(item, html)
+
+        p0_panel_start = html.index("P0 合规答案卡闸门")
+        p0_panel_end = html.index("知识搜索", p0_panel_start)
+        p0_panel = html[p0_panel_start:p0_panel_end]
+        self.assertNotIn('data-action="approve"', p0_panel)
+        self.assertNotIn('data-action="publish"', p0_panel)
+        self.assertNotIn("POST /api/v1/hxy/p0/publish", p0_panel)
+
+    def test_knowledge_workbench_renders_ingest_loop_panel(self):
+        html = (ROOT / "apps" / "admin-web" / "knowledge.html").read_text(encoding="utf-8")
+
+        for marker in [
+            "资料入库 Loop",
+            "候选资料不等于正式知识",
+            'id="ingestLoopStatus"',
+            'id="runIngestLoop"',
+            'id="refreshIngestLoop"',
+            "renderIngestLoopStatus",
+            "/api/operating-brain/ingest-loop/status",
+            "/api/operating-brain/ingest-loop/run",
+        ]:
+            self.assertIn(marker, html)
+
+    def test_knowledge_workbench_renders_compliance_review_pack_without_approval_actions(self):
+        html = (ROOT / "apps" / "admin-web" / "knowledge.html").read_text(encoding="utf-8")
+
+        for marker in [
+            "合规审核包",
+            "只读审核包",
+            'id="complianceReviewPack"',
+            'id="complianceReviewPackMeta"',
+            'id="refreshComplianceReviewPack"',
+            "renderComplianceReviewPack",
+            "refreshComplianceReviewPack",
+            "/api/operating-brain/knowledge-compiler/compliance-review-pack",
+            "approve_as_rule",
+            "不能自动发布",
+        ]:
+            self.assertIn(marker, html)
+
+        panel_start = html.index("合规审核包")
+        panel_end = html.index("Benchmark 修正任务", panel_start)
+        panel_html = html[panel_start:panel_end]
+        self.assertNotIn('data-action="approve"', panel_html)
+        self.assertNotIn('data-action="publish"', panel_html)
+
+    def test_knowledge_workbench_renders_brand_decision_loop_panel(self):
+        html = (ROOT / "apps" / "admin-web" / "knowledge.html").read_text(encoding="utf-8")
+
+        for marker in [
+            "首店品牌决策 Loop",
+            "不替代 VI/SI 设计",
+            'id="brandDecisionText"',
+            'id="runBrandDecision"',
+            'id="brandDecisionResult"',
+            "renderBrandDecisionReview",
+            "/api/operating-brain/brand-decision/review",
+        ]:
+            self.assertIn(marker, html)
 
     def test_inspector_evidence_hides_raw_file_paths_and_chunk_ids(self):
         html = (ROOT / "apps" / "admin-web" / "brain.html").read_text(encoding="utf-8")

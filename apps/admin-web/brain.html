@@ -505,6 +505,68 @@
       line-height: 1.35;
     }
 
+    .public-workspace-panel {
+      display: grid;
+      gap: 12px;
+      width: min(920px, 100%);
+      border: 1px solid rgba(78, 93, 86, 0.16);
+      border-radius: 18px;
+      background: rgba(255, 253, 248, 0.84);
+      padding: 16px;
+      box-shadow: 0 12px 30px rgba(81, 91, 73, 0.08);
+    }
+
+    .workspace-panel-head,
+    .workspace-event {
+      display: grid;
+      gap: 8px;
+    }
+
+    .workspace-panel-title {
+      display: flex;
+      align-items: start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .workspace-event-meta,
+    .workspace-event-tags,
+    .workspace-event-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .workspace-events {
+      display: grid;
+      gap: 8px;
+      max-height: 260px;
+      overflow: auto;
+    }
+
+    .workspace-event {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.72);
+      padding: 12px;
+      line-height: 1.45;
+    }
+
+    .workspace-event-main {
+      display: grid;
+      gap: 5px;
+    }
+
+    .workspace-event-main strong {
+      font-size: 14px;
+      line-height: 1.35;
+    }
+
+    .workspace-event-actions button {
+      min-height: 30px;
+      font-size: 12px;
+    }
+
     .review-actions {
       display: flex;
       flex-wrap: wrap;
@@ -1490,6 +1552,10 @@
             API 地址
             <input id="apiBase" type="url">
           </label>
+          <label>
+            API Token
+            <input id="apiToken" type="password" placeholder="用于写入、复核和过程记忆">
+          </label>
           <button id="saveApi" class="secondary" type="button">保存并连接</button>
           <div id="serviceStatus" class="status">等待连接</div>
         </div>
@@ -1730,6 +1796,29 @@
                 </div>
               </div>
             </div>
+            <section class="public-workspace-panel" aria-label="公共 AI 工作间">
+              <div class="workspace-panel-head">
+                <div class="workspace-panel-title">
+                  <div>
+                    <h3>公共 AI 工作间</h3>
+                    <p class="hint">最新 AI 工作会沉淀为组织可见事件；它不是正式知识。</p>
+                  </div>
+                  <button class="secondary" id="refreshWorkspaceEvents" type="button">刷新</button>
+                </div>
+                <div class="workspace-event-meta" aria-label="事件字段">
+                  <span class="pill strong">组织可见</span>
+                  <span class="pill">风险标签</span>
+                  <span class="pill">复核动作</span>
+                  <span class="pill">记忆动作</span>
+                </div>
+              </div>
+              <div id="workspaceEvents" class="workspace-events">
+                <div class="issue-item">
+                  <strong>暂无最新 AI 工作</strong>
+                  <span class="muted-line">团队提问、纠偏和资料处理会在这里形成可回放事件；这些事件不是正式知识。</span>
+                </div>
+              </div>
+            </section>
           </div>
         </div>
       </div>
@@ -1776,6 +1865,7 @@
     const workspace = document.querySelector(".workspace");
     const inspectorPanel = document.querySelector(".inspector-panel");
     const apiInput = document.querySelector("#apiBase");
+    const apiTokenInput = document.querySelector("#apiToken");
     const serviceStatus = document.querySelector("#serviceStatus");
     const uploadStatus = document.querySelector("#uploadStatus");
     const messages = document.querySelector("#messages");
@@ -1793,6 +1883,7 @@
     const answerCards = document.querySelector("#answerCards");
     const reviewStatus = document.querySelector("#reviewStatus");
     const reviewTasks = document.querySelector("#reviewTasks");
+    const workspaceEvents = document.querySelector("#workspaceEvents");
     const okfLifecycleStatus = document.querySelector("#okfLifecycleStatus");
     const issueQueue = document.querySelector("#issueQueue");
     const knowledgeUrl = document.querySelector("#knowledgeUrl");
@@ -1816,6 +1907,7 @@
     }
 
     apiInput.value = localStorage.getItem("hxyBrainApiBase") || defaultApiBase();
+    apiTokenInput.value = localStorage.getItem("hxyBrainApiToken") || "";
     knowledgeUrl.textContent = `${window.location.origin}/knowledge.html`;
     document.querySelector("#dailyBusinessDate").value = new Date().toISOString().slice(0, 10);
 
@@ -1841,9 +1933,12 @@
 
     async function requestJson(path, options = {}) {
       const url = `${apiBase()}${path}`;
+      const headers = new Headers(options.headers || {});
+      const token = apiTokenInput.value.trim();
+      if (token) headers.set("Authorization", `Bearer ${token}`);
       let response;
       try {
-        response = await fetch(url, options);
+        response = await fetch(url, { ...options, headers });
       } catch (error) {
         throw new Error(formatRequestError(error, url));
       }
@@ -3031,6 +3126,156 @@
       }
     }
 
+    function workspaceSummaryFromResult(result) {
+      if (!result) return "";
+      const resultCard = result.result_card || {};
+      if (resultCard.usable_answer) return resultCard.usable_answer;
+      if (resultCard.business_result) return resultCard.business_result;
+      if (result.summary) return result.summary;
+      if (result.answer) return result.answer;
+      if (result.review_status) return `复核状态：${result.review_status}`;
+      return "已生成 AI 工作记录，等待团队复核。";
+    }
+
+    async function createWorkspaceEvent(payload) {
+      return requestJson("/api/operating-brain/workspace/events", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    }
+
+    async function refreshWorkspaceEvents() {
+      if (!workspaceEvents) return;
+      workspaceEvents.innerHTML = `
+        <div class="issue-item">
+          <strong>正在读取最新 AI 工作</strong>
+          <span class="muted-line">公共工作间事件正在加载。</span>
+        </div>
+      `;
+      try {
+        const result = await requestJson("/api/operating-brain/workspace/events?limit=20");
+        renderWorkspaceEvents(result.items || []);
+      } catch (error) {
+        workspaceEvents.innerHTML = `
+          <div class="issue-item">
+            <strong>公共 AI 工作间读取失败</strong>
+            <span class="muted-line">${escapeHtml(error.message)}</span>
+          </div>
+        `;
+      }
+    }
+
+    function renderWorkspaceEvents(items) {
+      if (!workspaceEvents) return;
+      if (!items.length) {
+        workspaceEvents.innerHTML = `
+          <div class="issue-item">
+            <strong>暂无最新 AI 工作</strong>
+            <span class="muted-line">团队提问、纠偏和资料处理会在这里形成可回放事件；这些事件不是正式知识。</span>
+          </div>
+        `;
+        return;
+      }
+      workspaceEvents.innerHTML = items.map((event) => {
+        const output = event.ai_output || {};
+        const summary = typeof output === "string"
+          ? output
+          : (output.summary || output.answer || "等待复核");
+        const risks = (event.risk_flags || []).map((item) => typeof item === "string" ? item : "风险项").join(" · ") || "无";
+        const reviewAction = (event.review_action || {}).type || "none";
+        const memoryAction = (event.memory_action || {}).type || "context_only";
+        return `
+          <article class="workspace-event">
+            <div class="workspace-event-main">
+              <strong>${escapeHtml(event.topic || "未命名 AI 工作")}</strong>
+              <span class="muted-line">${escapeHtml(summary)}</span>
+              <span class="muted-line">${escapeHtml(event.role || "team")} · ${escapeHtml(event.visibility || "public_org")} · 不是正式知识</span>
+            </div>
+            <div class="workspace-event-tags">
+              <span class="pill">风险标签：${escapeHtml(risks)}</span>
+              <span class="pill">复核动作：${escapeHtml(reviewAction)}</span>
+              <span class="pill">记忆动作：${escapeHtml(memoryAction)}</span>
+            </div>
+            <div class="workspace-event-actions">
+              <button class="secondary" data-workspace-review="${escapeHtml(event.event_id || "")}" type="button">转复核</button>
+              <button class="secondary" data-workspace-memory="${escapeHtml(event.event_id || "")}" type="button">记为过程记忆</button>
+            </div>
+          </article>
+        `;
+      }).join("");
+    }
+
+    async function recordWorkspaceEventFromResult(input, result, intake = null) {
+      const text = String(input || "").trim();
+      if (!text) return null;
+      const payload = {
+        topic: text.slice(0, 80) || "AI 工作记录",
+        actor: "web",
+        role: selectedScenario || "team",
+        visibility: "public_org",
+        input: text,
+        ai_output: {
+          summary: workspaceSummaryFromResult(result),
+          answer_status: (result.answer_status && result.answer_status.status) || result.review_status || "",
+        },
+        evidence: result.evidence || result.citations || [],
+        risk_flags: result.risk_flags || (result.policy_review && result.policy_review.risk_flags) || [],
+        generated_tasks: result.next_actions || [],
+        memory_action: {
+          type: intake && intake.memory_action ? "process_memory_context_only" : "none",
+          allowed_as_authority: false,
+        },
+        review_action: {
+          type: result.needs_review ? "create_review_task" : "none",
+          required: Boolean(result.needs_review),
+        },
+      };
+      try {
+        const created = await createWorkspaceEvent(payload);
+        refreshWorkspaceEvents();
+        return created;
+      } catch (error) {
+        setStatus(serviceStatus, `AI 工作记录失败，不影响本次回答：${error.message}`, "error");
+        return null;
+      }
+    }
+
+    async function createWorkspaceReviewTask(eventId, button) {
+      if (!eventId) return;
+      button.disabled = true;
+      try {
+        await requestJson(`/api/operating-brain/workspace/events/${encodeURIComponent(eventId)}/review-task`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reviewer: "web", note: "从公共 AI 工作间转入复核。" }),
+        });
+        setStatus(serviceStatus, "已从公共 AI 工作间生成复核任务。", "ok");
+        refreshReviewTasks();
+      } catch (error) {
+        setStatus(serviceStatus, `复核任务创建失败：${error.message}`, "error");
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function createWorkspaceProcessMemory(eventId, button) {
+      if (!eventId) return;
+      button.disabled = true;
+      try {
+        await requestJson(`/api/operating-brain/workspace/events/${encodeURIComponent(eventId)}/process-memory`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ actor: "web", target_domain: selectedScenario || "general" }),
+        });
+        setStatus(serviceStatus, "已生成过程记忆预览；仍需复核，不能当正式知识。", "ok");
+      } catch (error) {
+        setStatus(serviceStatus, `过程记忆预览失败：${error.message}`, "error");
+      } finally {
+        button.disabled = false;
+      }
+    }
+
     async function refreshStatus() {
       try {
         const [health, summary] = await Promise.all([
@@ -3140,6 +3385,7 @@
         });
         result.workbench_intake = intake;
         addAnswer(result);
+        recordWorkspaceEventFromResult(finalQuestion, result, intake);
         attachedFiles = [];
         renderAttachedFiles();
         await requestJson("/api/operating-brain/issues/intake", {
@@ -3155,6 +3401,7 @@
 
     document.querySelector("#saveApi").addEventListener("click", () => {
       localStorage.setItem("hxyBrainApiBase", apiBase());
+      localStorage.setItem("hxyBrainApiToken", apiTokenInput.value.trim());
       refreshStatus();
       refreshOperatingIssues();
       refreshBrandAssets();
@@ -3162,6 +3409,7 @@
       refreshGoldenEval();
       refreshAnswerCards();
       refreshReviewTasks();
+      refreshWorkspaceEvents();
     });
     document.querySelector("#uploadBtn").addEventListener("click", uploadFile);
     document.querySelector("#importBtn").addEventListener("click", importKnowledge);
@@ -3246,6 +3494,18 @@
         resolveReviewTask(resolveButton.dataset.resolveTask, resolveButton);
       }
     });
+    document.querySelector("#refreshWorkspaceEvents").addEventListener("click", refreshWorkspaceEvents);
+    workspaceEvents.addEventListener("click", (event) => {
+      const reviewButton = event.target.closest("button[data-workspace-review]");
+      const memoryButton = event.target.closest("button[data-workspace-memory]");
+      if (reviewButton) {
+        createWorkspaceReviewTask(reviewButton.dataset.workspaceReview, reviewButton);
+        return;
+      }
+      if (memoryButton) {
+        createWorkspaceProcessMemory(memoryButton.dataset.workspaceMemory, memoryButton);
+      }
+    });
     messages.addEventListener("click", (event) => {
       const button = event.target.closest("button[data-rating]");
       const createButton = event.target.closest("button[data-create-card]");
@@ -3311,6 +3571,7 @@
     refreshGoldenEval();
     refreshAnswerCards();
     refreshReviewTasks();
+    refreshWorkspaceEvents();
   </script>
 </body>
 </html>

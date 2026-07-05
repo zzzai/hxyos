@@ -3,19 +3,23 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="0; url=startup.html">
-  <title>荷小悦 0-1 项目推进器</title>
+  <title>HXYOS 工作台</title>
   <style>
     :root {
-      --bg: #f4f5f1;
-      --surface: rgba(255, 255, 255, 0.88);
-      --ink: #202720;
-      --muted: #626c61;
-      --line: rgba(87, 103, 86, 0.18);
-      --accent: #116a58;
-      --accent-strong: #07463b;
-      --accent-soft: #e5f0ea;
-      --shadow: 0 18px 50px rgba(53, 66, 50, 0.12);
+      --bg: #f5f6f2;
+      --paper: #ffffff;
+      --ink: #1f251f;
+      --muted: #667064;
+      --subtle: #8b9489;
+      --line: #dde3d8;
+      --line-strong: #bfcbc0;
+      --accent: #17634f;
+      --accent-ink: #0c3d30;
+      --accent-soft: #e7f1eb;
+      --warning: #8a6219;
+      --warning-soft: #f5efe3;
+      --radius: 10px;
+      --shadow: 0 22px 70px rgba(38, 48, 36, 0.10);
     }
 
     * {
@@ -28,87 +32,448 @@
     }
 
     body {
-      display: grid;
-      place-items: center;
       margin: 0;
-      background: linear-gradient(145deg, rgba(236, 241, 234, 0.96), rgba(248, 244, 237, 0.95)), var(--bg);
+      overflow-x: hidden;
+      background: var(--bg);
       color: var(--ink);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
       letter-spacing: 0;
+    }
+
+    button,
+    input {
+      font: inherit;
+      letter-spacing: 0;
+    }
+
+    button,
+    a {
+      cursor: pointer;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    button:focus-visible,
+    a:focus-visible,
+    input:focus-visible {
+      outline: 3px solid rgba(23, 99, 79, 0.28);
+      outline-offset: 3px;
+    }
+
+    h1,
+    h2,
+    p {
+      margin: 0;
+    }
+
+    .shell {
+      min-height: 100dvh;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      min-height: 62px;
+      border-bottom: 1px solid var(--line);
+      padding: 0 28px;
+      background: rgba(245, 246, 242, 0.94);
+      backdrop-filter: blur(14px);
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      font-size: 15px;
+      font-weight: 780;
+      white-space: nowrap;
+    }
+
+    .brand-mark {
+      display: inline-grid;
+      place-items: center;
+      width: 24px;
+      height: 24px;
+      border: 1px solid var(--ink);
+      border-radius: 6px;
+      font-size: 12px;
+      line-height: 1;
+    }
+
+    .top-meta {
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
     }
 
     main {
       display: grid;
-      gap: 18px;
-      width: min(520px, calc(100vw - 32px));
+      grid-template-columns: minmax(0, 1.1fr) minmax(320px, 420px);
+      gap: 24px;
+      width: min(1120px, calc(100vw - 48px));
+      margin: 0 auto;
+      padding: 38px 0;
+    }
+
+    .task-section,
+    .qa-panel {
+      min-width: 0;
+      width: 100%;
       border: 1px solid var(--line);
-      border-radius: 24px;
-      background: var(--surface);
+      border-radius: var(--radius);
+      background: var(--paper);
       box-shadow: var(--shadow);
+    }
+
+    .task-section {
+      display: grid;
+      gap: 26px;
       padding: 28px;
-      text-align: left;
-      backdrop-filter: blur(18px);
     }
 
-    .stage {
-      color: var(--accent-strong);
+    .page-head {
+      display: grid;
+      gap: 12px;
+      max-width: 620px;
+    }
+
+    .page-kicker {
+      color: var(--accent);
       font-size: 13px;
-      font-weight: 750;
-    }
-
-    h1,
-    p {
-      margin: 0;
+      font-weight: 780;
     }
 
     h1 {
-      font-size: 30px;
-      line-height: 1.15;
+      font-size: clamp(38px, 5.2vw, 70px);
+      line-height: 1.02;
+      font-weight: 810;
     }
 
-    p {
+    .summary {
+      max-width: 520px;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.72;
+      overflow-wrap: anywhere;
+    }
+
+    .task-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .task-card {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 14px;
+      min-height: 166px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      background: #fbfcf9;
+      padding: 18px;
+      transition: border-color 140ms ease, background 140ms ease, transform 120ms ease;
+    }
+
+    .task-card:hover {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+    }
+
+    .task-card:active,
+    .ask-button:active {
+      transform: translateY(1px);
+    }
+
+    .task-card strong {
+      color: var(--ink);
+      font-size: 22px;
+      line-height: 1.18;
+      font-weight: 790;
+    }
+
+    .task-card span {
       color: var(--muted);
       font-size: 14px;
-      line-height: 1.7;
+      line-height: 1.58;
+      overflow-wrap: anywhere;
     }
 
-    a {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: fit-content;
-      min-height: 42px;
-      border-radius: 999px;
+    .task-card small {
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 760;
+    }
+
+    .qa-panel {
+      align-self: start;
+      display: grid;
+      gap: 18px;
+      padding: 22px;
+    }
+
+    .qa-head {
+      display: grid;
+      gap: 8px;
+    }
+
+    h2 {
+      font-size: 22px;
+      line-height: 1.25;
+      font-weight: 790;
+    }
+
+    .qa-copy {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.65;
+    }
+
+    .qa-form {
+      display: grid;
+      gap: 10px;
+    }
+
+    label {
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 760;
+    }
+
+    .input-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+    }
+
+    input {
+      width: 100%;
+      min-height: 44px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      background: #fbfcf9;
+      color: var(--ink);
+      padding: 0 13px;
+      font-size: 14px;
+    }
+
+    input::placeholder {
+      color: var(--subtle);
+    }
+
+    .ask-button {
+      min-height: 44px;
+      border: 1px solid var(--accent);
+      border-radius: var(--radius);
       background: var(--accent);
       color: #ffffff;
-      padding: 0 18px;
-      text-decoration: none;
+      padding: 0 16px;
       font-size: 14px;
-      font-weight: 700;
-      box-shadow: 0 12px 24px rgba(17, 106, 88, 0.18);
+      font-weight: 760;
+      transition: background 140ms ease, transform 120ms ease;
     }
 
-    a:hover {
-      background: var(--accent-strong);
+    .ask-button:hover {
+      background: var(--accent-ink);
     }
 
-    .note {
-      border-left: 3px solid var(--accent);
-      background: var(--accent-soft);
-      padding: 10px 12px;
-      color: var(--accent-strong);
+    .home-answer {
+      min-height: 112px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fbfcf9;
+      padding: 14px;
+      color: var(--ink);
+      font-size: 15px;
+      line-height: 1.62;
+      overflow-wrap: anywhere;
+    }
+
+    .home-answer a {
+      color: var(--accent);
+      font-weight: 780;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }
+
+    .quiet-note {
+      border-radius: var(--radius);
+      background: var(--warning-soft);
+      color: var(--warning);
+      padding: 12px;
       font-size: 13px;
-      line-height: 1.55;
+      line-height: 1.58;
+      overflow-wrap: anywhere;
+    }
+
+    @media (max-width: 900px) {
+      .topbar {
+        padding: 0 18px;
+      }
+
+      .top-meta {
+        display: none;
+      }
+
+      main {
+        grid-template-columns: 1fr;
+        width: min(calc(100vw - 28px), 620px);
+        padding: 20px 0;
+      }
+
+      .task-section,
+      .qa-panel {
+        padding: 18px;
+      }
+
+      .task-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .task-card {
+        min-height: 126px;
+      }
+
+      .input-row {
+        grid-template-columns: 1fr;
+      }
+
+      .ask-button {
+        width: 100%;
+      }
     }
   </style>
 </head>
 <body>
-  <main>
-    <div class="stage">当前阶段主入口</div>
-    <h1>荷小悦 0-1 项目推进器</h1>
-    <p>当前只推进定位、产品口径和品牌资料沉淀。复杂经营后台保留，但不作为默认入口。</p>
-    <div class="note">默认进入 0-1 验证台：看当前结论、证据缺口、本周验证任务和下一步动作。</div>
-    <a href="startup.html">进入 0-1 验证台</a>
-  </main>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">H</span>
+        <span>HXYOS 工作台</span>
+      </div>
+      <div class="top-meta">先选任务，不先翻资料</div>
+    </header>
+
+    <main>
+      <section class="task-section" aria-labelledby="homeTitle">
+        <div class="page-head">
+          <div class="page-kicker">今天要做什么？</div>
+          <h1 id="homeTitle">HXYOS 工作台</h1>
+          <p class="summary">把入口做成现场任务。前台、开业、文案和资料先各走各的路，不把后台规则丢给一线用户。</p>
+        </div>
+
+        <div class="task-grid" aria-label="常用任务">
+          <a class="task-card" href="frontdesk.html">
+            <strong>前台怎么说</strong>
+            <span>顾客问价格、效果、区别时，直接拿一句能说出口的话。</span>
+            <small>进入前台速查</small>
+          </a>
+          <a class="task-card" href="startup.html">
+            <strong>开业还差什么</strong>
+            <span>看首店当前主线、证据缺口和下一步动作。</span>
+            <small>进入开业推进</small>
+          </a>
+          <a class="task-card" href="brand-check.html">
+            <strong>这句话能不能发</strong>
+            <span>发朋友圈、海报或短视频前，先看是否容易说过头。</span>
+            <small>检查对外表达</small>
+          </a>
+          <a class="task-card" href="knowledge.html">
+            <strong>资料变成知识</strong>
+            <span>把文章、PDF、会议内容变成后续能用的项目资料。</span>
+            <small>进入资料处理</small>
+          </a>
+        </div>
+      </section>
+
+      <aside class="qa-panel" aria-labelledby="qaTitle">
+        <div class="qa-head">
+          <h2 id="qaTitle">问答框</h2>
+          <p class="qa-copy">不确定从哪里开始，就先问一句。它只帮你找入口，不改核心知识。</p>
+        </div>
+
+        <div class="qa-form">
+          <label for="homeQuestionInput">先问一句</label>
+          <div class="input-row">
+            <input id="homeQuestionInput" type="text" autocomplete="off" placeholder="比如：顾客问贵怎么办">
+            <button id="homeAskButton" class="ask-button" type="button" onclick="askHomeQuestion()">问一下</button>
+          </div>
+        </div>
+
+        <div id="homeAnswer" class="home-answer" aria-live="polite">
+          你可以直接点左边的任务。也可以问一句，我会判断应该去哪个入口。
+        </div>
+
+        <div class="quiet-note">正式口径不会被聊天直接改掉。能说、能发、能沉淀，都要走对应任务。</div>
+      </aside>
+    </main>
+  </div>
+
+  <script>
+    const homeQuestionInput = document.getElementById("homeQuestionInput");
+    const homeAnswer = document.getElementById("homeAnswer");
+
+    const homeRoutes = [
+      {
+        match: ["顾客", "前台", "话术", "怎么说", "价格", "贵", "效果", "按摩", "泡脚"],
+        label: "前台怎么说",
+        href: "frontdesk.html",
+        answer: "这属于现场沟通。先去「前台怎么说」，拿一句能直接讲给顾客听的话。"
+      },
+      {
+        match: ["开业", "首店", "准备", "进度", "缺什么", "定位", "下一步"],
+        label: "开业还差什么",
+        href: "startup.html",
+        answer: "这属于首店推进。先去「开业还差什么」，看当前主线和下一步动作。"
+      },
+      {
+        match: ["文案", "朋友圈", "海报", "视频", "能不能发", "违规", "疗效", "承诺"],
+        label: "这句话能不能发",
+        href: "brand-check.html",
+        answer: "这属于对外表达。先去「这句话能不能发」，把原句放进去看是否容易说过头。"
+      },
+      {
+        match: ["资料", "文章", "PDF", "书", "会议", "知识", "上传", "总结"],
+        label: "资料变成知识",
+        href: "knowledge.html",
+        answer: "这属于资料处理。先去「资料变成知识」，把内容变成后续能复用的项目资料。"
+      }
+    ];
+
+    function renderHomeAnswer(route) {
+      homeAnswer.innerHTML = `${route.answer}<br><a href="${route.href}">进入：${route.label}</a>`;
+    }
+
+    function askHomeQuestion() {
+      const question = homeQuestionInput.value.trim();
+
+      if (!question) {
+        homeAnswer.textContent = "先写一句你现在卡住的问题，比如：顾客问贵怎么办。";
+        homeQuestionInput.focus();
+        return;
+      }
+
+      const route = homeRoutes.find((item) => item.match.some((word) => question.includes(word)));
+
+      if (route) {
+        renderHomeAnswer(route);
+        return;
+      }
+
+      homeAnswer.innerHTML = "这个问题还不够明确。先判断它更像现场话术、开业推进、对外表达，还是资料处理。<br><a href=\"startup.html\">不确定就先进入：开业还差什么</a>";
+    }
+
+    homeQuestionInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        askHomeQuestion();
+      }
+    });
+  </script>
 </body>
 </html>

@@ -3,23 +3,23 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>荷小悦 0-1 验证台</title>
+  <title>HXYOS 首店</title>
   <style>
     :root {
-      --bg: #f4f5f1;
-      --surface: rgba(255, 255, 255, 0.88);
-      --surface-strong: #fffefb;
-      --ink: #202720;
-      --muted: #626c61;
-      --soft: #7d877b;
-      --line: rgba(87, 103, 86, 0.18);
-      --line-strong: rgba(28, 93, 75, 0.28);
-      --accent: #116a58;
-      --accent-strong: #07463b;
-      --accent-soft: #e5f0ea;
-      --note: #f4ece2;
-      --shadow: 0 18px 50px rgba(53, 66, 50, 0.12);
-      --soft-shadow: 0 12px 30px rgba(53, 66, 50, 0.08);
+      --bg: #f5f6f2;
+      --paper: #ffffff;
+      --ink: #1f251f;
+      --muted: #667064;
+      --subtle: #8b9489;
+      --line: #dde3d8;
+      --line-strong: #bfcbc0;
+      --accent: #17634f;
+      --accent-ink: #0c3d30;
+      --accent-soft: #e7f1eb;
+      --warn: #8a6219;
+      --warn-soft: #f5efe3;
+      --radius: 8px;
+      --shadow: 0 18px 52px rgba(38, 48, 36, 0.08);
     }
 
     * {
@@ -28,46 +28,39 @@
 
     html,
     body {
-      height: 100%;
-      overflow: hidden;
+      min-height: 100%;
     }
 
     body {
       margin: 0;
-      background:
-        linear-gradient(145deg, rgba(236, 241, 234, 0.96), rgba(248, 244, 237, 0.95)),
-        var(--bg);
+      overflow-x: hidden;
+      background: var(--bg);
       color: var(--ink);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
       letter-spacing: 0;
     }
 
-    button {
-      min-height: 40px;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.78);
-      color: var(--ink);
+    button,
+    textarea {
       font: inherit;
-      padding: 0 14px;
+      letter-spacing: 0;
+    }
+
+    button,
+    a {
       cursor: pointer;
-      white-space: nowrap;
-      transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 110ms ease, box-shadow 160ms ease;
     }
 
-    button:hover {
-      border-color: var(--line-strong);
-      background: var(--accent-soft);
-      color: var(--accent-strong);
+    a {
+      color: inherit;
+      text-decoration: none;
     }
 
-    button:active {
-      transform: translateY(1px);
-    }
-
-    button:focus-visible {
-      outline: 3px solid rgba(17, 106, 88, 0.18);
-      outline-offset: 2px;
+    button:focus-visible,
+    a:focus-visible,
+    textarea:focus-visible {
+      outline: 3px solid rgba(23, 99, 79, 0.28);
+      outline-offset: 3px;
     }
 
     h1,
@@ -83,865 +76,625 @@
       list-style: none;
     }
 
-    .app {
-      display: grid;
-      grid-template-rows: auto minmax(0, 1fr);
-      width: min(1120px, calc(100vw - 28px));
-      height: 100dvh;
-      margin: 0 auto;
-      padding: 14px 0;
-      gap: 12px;
-      overflow: hidden;
-    }
-
-    .topbar,
-    .project-shell {
-      border: 1px solid var(--line);
-      border-radius: 22px;
-      background: var(--surface);
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(18px);
-    }
-
     .topbar {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
+      display: flex;
       align-items: center;
+      justify-content: space-between;
       gap: 16px;
-      padding: 14px 16px;
+      min-height: 62px;
+      border-bottom: 1px solid var(--line);
+      padding: 0 28px;
+      background: rgba(245, 246, 242, 0.94);
+      backdrop-filter: blur(14px);
     }
 
-    .brand-line {
-      color: var(--accent-strong);
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      font-size: 15px;
+      font-weight: 780;
+      white-space: nowrap;
+    }
+
+    .brand-mark {
+      display: inline-grid;
+      place-items: center;
+      width: 24px;
+      height: 24px;
+      border: 1px solid var(--ink);
+      border-radius: 6px;
       font-size: 12px;
-      font-weight: 700;
-      line-height: 1.2;
+      line-height: 1;
+    }
+
+    .top-meta {
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .startup-shell {
+      display: grid;
+      grid-template-columns: minmax(0, 0.95fr) minmax(340px, 0.65fr);
+      gap: 18px;
+      width: min(1080px, calc(100vw - 48px));
+      margin: 0 auto;
+      padding: 30px 0;
+    }
+
+    .today-action-board,
+    .evidence-panel,
+    .support-panel {
+      min-width: 0;
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+
+    .today-action-board {
+      display: grid;
+      gap: 18px;
+      padding: 24px;
+    }
+
+    .page-head {
+      display: grid;
+      gap: 10px;
+      max-width: 600px;
+    }
+
+    .page-kicker {
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 780;
     }
 
     h1 {
-      margin-top: 3px;
-      font-size: 24px;
+      font-size: clamp(34px, 4.6vw, 58px);
+      line-height: 1.04;
+      font-weight: 820;
+    }
+
+    h1 span {
+      display: block;
+    }
+
+    .summary {
+      max-width: 600px;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.58;
+      overflow-wrap: anywhere;
+    }
+
+    .status-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: start;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fbfcf9;
+      padding: 16px;
+    }
+
+    .status-row h2 {
+      font-size: 21px;
       line-height: 1.18;
     }
 
-    .app-subtitle {
-      margin-top: 5px;
+    .status-row p {
+      margin-top: 8px;
       color: var(--muted);
-      font-size: 13px;
-      line-height: 1.45;
+      font-size: 14px;
+      line-height: 1.62;
+      overflow-wrap: anywhere;
     }
 
-    .boundary-link {
-      min-height: 34px;
-      border-color: transparent;
-      background: transparent;
-      color: var(--muted);
-      padding: 0;
-      text-decoration: underline;
-      text-underline-offset: 4px;
-      box-shadow: none;
-    }
-
-    .boundary-link:hover {
-      background: transparent;
-      color: var(--accent-strong);
-    }
-
-    .project-shell {
-      display: grid;
-      grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
-      grid-template-rows: minmax(0, 1fr);
-      min-height: 0;
-      overflow: hidden;
-      gap: 10px;
-      padding: 10px;
-    }
-
-    .main-thread,
-    .validation-board {
-      min-width: 0;
-      min-height: 0;
-      overflow: hidden;
-      border: 1px solid var(--line);
-      border-radius: 18px;
-      background: rgba(255, 254, 251, 0.76);
-    }
-
-    .main-thread {
-      display: grid;
-      grid-template-rows: auto minmax(0, 1fr) auto;
-    }
-
-    .thread-head {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      align-items: start;
-      gap: 12px;
-      border-bottom: 1px solid var(--line);
-      padding: 14px 16px 10px;
-    }
-
-    .thread-label {
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 700;
-      line-height: 1.2;
-    }
-
-    .thread-title {
-      margin-top: 6px;
-      font-size: clamp(28px, 3.6vw, 42px);
-      line-height: 1.06;
-      letter-spacing: 0;
-    }
-
-    .thread-state {
+    .status-pill {
       display: inline-flex;
+      min-height: 32px;
       align-items: center;
       justify-content: center;
-      min-height: 30px;
-      border: 1px solid rgba(17, 106, 88, 0.22);
+      border: 1px solid var(--accent);
       border-radius: 999px;
       background: var(--accent-soft);
-      color: var(--accent-strong);
+      color: var(--accent-ink);
       padding: 0 11px;
-      font-size: 12px;
-      font-weight: 700;
-    }
-
-    .thread-body {
-      display: grid;
-      grid-template-rows: auto minmax(0, 1fr);
-      min-height: 0;
-      overflow: hidden;
-      padding: 12px 16px 8px;
-      gap: 10px;
-    }
-
-    .conclusion-box {
-      display: grid;
-      gap: 6px;
-      border-left: 3px solid var(--accent);
-      padding-left: 12px;
-    }
-
-    .section-label {
-      color: var(--accent-strong);
       font-size: 13px;
-      font-weight: 800;
-      line-height: 1.25;
+      font-weight: 780;
+      white-space: nowrap;
     }
 
-    .conclusion-text {
-      max-width: 62ch;
-      color: #263027;
-      font-size: 15px;
-      line-height: 1.5;
-    }
-
-    .progress-grid {
+    .focus-grid {
       display: grid;
-      grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
-      min-height: 0;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
       gap: 10px;
-      overflow: hidden;
     }
 
-    .evidence-gap,
-    .version-timeline {
+    .focus-card {
       display: grid;
-      grid-template-rows: auto minmax(0, 1fr);
-      min-height: 0;
+      gap: 8px;
       border: 1px solid var(--line);
-      border-radius: 16px;
-      background: rgba(255, 255, 255, 0.64);
-      overflow: hidden;
+      border-radius: var(--radius);
+      background: #fbfcf9;
+      padding: 13px;
     }
 
-    .panel-title {
-      border-bottom: 1px solid var(--line);
-      padding: 9px 11px 7px;
+    .focus-card h3 {
+      color: var(--ink);
+      font-size: 17px;
+      line-height: 1.28;
     }
 
-    .panel-title h2 {
-      font-size: 15px;
+    .focus-card p {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.58;
+      overflow-wrap: anywhere;
+    }
+
+    .action-strip {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 14px;
+      align-items: center;
+      border: 1px solid var(--accent);
+      border-radius: var(--radius);
+      background: var(--accent-soft);
+      padding: 16px;
+    }
+
+    .action-strip strong {
+      display: block;
+      color: var(--accent-ink);
+      font-size: 18px;
       line-height: 1.3;
     }
 
-    .panel-title p {
-      margin-top: 2px;
+    .action-strip span {
+      display: block;
+      margin-top: 5px;
+      color: var(--accent-ink);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    .primary-button,
+    .secondary-button {
+      min-height: 44px;
+      border-radius: var(--radius);
+      padding: 0 16px;
+      font-size: 14px;
+      font-weight: 760;
+      transition: background 140ms ease, border-color 140ms ease, color 140ms ease, transform 120ms ease;
+    }
+
+    .primary-button {
+      border: 1px solid var(--accent);
+      background: var(--accent);
+      color: #ffffff;
+    }
+
+    .primary-button:hover {
+      background: var(--accent-ink);
+    }
+
+    .secondary-button {
+      border: 1px solid var(--line-strong);
+      background: #fbfcf9;
+      color: var(--ink);
+    }
+
+    .secondary-button:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .primary-button:active,
+    .secondary-button:active {
+      transform: translateY(1px);
+    }
+
+    .side-column {
+      display: grid;
+      align-content: start;
+      gap: 18px;
+    }
+
+    .evidence-panel {
+      display: grid;
+      gap: 16px;
+      padding: 22px;
+    }
+
+    .panel-head {
+      display: grid;
+      gap: 8px;
+    }
+
+    .panel-head h2 {
+      font-size: 22px;
+      line-height: 1.25;
+    }
+
+    .panel-head p {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.65;
+      overflow-wrap: anywhere;
+    }
+
+    .evidence-status {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .evidence-metric {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fbfcf9;
+      padding: 11px;
+    }
+
+    .evidence-metric span {
+      display: block;
       color: var(--muted);
       font-size: 12px;
       line-height: 1.35;
     }
 
-    .gap-list,
-    .timeline-list {
-      display: grid;
-      align-content: start;
-      gap: 6px;
-      min-height: 0;
-      overflow-y: auto;
-      padding: 9px;
-    }
-
-    .gap-item,
-    .timeline-item {
-      display: grid;
-      gap: 3px;
-      border: 1px solid rgba(87, 103, 86, 0.14);
-      border-radius: 13px;
-      background: rgba(255, 255, 255, 0.74);
-      padding: 8px 10px;
-      box-shadow: 0 8px 18px rgba(53, 66, 50, 0.04);
-    }
-
-    .gap-item strong,
-    .timeline-item strong {
-      font-size: 13px;
-      line-height: 1.3;
-    }
-
-    .gap-item span,
-    .timeline-item span {
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.45;
-    }
-
-    .thread-footer {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      align-items: center;
-      min-width: 0;
-      gap: 12px;
-      border-top: 1px solid var(--line);
-      padding: 9px 12px;
-    }
-
-    .progress-actions {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, auto));
-      min-width: 0;
-      gap: 8px;
-      justify-content: end;
-    }
-
-    .progress-actions button {
-      min-height: 36px;
-    }
-
-    .progress-actions button[data-progress-action="record"] {
-      border-color: var(--accent);
-      background: var(--accent);
-      color: #ffffff;
-      box-shadow: 0 12px 22px rgba(17, 106, 88, 0.18);
-    }
-
-    .action-note {
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.45;
-    }
-
-    .validation-board {
-      display: grid;
-      grid-template-rows: auto minmax(0, 1fr);
-    }
-
-    .board-head {
-      display: grid;
-      gap: 7px;
-      border-bottom: 1px solid var(--line);
-      padding: 13px 14px 10px;
-    }
-
-    .board-head h2 {
-      font-size: 18px;
-      line-height: 1.3;
-    }
-
-    .board-head p {
-      color: var(--muted);
-      font-size: 13px;
-      line-height: 1.45;
-    }
-
-    .task-list {
-      display: grid;
-      align-content: start;
-      gap: 8px;
-      min-height: 0;
-      overflow-y: auto;
-      padding: 10px;
-    }
-
-    .task-item {
-      display: grid;
-      grid-template-columns: 34px minmax(0, 1fr);
-      min-width: 0;
-      gap: 10px;
-      border: 1px solid var(--line);
-      border-radius: 15px;
-      background: rgba(255, 255, 255, 0.66);
-      padding: 10px;
-      box-shadow: var(--soft-shadow);
-    }
-
-    .task-index {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 30px;
-      height: 30px;
-      border-radius: 50%;
-      background: var(--note);
-      color: var(--accent-strong);
-      font-size: 12px;
-      font-weight: 800;
-    }
-
-    .task-copy {
-      display: grid;
-      min-width: 0;
-      gap: 5px;
-    }
-
-    .task-copy strong {
-      font-size: 14px;
-      line-height: 1.3;
-    }
-
-    .task-copy span {
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.45;
-    }
-
-    .evidence-drawer {
-      position: fixed;
-      inset: auto 50% 18px auto;
-      z-index: 20;
-      display: grid;
-      grid-template-rows: auto minmax(0, 1fr);
-      width: min(560px, calc(100vw - 28px));
-      max-height: min(72dvh, 640px);
-      border: 1px solid var(--line);
-      border-radius: 22px;
-      background: rgba(255, 254, 251, 0.97);
-      box-shadow: 0 28px 72px rgba(37, 48, 35, 0.22);
-      transform: translate(50%, calc(100% + 34px));
-      opacity: 0;
-      pointer-events: none;
-      overflow: hidden;
-      transition: transform 220ms ease, opacity 220ms ease;
-    }
-
-    .evidence-drawer.open {
-      transform: translate(50%, 0);
-      opacity: 1;
-      pointer-events: auto;
-    }
-
-    .drawer-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      border-bottom: 1px solid var(--line);
-      padding: 14px 16px;
-    }
-
-    .drawer-head h2 {
-      font-size: 17px;
-      line-height: 1.25;
-    }
-
-    .drawer-body {
-      display: grid;
-      align-content: start;
-      gap: 10px;
-      min-height: 0;
-      overflow-y: auto;
-      padding: 14px 16px 16px;
-    }
-
-    .evidence-item {
-      display: grid;
-      gap: 5px;
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      background: rgba(255, 255, 255, 0.74);
-      padding: 11px;
-    }
-
-    .evidence-item strong {
-      font-size: 13px;
-      line-height: 1.3;
-    }
-
-    .evidence-item span {
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.45;
-    }
-
-    .startup-loop {
-      display: grid;
-      gap: 9px;
-      border: 1px solid var(--line);
-      border-radius: 15px;
-      background: rgba(255, 255, 255, 0.74);
-      padding: 11px;
-    }
-
-    .startup-loop label {
-      display: grid;
-      gap: 6px;
-      color: var(--accent-strong);
-      font-size: 13px;
-      font-weight: 800;
-      line-height: 1.25;
-    }
-
-    .startup-loop textarea {
-      width: 100%;
-      min-height: 76px;
-      max-height: 140px;
-      border: 1px solid var(--line);
-      border-radius: 13px;
-      background: rgba(255, 254, 251, 0.9);
+    .evidence-metric strong {
+      display: block;
+      margin-top: 7px;
       color: var(--ink);
-      padding: 10px 11px;
+      font-size: 18px;
+      line-height: 1.15;
+    }
+
+    label {
+      display: grid;
+      gap: 8px;
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 760;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 132px;
       resize: vertical;
-      font: inherit;
-      font-size: 13px;
-      line-height: 1.5;
-      outline: none;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      background: #fbfcf9;
+      color: var(--ink);
+      padding: 13px;
+      font-size: 14px;
+      line-height: 1.68;
     }
 
-    .startup-loop textarea:focus-visible {
-      outline: 3px solid rgba(17, 106, 88, 0.18);
-      outline-offset: 2px;
-    }
-
-    .startup-loop-hint,
-    .startup-advance-status {
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.45;
-    }
-
-    .startup-advance-status.ok {
-      color: var(--accent-strong);
-    }
-
-    .startup-advance-status.error {
-      color: #9d382e;
+    textarea::placeholder {
+      color: var(--subtle);
     }
 
     .startup-loop-actions {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 7px;
-    }
-
-    .startup-loop-actions button {
-      min-width: 0;
-      min-height: 36px;
-      overflow: hidden;
-      padding: 0 9px;
-      text-overflow: ellipsis;
+      gap: 8px;
     }
 
     .startup-loop-actions button[data-progress-action="record"] {
       border-color: var(--accent);
       background: var(--accent);
       color: #ffffff;
-      box-shadow: 0 10px 18px rgba(17, 106, 88, 0.16);
+    }
+
+    .startup-advance-status {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .startup-advance-status.ok {
+      color: var(--accent);
+    }
+
+    .startup-advance-status.error {
+      color: #9d382e;
     }
 
     .startup-advance-result {
       display: grid;
-      gap: 10px;
+      gap: 8px;
     }
 
     .advance-block {
       display: grid;
       gap: 6px;
       border: 1px solid var(--line);
-      border-radius: 14px;
-      background: rgba(255, 255, 255, 0.72);
-      padding: 10px;
+      border-radius: var(--radius);
+      background: #fbfcf9;
+      padding: 12px;
     }
 
     .advance-block strong {
-      color: var(--accent-strong);
-      font-size: 13px;
+      color: var(--accent-ink);
+      font-size: 14px;
       line-height: 1.3;
     }
 
     .advance-block ul {
       display: grid;
       gap: 4px;
-      padding-left: 17px;
+      padding-left: 18px;
       list-style: disc;
     }
 
     .advance-block li {
       color: var(--muted);
-      font-size: 12px;
-      line-height: 1.45;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .support-panel {
+      display: block;
+      padding: 0;
+      overflow: hidden;
+    }
+
+    .support-panel summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 52px;
+      padding: 0 16px;
+      color: var(--ink);
+      font-size: 16px;
+      font-weight: 780;
+      list-style: none;
+      cursor: pointer;
+    }
+
+    .support-panel summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .support-panel summary::after {
+      content: "展开";
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 680;
+    }
+
+    .support-panel[open] summary {
+      border-bottom: 1px solid var(--line);
+    }
+
+    .support-panel[open] summary::after {
+      content: "收起";
+    }
+
+    .support-body {
+      display: grid;
+      gap: 12px;
+      padding: 14px;
+    }
+
+    .support-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .support-item {
+      display: grid;
+      gap: 4px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fbfcf9;
+      padding: 11px;
+    }
+
+    .support-item strong {
+      font-size: 14px;
+      line-height: 1.3;
+    }
+
+    .support-item span {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
     }
 
     @media (max-width: 900px) {
-      .app {
-        width: min(580px, calc(100vw - 16px));
-        padding: 8px 0;
-        gap: 8px;
-        grid-template-rows: auto minmax(0, 1fr);
+      .topbar {
+        padding: 0 18px;
       }
 
-      .topbar {
-        grid-template-columns: 1fr auto;
-        gap: 8px;
-        padding: 10px 12px;
-        border-radius: 18px;
+      .top-meta {
+        display: none;
       }
 
       h1 {
-        font-size: 21px;
+        font-size: clamp(30px, 9vw, 44px);
       }
 
-      .app-subtitle {
+      .summary {
         display: none;
       }
 
-      .project-shell {
+      .startup-shell {
         grid-template-columns: 1fr;
-        grid-template-rows: minmax(0, 1fr) minmax(150px, auto);
-        border-radius: 18px;
-        padding: 8px;
-        gap: 8px;
+        width: min(calc(100vw - 28px), 620px);
+        gap: 14px;
+        padding: 14px 0;
       }
 
-      .main-thread {
-        border-radius: 16px;
+      .today-action-board,
+      .evidence-panel,
+      .support-panel {
+        padding: 16px;
       }
 
-      .thread-head {
-        padding: 11px 12px 9px;
+      .support-panel {
+        padding: 0;
       }
 
-      .thread-title {
-        font-size: 24px;
+      .today-action-board,
+      .evidence-panel {
+        gap: 14px;
       }
 
-      .thread-body {
-        padding: 10px 10px 7px;
-        gap: 8px;
-      }
-
-      .conclusion-text {
-        display: -webkit-box;
-        overflow: hidden;
-        -webkit-box-orient: vertical;
-        -webkit-line-clamp: 3;
-        font-size: 13px;
-        line-height: 1.45;
-      }
-
-      .progress-grid {
+      .status-row,
+      .focus-grid,
+      .action-strip,
+      .evidence-status,
+      .startup-loop-actions {
         grid-template-columns: 1fr;
       }
 
-      .version-timeline {
-        display: none;
-      }
-
-      .gap-list {
-        gap: 6px;
-        padding: 8px;
-      }
-
-      .gap-item {
-        padding: 8px 9px;
-      }
-
-      .gap-item span {
-        display: -webkit-box;
-        overflow: hidden;
-        -webkit-box-orient: vertical;
-        -webkit-line-clamp: 2;
-      }
-
-      .thread-footer {
-        grid-template-columns: 1fr;
-        gap: 8px;
-        padding: 8px 9px;
-      }
-
-      .action-note {
-        display: none;
-      }
-
-      .progress-actions {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        justify-content: stretch;
-      }
-
-      .progress-actions button {
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        min-height: 38px;
-        padding: 0 8px;
-      }
-
-      .validation-board {
-        max-height: 184px;
-        border-radius: 16px;
-      }
-
-      .board-head {
-        padding: 9px 10px 7px;
-      }
-
-      .board-head p {
-        display: none;
-      }
-
-      .task-list {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        overflow-x: hidden;
-        overflow-y: auto;
-        padding: 7px;
-        gap: 6px;
-      }
-
-      .task-item {
-        grid-template-columns: 1fr;
-        min-height: 68px;
-        padding: 8px;
-        gap: 4px;
-        overflow: hidden;
-      }
-
-      .task-index {
-        width: 24px;
-        height: 24px;
-      }
-
-      .task-copy strong {
-        font-size: 12px;
-      }
-
-      .task-copy span {
-        display: -webkit-box;
-        overflow: hidden;
-        overflow-wrap: anywhere;
-        -webkit-box-orient: vertical;
-        -webkit-line-clamp: 1;
-        font-size: 11px;
-      }
-
-      .evidence-drawer {
-        inset: auto 8px 8px 8px;
-        width: auto;
-        max-height: 72dvh;
-        transform: translateY(calc(100% + 24px));
-      }
-
-      .evidence-drawer.open {
-        transform: translateY(0);
-      }
-
-      .startup-loop textarea {
-        min-height: 64px;
-      }
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      *,
-      *::before,
-      *::after {
-        scroll-behavior: auto !important;
-        transition-duration: 1ms !important;
+      .status-pill,
+      .action-strip button,
+      .startup-loop-actions button {
+        width: 100%;
       }
     }
   </style>
 </head>
 <body>
-  <main class="app">
-    <header class="topbar">
-      <div>
-        <div class="brand-line">荷小悦 0-1 验证台</div>
-        <h1>0-1 项目推进器</h1>
-        <p class="app-subtitle">不问“AI 能答什么”，只推进当下唯一主线：结论、证据、任务、版本。</p>
-      </div>
-      <button class="boundary-link" type="button" data-toggle-evidence>阶段边界</button>
-    </header>
-
-    <section class="project-shell" aria-label="0-1 项目推进器">
-      <section class="main-thread" aria-label="当前唯一主线">
-        <div class="thread-head">
-          <div>
-            <div class="thread-label">当前唯一主线</div>
-            <h2 class="thread-title">核爆点定位是否成立？</h2>
-          </div>
-          <span class="thread-state">待验证</span>
-        </div>
-
-        <div class="thread-body">
-          <section class="conclusion-box" aria-label="当前结论">
-            <div class="section-label">当前结论</div>
-            <p class="conclusion-text">
-              荷小悦暂定不是“泛养生空间”，而是面向社区高疲劳人群的轻恢复项目。下一步不是扩功能，而是验证用户是否能听懂、愿意来、并能复述清泡调补养的差异。
-            </p>
-          </section>
-
-          <div class="progress-grid">
-            <section class="evidence-gap" aria-label="证据缺口">
-              <div class="panel-title">
-                <h2>证据缺口</h2>
-                <p>没有证据的结论，只能算假设。</p>
-              </div>
-              <ul class="gap-list">
-                <li class="gap-item">
-                  <strong>真实痛点</strong>
-                  <span>目标用户最近一次想恢复状态时，实际选择了什么替代方案。</span>
-                </li>
-                <li class="gap-item">
-                  <strong>付费理由</strong>
-                  <span>用户第一次愿意付费，是为了放松、恢复、陪伴，还是更具体的身体感受。</span>
-                </li>
-                <li class="gap-item">
-                  <strong>表达清晰度</strong>
-                  <span>非内部人员能否在 30 秒内说清“清泡调补养”的区别。</span>
-                </li>
-              </ul>
-            </section>
-
-            <section class="version-timeline" aria-label="结论版本">
-              <div class="panel-title">
-                <h2>结论版本</h2>
-                <p>每次更新都必须来自新证据。</p>
-              </div>
-              <ul class="timeline-list">
-                <li class="timeline-item">
-                  <strong>v0.1 当前假设</strong>
-                  <span>社区轻恢复项目，核心验证用户任务和产品表达。</span>
-                </li>
-                <li class="timeline-item">
-                  <strong>v0.2 等待访谈</strong>
-                  <span>完成 8-12 个用户访谈后，更新核心人群和一句话定位。</span>
-                </li>
-                <li class="timeline-item">
-                  <strong>v0.3 等待复述</strong>
-                  <span>员工和外部用户都能复述后，再沉淀为定位卡和话术卡。</span>
-                </li>
-              </ul>
-            </section>
-          </div>
-        </div>
-
-        <div class="thread-footer">
-          <p class="action-note">动作只服务当前主线；AI 在后台整理证据、识别冲突、生成下一步。</p>
-          <div class="progress-actions" aria-label="推进动作">
-            <button type="button" data-progress-action="record">记录证据</button>
-            <button type="button" data-progress-action="revise">更新结论</button>
-            <button type="button" data-progress-action="next">生成下一步</button>
-            <button type="button" data-progress-action="card">沉淀为定位卡</button>
-          </div>
-        </div>
-      </section>
-
-      <section class="validation-board" aria-label="本周验证任务">
-        <div class="board-head">
-          <h2>本周验证任务</h2>
-          <p>任务不是待办清单，而是把一个关键判断变成可证伪证据。</p>
-        </div>
-        <ul class="task-list">
-          <li class="task-item">
-            <span class="task-index">01</span>
-            <div class="task-copy">
-              <strong>用户访谈</strong>
-              <span>访谈 8-12 个目标用户，记录他们真实的恢复需求和替代选择。</span>
-            </div>
-          </li>
-          <li class="task-item">
-            <span class="task-index">02</span>
-            <div class="task-copy">
-              <strong>定位表达测试</strong>
-              <span>拿 3 版一句话定位给外部用户听，记录哪版最容易被复述。</span>
-            </div>
-          </li>
-          <li class="task-item">
-            <span class="task-index">03</span>
-            <div class="task-copy">
-              <strong>清泡调补养复述测试</strong>
-              <span>让非内部人员听完后复述区别，低于 70% 复述率就重写。</span>
-            </div>
-          </li>
-          <li class="task-item">
-            <span class="task-index">04</span>
-            <div class="task-copy">
-              <strong>查看依据</strong>
-              <span>只在需要时打开依据与质检，避免证据、来源、技术细节干扰主线。</span>
-            </div>
-          </li>
-        </ul>
-      </section>
-    </section>
-  </main>
-
-  <aside class="evidence-drawer" id="evidenceDrawer" aria-label="依据与质检" aria-hidden="true">
-    <div class="drawer-head">
-      <h2>依据与质检</h2>
-      <button type="button" data-toggle-evidence>关闭</button>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">H</span>
+      <span>HXYOS 首店</span>
     </div>
-    <div class="drawer-body">
-      <div class="startup-loop">
+    <div class="top-meta">今天只推进一件事</div>
+  </header>
+
+  <main class="startup-shell">
+    <section class="today-action-board" aria-labelledby="startupTitle">
+      <div class="page-head">
+        <div class="page-kicker">首店今日动作台</div>
+        <h1 id="startupTitle" aria-label="验证核爆点定位是否成立"><span>验证核爆点</span><span>定位是否成立</span></h1>
+        <p class="summary">当前不要扩功能、写大叙事或讨论远期复制。先拿真实用户原话，判断社区高疲劳人群是否听得懂、愿意来、说得出理由。</p>
+      </div>
+
+      <div class="status-row">
+        <div>
+          <h2>当前结论</h2>
+          <p>荷小悦暂定是社区轻恢复项目，主打草本泡脚加轻放松服务。这个结论仍是待验证假设，不能当成定稿。</p>
+        </div>
+        <span class="status-pill">待验证</span>
+      </div>
+
+      <div class="action-strip">
+        <div>
+          <strong>今日唯一动作</strong>
+          <span>完成 5 个用户访谈，并录入原话。</span>
+        </div>
+        <button class="primary-button" type="button" data-focus-evidence>开始录入</button>
+      </div>
+
+      <div class="focus-grid">
+        <article class="focus-card">
+          <h3>为什么先做这个</h3>
+          <p>首店开业前最怕自我感觉正确。用户原话能最快暴露定位、价格和项目表达是否站得住。</p>
+        </article>
+        <article class="focus-card">
+          <h3>证据缺口</h3>
+          <p>还缺用户原话、复述测试、付费理由和替代方案。缺哪一项，都不能把定位写成定稿。</p>
+        </article>
+      </div>
+    </section>
+
+    <div class="side-column">
+      <section class="evidence-panel" aria-labelledby="evidenceTitle">
+        <div class="panel-head">
+          <h2 id="evidenceTitle">今日拿到什么证据？</h2>
+          <p>把访谈原话、新判断或反例写进来。AI 只生成推进草稿，不直接改变正式结论。</p>
+        </div>
+
+        <div class="evidence-status" aria-label="证据状态">
+          <div class="evidence-metric">
+            <span>用户原话</span>
+            <strong>3/12</strong>
+          </div>
+          <div class="evidence-metric">
+            <span>复述测试</span>
+            <strong>未完成</strong>
+          </div>
+          <div class="evidence-metric">
+            <span>付费理由</span>
+            <strong>不清晰</strong>
+          </div>
+          <div class="evidence-metric">
+            <span>替代方案</span>
+            <strong>待补充</strong>
+          </div>
+        </div>
+
         <label for="startupEvidenceInput">
           AI 推进草稿
           <textarea id="startupEvidenceInput" placeholder="把今天拿到的证据、访谈原话或新判断写在这里。"></textarea>
         </label>
+
         <div class="startup-loop-actions" aria-label="证据推进动作">
-          <button type="button" data-progress-action="record">记录证据</button>
-          <button type="button" data-progress-action="revise">更新结论</button>
-          <button type="button" data-progress-action="next">生成下一步</button>
-          <button type="button" data-progress-action="card">沉淀为定位卡</button>
+          <button class="secondary-button" type="button" data-progress-action="record">记录证据</button>
+          <button class="secondary-button" type="button" data-progress-action="revise">更新结论</button>
+          <button class="secondary-button" type="button" data-progress-action="next">生成下一步</button>
+          <button class="secondary-button" type="button" data-progress-action="card">沉淀为定位卡</button>
         </div>
-        <div id="startupAdvanceStatus" class="startup-advance-status">点击“记录证据 / 更新结论 / 生成下一步 / 沉淀为定位卡”，系统会按当前阶段生成推进草稿。</div>
+
+        <div id="startupAdvanceStatus" class="startup-advance-status">点击任一动作，系统会按当前阶段生成推进草稿。</div>
         <div id="startupAdvanceResult" class="startup-advance-result" data-current-action="idle">
           <div class="advance-block">
             <strong>证据门槛</strong>
             <ul>
-              <li>访谈、复述、付费理由和替代选择必须分开记录。</li>
+              <li>访谈原话、复述结果、付费理由和替代选择必须分开记录。</li>
               <li>没有证据的内容只能保留为假设，不能进入定位卡定稿。</li>
             </ul>
           </div>
+          <div class="advance-block">
+            <strong>下一步动作</strong>
+            <ul>
+              <li>今天先补 5 条用户访谈原话，不继续写宏大品牌叙事。</li>
+            </ul>
+          </div>
+          <div class="advance-block">
+            <strong>记忆动作</strong>
+            <ul>
+              <li>保留为过程记忆，暂不进入正式定位卡。</li>
+            </ul>
+          </div>
         </div>
-      </div>
-      <div class="evidence-item">
-        <strong>阶段边界</strong>
-        <span>当前只验证品牌定位、产品表达、首个服务假设和团队复述能力。</span>
-      </div>
-      <div class="evidence-item">
-        <strong>定位卡</strong>
-        <span id="brandAssetStatus">品牌资产读取中</span>
-      </div>
-      <div class="evidence-item">
-        <strong>话术卡</strong>
-        <span id="brandCardStatus">品牌答案卡读取中</span>
-      </div>
-      <div class="evidence-item">
-        <strong>验证任务</strong>
-        <span id="goldenStatus">黄金问题评测读取中</span>
-      </div>
-      <div id="brandCards"></div>
+      </section>
+
+      <details class="support-panel" aria-label="首店支撑资料">
+        <summary>支撑资料</summary>
+        <div class="support-body">
+          <div class="support-list">
+            <div class="support-item">
+              <strong>品牌资产</strong>
+              <span id="brandAssetStatus">品牌资产读取中</span>
+            </div>
+            <div class="support-item">
+              <strong>品牌答案卡</strong>
+              <span id="brandCardStatus">品牌答案卡读取中</span>
+            </div>
+            <div class="support-item">
+              <strong>黄金问题</strong>
+              <span id="goldenStatus">黄金问题评测读取中</span>
+            </div>
+          </div>
+          <div id="brandCards" class="support-list"></div>
+        </div>
+      </details>
     </div>
-  </aside>
+  </main>
 
   <script>
     const defaultApiBase = window.location.origin && window.location.origin !== "null"
@@ -951,12 +704,11 @@
     const brandCardStatus = document.querySelector("#brandCardStatus");
     const goldenStatus = document.querySelector("#goldenStatus");
     const brandCards = document.querySelector("#brandCards");
-    const evidenceDrawer = document.querySelector("#evidenceDrawer");
     const startupEvidenceInput = document.querySelector("#startupEvidenceInput");
     const startupAdvanceStatus = document.querySelector("#startupAdvanceStatus");
     const startupAdvanceResult = document.querySelector("#startupAdvanceResult");
-    const conclusionText = document.querySelector(".conclusion-text");
-    const mainQuestionTitle = document.querySelector(".thread-title");
+    const conclusionText = document.querySelector(".status-row p");
+    const mainQuestionTitle = document.querySelector("#startupTitle");
 
     function escapeHtml(value) {
       return String(value || "")
@@ -975,17 +727,11 @@
       return response.json();
     }
 
-    function toggleEvidenceDrawer(forceOpen) {
-      const shouldOpen = typeof forceOpen === "boolean" ? forceOpen : !evidenceDrawer.classList.contains("open");
-      evidenceDrawer.classList.toggle("open", shouldOpen);
-      evidenceDrawer.setAttribute("aria-hidden", shouldOpen ? "false" : "true");
-    }
-
     function renderBrandAnswerCards(result) {
       const items = result.items || [];
       brandCardStatus.textContent = `${result.count || items.length || 0} 张可用品牌答案卡`;
-      brandCards.innerHTML = items.slice(0, 5).map((card) => `
-        <div class="evidence-item">
+      brandCards.innerHTML = items.slice(0, 3).map((card) => `
+        <div class="support-item">
           <strong>${escapeHtml(card.question_pattern || "未命名答案卡")}</strong>
           <span>${escapeHtml(card.module || card.intent || "品牌口径")} · ${escapeHtml(card.version || "v1")}</span>
         </div>
@@ -999,6 +745,11 @@
     function setStartupAdvanceStatus(message, type = "") {
       startupAdvanceStatus.textContent = message;
       startupAdvanceStatus.className = `startup-advance-status ${type}`.trim();
+    }
+
+    function focusEvidenceInput() {
+      startupEvidenceInput.scrollIntoView({ behavior: "smooth", block: "center" });
+      startupEvidenceInput.focus({ preventScroll: true });
     }
 
     function currentStartupContext(action) {
@@ -1035,13 +786,49 @@
       `;
     }
 
+    function localStartupAdvance(action, error) {
+      const evidence = startupEvidenceInput.value.trim();
+      const actionTitles = {
+        record: "记录证据草稿",
+        revise: "更新结论草稿",
+        next: "下一步动作草稿",
+        card: "定位卡草稿"
+      };
+      return {
+        action,
+        focus: "本地首店推进草稿",
+        draft: {
+          title: actionTitles[action] || "推进草稿",
+          bullets: [
+            evidence ? `已接收新证据：${evidence}` : "还没有录入新证据，先补用户原话。",
+            "当前只围绕核爆点定位验证，不扩展到其他经营主题。",
+            "该草稿只用于预览和整理，不改变正式结论。"
+          ]
+        },
+        evidence_requirements: [
+          "补齐用户原话、复述结果、付费理由和替代方案。",
+          "每条判断都要能追溯到访谈、测试或现场反馈。",
+        ],
+        next_actions: [
+          "今天继续完成 5 个用户访谈。",
+          "把顾客原话按痛点、替代方案、愿付理由分开记录。",
+        ],
+        memory_action: {
+          artifact: "过程记忆",
+          status: "local_draft"
+        },
+        boundary: error ? `API 未连接，本地草稿已生成：${error.message}` : "本地草稿已生成。"
+      };
+    }
+
     async function startupAdvance(action) {
       const buttons = Array.from(document.querySelectorAll("[data-progress-action]"));
-      const button = buttons.find((item) => item.dataset.progressAction === action);
+      const activeButtons = buttons.filter((item) => item.dataset.progressAction === action);
       try {
-        if (button) button.disabled = true;
+        activeButtons.forEach((button) => {
+          button.disabled = true;
+        });
         setStartupAdvanceStatus("正在生成推进草稿...");
-        toggleEvidenceDrawer(true);
         const result = await requestJson("/api/operating-brain/startup-advance", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1050,9 +837,12 @@
         renderStartupAdvance(result);
         setStartupAdvanceStatus(`已生成：${result.focus || "0-1 推进草稿"}`, "ok");
       } catch (error) {
-        setStartupAdvanceStatus(`生成失败：${error.message}`, "error");
+        renderStartupAdvance(localStartupAdvance(action, error));
+        setStartupAdvanceStatus("已生成本地推进草稿，API 未连接时可先预览。", "ok");
       } finally {
-        if (button) button.disabled = false;
+        activeButtons.forEach((button) => {
+          button.disabled = false;
+        });
       }
     }
 
@@ -1069,19 +859,17 @@
         const passed = evals.passed || 0;
         goldenStatus.textContent = `${passed}/${total} 个黄金问题通过`;
       } catch (error) {
-        brandAssetStatus.textContent = `读取失败：${error.message}`;
-        brandCardStatus.textContent = "品牌答案卡读取失败";
-        goldenStatus.textContent = "黄金问题评测读取失败";
+        brandAssetStatus.textContent = "API 未连接，先按首店今日动作台预览。";
+        brandCardStatus.textContent = "品牌答案卡待连接后读取。";
+        goldenStatus.textContent = "黄金问题待连接后读取。";
       }
     }
-
-    document.querySelectorAll("[data-toggle-evidence]").forEach((button) => {
-      button.addEventListener("click", () => toggleEvidenceDrawer());
-    });
 
     document.querySelectorAll("[data-progress-action]").forEach((button) => {
       button.addEventListener("click", () => startupAdvance(button.dataset.progressAction));
     });
+
+    document.querySelector("[data-focus-evidence]").addEventListener("click", focusEvidenceInput);
 
     loadStartupAssets();
   </script>

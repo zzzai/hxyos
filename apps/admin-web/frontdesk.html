@@ -1,0 +1,748 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HXYOS 前台</title>
+  <style>
+    :root {
+      --bg: #f5f6f2;
+      --paper: #ffffff;
+      --ink: #1f251f;
+      --muted: #667064;
+      --subtle: #929a8f;
+      --line: #dde3d8;
+      --line-strong: #bfc9bb;
+      --accent: #17634f;
+      --accent-ink: #0c3d30;
+      --accent-soft: #e6f0eb;
+      --warn: #9b741f;
+      --warn-soft: #f4efe4;
+      --radius: 10px;
+      --shadow: 0 22px 70px rgba(38, 48, 36, 0.10);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      min-height: 100%;
+    }
+
+    body {
+      margin: 0;
+      overflow-x: hidden;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      letter-spacing: 0;
+    }
+
+    button,
+    textarea {
+      font: inherit;
+      letter-spacing: 0;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    button:focus-visible,
+    textarea:focus-visible {
+      outline: 3px solid rgba(23, 99, 79, 0.28);
+      outline-offset: 3px;
+    }
+
+    h1,
+    h2,
+    p {
+      margin: 0;
+    }
+
+    .shell {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      min-height: 100dvh;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      min-height: 62px;
+      border-bottom: 1px solid var(--line);
+      padding: 0 28px;
+      background: rgba(245, 246, 242, 0.94);
+      backdrop-filter: blur(14px);
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      font-size: 15px;
+      font-weight: 760;
+      white-space: nowrap;
+    }
+
+    .brand-mark {
+      display: inline-grid;
+      place-items: center;
+      width: 24px;
+      height: 24px;
+      border: 1px solid var(--ink);
+      border-radius: 6px;
+      font-size: 12px;
+      line-height: 1;
+    }
+
+    .top-meta {
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: minmax(280px, 390px) minmax(0, 1fr);
+      gap: 24px;
+      width: min(1120px, calc(100vw - 48px));
+      margin: 0 auto;
+      padding: 34px 0;
+    }
+
+    .question-panel,
+    .answer-panel {
+      min-width: 0;
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+
+    .question-panel {
+      display: grid;
+      align-content: start;
+      align-self: start;
+      gap: 16px;
+      padding: 20px;
+    }
+
+    .page-kicker {
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 780;
+    }
+
+    h1 {
+      font-size: clamp(38px, 4.6vw, 62px);
+      line-height: 1.03;
+      font-weight: 790;
+    }
+
+    .summary {
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.7;
+      overflow-wrap: anywhere;
+    }
+
+    .question-heading {
+      margin-top: 6px;
+      color: var(--ink);
+      font-size: 17px;
+      font-weight: 780;
+    }
+
+    .question-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .ask-panel {
+      display: grid;
+      gap: 10px;
+      border-top: 1px solid var(--line);
+      padding-top: 14px;
+    }
+
+    .ask-panel label {
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 780;
+    }
+
+    .frontdesk-input {
+      width: 100%;
+      min-height: 86px;
+      resize: vertical;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      background: #fbfcf9;
+      color: var(--ink);
+      padding: 11px 12px;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .frontdesk-input::placeholder {
+      color: var(--subtle);
+    }
+
+    .question-button {
+      display: grid;
+      gap: 4px;
+      min-height: 58px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      background: #fbfcf9;
+      color: var(--ink);
+      padding: 11px 12px;
+      text-align: left;
+      transition: border-color 140ms ease, background 140ms ease, color 140ms ease, transform 120ms ease;
+    }
+
+    .question-button:active,
+    .action-button:active {
+      transform: translateY(1px);
+    }
+
+    .question-button strong {
+      color: inherit;
+      font-size: 15px;
+      font-weight: 760;
+      line-height: 1.32;
+    }
+
+    .question-button span {
+      color: var(--subtle);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .question-button.active {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: var(--accent-ink);
+    }
+
+    .answer-panel {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      overflow: hidden;
+    }
+
+    .answer-head {
+      display: grid;
+      gap: 8px;
+      border-bottom: 1px solid var(--line);
+      padding: 20px 22px 16px;
+    }
+
+    .answer-label {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 760;
+    }
+
+    .current-question {
+      color: var(--ink);
+      font-size: clamp(23px, 3vw, 34px);
+      line-height: 1.2;
+      font-weight: 790;
+    }
+
+    .answer-body {
+      display: grid;
+      gap: 18px;
+      align-content: start;
+      min-width: 0;
+      padding: 22px;
+    }
+
+    .say-block {
+      display: grid;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .block-label {
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .direct-say {
+      display: block;
+      width: 100%;
+      min-width: 0;
+      max-width: 34ch;
+      color: var(--ink);
+      font-size: clamp(24px, 3vw, 38px);
+      line-height: 1.38;
+      font-weight: 760;
+      overflow-wrap: anywhere;
+      word-break: break-all;
+      line-break: anywhere;
+      white-space: pre-line;
+    }
+
+    .secondary-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 12px;
+    }
+
+    .small-block {
+      display: grid;
+      gap: 7px;
+      min-width: 0;
+      border-top: 1px solid var(--line);
+      padding-top: 12px;
+    }
+
+    .small-block.warning {
+      color: var(--warn);
+    }
+
+    .small-block p {
+      color: var(--ink);
+      font-size: 16px;
+      line-height: 1.65;
+      overflow-wrap: anywhere;
+      word-break: break-all;
+      line-break: anywhere;
+    }
+
+    .small-block.warning p {
+      color: #61460f;
+    }
+
+    .answer-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      border-top: 1px solid var(--line);
+      padding: 16px 22px 20px;
+    }
+
+    .action-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 42px;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      background: transparent;
+      color: var(--ink);
+      padding: 0 15px;
+      font-size: 14px;
+      font-weight: 760;
+      white-space: nowrap;
+      transition: border-color 140ms ease, background 140ms ease, color 140ms ease, transform 120ms ease;
+    }
+
+    .action-button.primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .action-button:hover {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: var(--accent-ink);
+    }
+
+    .action-button.primary:hover {
+      border-color: var(--accent-ink);
+      background: var(--accent-ink);
+      color: #fff;
+    }
+
+    .ask-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 40px;
+      border: 1px solid var(--accent);
+      border-radius: 999px;
+      background: var(--accent);
+      color: #fff;
+      padding: 0 15px;
+      font-size: 14px;
+      font-weight: 760;
+      white-space: nowrap;
+      transition: background 140ms ease, transform 120ms ease;
+    }
+
+    .ask-button:hover {
+      background: var(--accent-ink);
+    }
+
+    .ask-button:active {
+      transform: translateY(1px);
+    }
+
+    .toast {
+      flex: 1 1 220px;
+      align-self: center;
+      min-width: 0;
+      color: var(--accent-ink);
+      font-size: 13px;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
+
+    @media (max-width: 860px) {
+      .topbar {
+        padding: 0 18px;
+      }
+
+      .top-meta {
+        display: none;
+      }
+
+      main {
+        grid-template-columns: 1fr;
+        width: calc(100vw - 28px);
+        max-width: calc(100vw - 28px);
+        overflow: hidden;
+        margin: 0 auto;
+        gap: 12px;
+        padding: 14px 0 24px;
+      }
+
+      .question-panel,
+      .answer-panel {
+        justify-self: stretch;
+        min-width: 0;
+        width: 100%;
+        max-width: calc(100vw - 28px);
+        overflow: hidden;
+        box-shadow: none;
+      }
+
+      .question-panel {
+        gap: 8px;
+        padding: 12px;
+      }
+
+      .page-kicker {
+        display: none;
+      }
+
+      h1 {
+        font-size: 30px;
+        line-height: 1.02;
+      }
+
+      .summary {
+        display: none;
+      }
+
+      .question-list {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        width: 100%;
+        min-width: 0;
+        max-width: 100%;
+        overflow: visible;
+        padding-bottom: 0;
+      }
+
+      .question-button {
+        min-width: 0;
+        min-height: 44px;
+        overflow: hidden;
+        padding: 7px 8px;
+      }
+
+      .question-button strong {
+        font-size: 12px;
+        overflow-wrap: anywhere;
+        word-break: break-all;
+      }
+
+      .question-button span {
+        display: none;
+      }
+
+      .ask-panel {
+        padding-top: 10px;
+      }
+
+      .frontdesk-input {
+        min-height: 60px;
+        padding: 9px 10px;
+      }
+
+      .ask-button {
+        width: 100%;
+      }
+
+      .answer-head {
+        gap: 5px;
+      }
+
+      .current-question {
+        width: 100%;
+        max-width: calc(100vw - 60px);
+        font-size: 22px;
+        overflow-wrap: anywhere;
+        word-break: break-all;
+      }
+
+      .answer-head,
+      .answer-body,
+      .answer-actions {
+        padding-left: 16px;
+        padding-right: 16px;
+      }
+
+      .secondary-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .answer-body {
+        width: calc(100vw - 60px);
+        max-width: calc(100vw - 60px);
+      }
+
+      .direct-say {
+        width: 100%;
+        max-width: 100%;
+        font-size: 21px;
+        line-height: 1.45;
+      }
+
+      .small-block p {
+        width: 100%;
+        max-width: calc(100vw - 60px);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">H</span>
+        <span>HXYOS 前台</span>
+      </div>
+      <div class="top-meta">员工现场入口</div>
+    </header>
+
+    <main>
+      <section class="question-panel" aria-labelledby="frontdeskTitle">
+        <div class="page-kicker">不用打字</div>
+        <h1 id="frontdeskTitle">前台速查</h1>
+        <p class="summary">顾客在面前时，不要找资料。点他正在问的那一句，直接照着说。</p>
+
+        <h2 class="question-heading">顾客现在问什么？</h2>
+        <div class="question-list" aria-label="顾客问题">
+          <button class="question-button active" type="button" data-question="first" aria-pressed="true">
+            <strong>第一次来应该选什么？</strong>
+            <span>顾客还没理解项目</span>
+          </button>
+          <button class="question-button" type="button" data-question="difference" aria-pressed="false">
+            <strong>你们和普通按摩有什么不一样？</strong>
+            <span>需要讲清差异</span>
+          </button>
+          <button class="question-button" type="button" data-question="price" aria-pressed="false">
+            <strong>为什么有点贵？</strong>
+            <span>顾客在比较价格</span>
+          </button>
+          <button class="question-button" type="button" data-question="effect" aria-pressed="false">
+            <strong>做一次有没有效果？</strong>
+            <span>必须避免承诺</span>
+          </button>
+          <button class="question-button" type="button" data-question="herbal" aria-pressed="false">
+            <strong>草本泡脚有什么用？</strong>
+            <span>说明体验，不讲疗效</span>
+          </button>
+        </div>
+
+        <div class="ask-panel">
+          <label for="frontdeskInput">现场问答框</label>
+          <textarea id="frontdeskInput" class="frontdesk-input" placeholder="自己输入顾客原话，比如：你们这个为什么比旁边贵？"></textarea>
+          <button id="frontdeskAskButton" class="ask-button" type="button" onclick="askFrontdeskQuestion()">按原话判断</button>
+        </div>
+      </section>
+
+      <section class="answer-panel" aria-live="polite">
+        <div class="answer-head">
+          <div class="answer-label">当前顾客问题</div>
+          <div class="current-question" id="currentQuestion">第一次来应该选什么？</div>
+        </div>
+
+        <div class="answer-body" id="frontdeskOutput">
+          <div class="say-block">
+            <div class="block-label">直接说</div>
+            <p class="direct-say" id="directSay">第一次来先做基础体验。
+你今天是想简单放松，
+还是肩颈腿脚累？
+我按状态帮你选。</p>
+          </div>
+
+          <div class="secondary-grid">
+            <div class="small-block">
+              <div class="block-label">下一句</div>
+              <p id="nextLine">舒服的话，下次再按状态调整。</p>
+            </div>
+            <div class="small-block warning">
+              <div class="block-label">别这样说</div>
+              <p id="dontSay">不要一上来推荐高价项目，也不要说一定适合。</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="answer-actions">
+          <button class="action-button primary" type="button" data-action="use">用标准说法</button>
+          <button class="action-button" type="button" data-action="practice">练一遍</button>
+          <button class="action-button" type="button" data-action="stuck">我不会答，提交</button>
+          <p class="toast" id="frontdeskToast">先点顾客问的那句话。</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const questions = {
+      first: {
+        question: "第一次来应该选什么？",
+        direct: "第一次来先做基础体验。\n你今天是想简单放松，\n还是肩颈腿脚累？\n我按状态帮你选。",
+        next: "舒服的话，下次再按状态调整。",
+        dont: "不要一上来推荐高价项目，也不要说一定适合。"
+      },
+      difference: {
+        question: "你们和普通按摩有什么不一样？",
+        direct: "我们不是让你盲选项目。\n先问你今天哪里累，\n再按状态推荐合适护理。",
+        next: "简单放松选基础体验；更累我们再细看。",
+        dont: "不要贬低别的店，也不要说我们能解决具体病症。"
+      },
+      price: {
+        question: "为什么有点贵？",
+        direct: "如果只比时长，外面选择很多。\n我们会先看你今天的状态，\n再推荐合适项目。",
+        next: "第一次不用做复杂项目。",
+        dont: "不要说全城最好、一定划算、做了就会有明显变化。"
+      },
+      effect: {
+        question: "做一次有没有效果？",
+        direct: "每个人状态不一样。\n我们不承诺一次结果。\n你先体验舒不舒服。",
+        next: "舒服的话，下次再按状态调整。",
+        dont: "不要承诺一次见效、改善失眠、调理疾病或替代专业建议。"
+      },
+      herbal: {
+        question: "草本泡脚有什么用？",
+        direct: "草本泡脚是先暖起来、放松下来。\n它是体验的一部分，\n不把它说成治疗。",
+        next: "先体验基础泡脚，再看要不要加护理。",
+        dont: "不要说治寒湿、排毒、治病、保证改善。"
+      }
+    };
+
+    const questionButtons = Array.from(document.querySelectorAll("[data-question]"));
+    const currentQuestion = document.querySelector("#currentQuestion");
+    const directSay = document.querySelector("#directSay");
+    const nextLine = document.querySelector("#nextLine");
+    const dontSay = document.querySelector("#dontSay");
+    const toast = document.querySelector("#frontdeskToast");
+    const frontdeskInput = document.querySelector("#frontdeskInput");
+
+    const frontdeskQuestionRoutes = [
+      { id: "first", match: ["第一次", "第一次来", "新客", "没来过", "怎么选", "选什么"] },
+      { id: "difference", match: ["不一样", "区别", "普通按摩", "足浴店", "按摩店"] },
+      { id: "price", match: ["贵", "价格", "多少钱", "收费", "便宜"] },
+      { id: "effect", match: ["效果", "有没有用", "见效", "一次", "有用吗"] },
+      { id: "herbal", match: ["草本", "泡脚", "药包", "药浴", "中药"] }
+    ];
+
+    let activeQuestion = "first";
+    let activeItem = questions.first;
+
+    function renderQuestion(questionId) {
+      activeQuestion = questionId;
+      const item = questions[questionId];
+      activeItem = item;
+      questionButtons.forEach((button) => {
+        const isActive = button.dataset.question === questionId;
+        button.classList.toggle("active", isActive);
+        button.setAttribute("aria-pressed", String(isActive));
+      });
+      currentQuestion.textContent = item.question;
+      directSay.textContent = item.direct;
+      nextLine.textContent = item.next;
+      dontSay.textContent = item.dont;
+      toast.textContent = "直接照着说，别现场扩展口径。";
+    }
+
+    function renderCustomQuestion(text) {
+      activeQuestion = "custom";
+      activeItem = {
+        question: text,
+        direct: "这句不在标准库里。\n先接住顾客问题，\n再回到已批准说法。\n不要现场承诺效果。",
+        next: "你可以说：我先按你今天的状态帮你看适合哪一类。",
+        dont: "不要为了回答快，临时说治疗、保证见效、最好第一。"
+      };
+      questionButtons.forEach((button) => {
+        button.classList.remove("active");
+        button.setAttribute("aria-pressed", "false");
+      });
+      currentQuestion.textContent = activeItem.question;
+      directSay.textContent = activeItem.direct;
+      nextLine.textContent = activeItem.next;
+      dontSay.textContent = activeItem.dont;
+      toast.textContent = "没命中标准问题。先用安全兜底，再提交补充。";
+    }
+
+    function askFrontdeskQuestion() {
+      const text = frontdeskInput.value.trim();
+      if (!text) {
+        toast.textContent = "先写下顾客原话，再判断该用哪一句。";
+        frontdeskInput.focus();
+        return;
+      }
+
+      const route = frontdeskQuestionRoutes.find((item) => item.match.some((word) => text.includes(word)));
+      if (route) {
+        renderQuestion(route.id);
+        toast.textContent = `已按顾客原话匹配：${questions[route.id].question}`;
+        return;
+      }
+
+      renderCustomQuestion(text);
+    }
+
+    questionButtons.forEach((button) => {
+      button.addEventListener("click", () => renderQuestion(button.dataset.question));
+    });
+
+    frontdeskInput.addEventListener("keydown", (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        askFrontdeskQuestion();
+      }
+    });
+
+    document.addEventListener("click", (event) => {
+      const target = event.target.closest("[data-action]");
+      if (!target) return;
+      if (target.dataset.action === "use") {
+        toast.textContent = "就用这一句。说慢一点，先别追加解释。";
+        return;
+      }
+      if (target.dataset.action === "practice") {
+        toast.textContent = "练一遍：先读原句，再换成自己的自然表达。";
+        return;
+      }
+      toast.textContent = `已记录：${activeItem.question}。先使用当前标准说法。`;
+    });
+  </script>
+</body>
+</html>

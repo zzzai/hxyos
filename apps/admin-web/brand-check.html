@@ -1,0 +1,642 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HXYOS 说法检查</title>
+  <style>
+    :root {
+      --bg: #f5f6f2;
+      --paper: #ffffff;
+      --ink: #1f251f;
+      --muted: #667064;
+      --subtle: #8b9489;
+      --line: #dde3d8;
+      --line-strong: #bfcbc0;
+      --accent: #17634f;
+      --accent-ink: #0c3d30;
+      --accent-soft: #e7f1eb;
+      --bad: #8f2f1f;
+      --bad-soft: #f8e8e3;
+      --warn: #8a6219;
+      --warn-soft: #f5efe3;
+      --ok: #17634f;
+      --ok-soft: #e7f1eb;
+      --radius: 10px;
+      --shadow: 0 22px 70px rgba(38, 48, 36, 0.10);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      min-height: 100%;
+    }
+
+    body {
+      margin: 0;
+      overflow-x: hidden;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      letter-spacing: 0;
+    }
+
+    button,
+    textarea {
+      font: inherit;
+      letter-spacing: 0;
+    }
+
+    button,
+    a {
+      cursor: pointer;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    button:focus-visible,
+    a:focus-visible,
+    textarea:focus-visible {
+      outline: 3px solid rgba(23, 99, 79, 0.28);
+      outline-offset: 3px;
+    }
+
+    h1,
+    h2,
+    p {
+      margin: 0;
+    }
+
+    .shell {
+      min-height: 100dvh;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      min-height: 62px;
+      border-bottom: 1px solid var(--line);
+      padding: 0 28px;
+      background: rgba(245, 246, 242, 0.94);
+      backdrop-filter: blur(14px);
+    }
+
+    .brand,
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      white-space: nowrap;
+    }
+
+    .brand {
+      min-width: 0;
+      font-size: 15px;
+      font-weight: 780;
+    }
+
+    .brand-mark {
+      display: inline-grid;
+      place-items: center;
+      width: 24px;
+      height: 24px;
+      border: 1px solid var(--ink);
+      border-radius: 6px;
+      font-size: 12px;
+      line-height: 1;
+    }
+
+    .back-link {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .back-link:hover {
+      color: var(--accent);
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+      gap: 24px;
+      width: min(1060px, calc(100vw - 48px));
+      margin: 0 auto;
+      padding: 38px 0;
+    }
+
+    .checker,
+    .guide {
+      min-width: 0;
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+
+    .checker {
+      display: grid;
+      gap: 20px;
+      padding: 28px;
+    }
+
+    .page-head {
+      display: grid;
+      gap: 12px;
+      max-width: 640px;
+    }
+
+    .page-kicker {
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 780;
+    }
+
+    h1 {
+      font-size: clamp(36px, 4.8vw, 64px);
+      line-height: 1.04;
+      font-weight: 810;
+    }
+
+    .summary {
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.72;
+      overflow-wrap: anywhere;
+    }
+
+    .input-block {
+      display: grid;
+      gap: 10px;
+    }
+
+    label {
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 760;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 168px;
+      resize: vertical;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      background: #fbfcf9;
+      color: var(--ink);
+      padding: 14px;
+      font-size: 15px;
+      line-height: 1.7;
+    }
+
+    textarea::placeholder {
+      color: var(--subtle);
+    }
+
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .primary-button,
+    .sample-button {
+      min-height: 42px;
+      border-radius: var(--radius);
+      padding: 0 16px;
+      font-size: 14px;
+      font-weight: 760;
+      transition: background 140ms ease, border-color 140ms ease, color 140ms ease, transform 120ms ease;
+    }
+
+    .primary-button {
+      border: 1px solid var(--accent);
+      background: var(--accent);
+      color: #ffffff;
+    }
+
+    .primary-button:hover {
+      background: var(--accent-ink);
+    }
+
+    .sample-button {
+      border: 1px solid var(--line-strong);
+      background: #fbfcf9;
+      color: var(--ink);
+    }
+
+    .sample-button:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .primary-button:active,
+    .sample-button:active {
+      transform: translateY(1px);
+    }
+
+    .result {
+      display: grid;
+      gap: 12px;
+      min-height: 168px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fbfcf9;
+      padding: 16px;
+      color: var(--ink);
+      font-size: 15px;
+      line-height: 1.65;
+      overflow-wrap: anywhere;
+    }
+
+    .status {
+      width: fit-content;
+      border-radius: 999px;
+      padding: 7px 10px;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .status.ok {
+      background: var(--ok-soft);
+      color: var(--ok);
+    }
+
+    .status.warn {
+      background: var(--warn-soft);
+      color: var(--warn);
+    }
+
+    .status.bad {
+      background: var(--bad-soft);
+      color: var(--bad);
+    }
+
+    .rewrite {
+      display: grid;
+      gap: 6px;
+    }
+
+    .rewrite strong {
+      font-size: 14px;
+    }
+
+    .rewrite p {
+      border-left: 3px solid var(--accent);
+      background: var(--accent-soft);
+      color: var(--accent-ink);
+      padding: 10px 12px;
+      font-weight: 700;
+    }
+
+    .hit-list {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .guide {
+      align-self: start;
+      display: grid;
+      gap: 16px;
+      padding: 22px;
+    }
+
+    h2 {
+      font-size: 22px;
+      line-height: 1.25;
+      font-weight: 790;
+    }
+
+    .rule-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .rule {
+      display: grid;
+      gap: 6px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fbfcf9;
+      padding: 12px;
+    }
+
+    .rule strong {
+      font-size: 15px;
+    }
+
+    .rule span {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+      overflow-wrap: anywhere;
+    }
+
+    .note {
+      border-radius: var(--radius);
+      background: var(--warn-soft);
+      color: var(--warn);
+      padding: 12px;
+      font-size: 13px;
+      line-height: 1.58;
+    }
+
+    @media (max-width: 900px) {
+      .topbar {
+        padding: 0 18px;
+      }
+
+      .back-link span {
+        display: none;
+      }
+
+      main {
+        grid-template-columns: 1fr;
+        width: min(calc(100vw - 28px), 620px);
+        padding: 20px 0;
+      }
+
+      .checker,
+      .guide {
+        padding: 18px;
+      }
+
+      .primary-button,
+      .sample-button {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">H</span>
+        <span>HXYOS 说法检查</span>
+      </div>
+      <a class="back-link" href="index.html" aria-label="回到工作台">
+        <span>回到工作台</span>
+      </a>
+    </header>
+
+    <main>
+      <section class="checker" aria-labelledby="brandCheckTitle">
+        <div class="page-head">
+          <div class="page-kicker">这句话能不能发？</div>
+          <h1 id="brandCheckTitle">先看会不会说过头</h1>
+          <p class="summary">把准备发出去的话贴进来。系统只做前置提醒，帮你避开医疗、保证和夸大表达。</p>
+        </div>
+
+        <div class="input-block">
+          <label for="brandTextInput">把准备发出去的话贴进来</label>
+          <textarea id="brandTextInput" placeholder="比如：泡一次就能治好失眠，保证一周见效。"></textarea>
+        </div>
+
+        <div class="actions">
+          <button class="primary-button" type="button" onclick="runBrandCheck()">立即检查</button>
+          <button class="sample-button" type="button" onclick="loadBrandSample('price')">价格说明样例</button>
+          <button class="sample-button" type="button" onclick="loadBrandSample('effect')">效果说明样例</button>
+        </div>
+
+        <div id="brandCheckResult" class="result" aria-live="polite">
+          <span class="status warn">建议改</span>
+          <p>先贴入一句准备对外使用的话。检查后会给出“可以发 / 建议改 / 不要发”。</p>
+        </div>
+      </section>
+
+      <aside class="guide" aria-labelledby="ruleTitle">
+        <h2 id="ruleTitle">禁用词先看这三类</h2>
+        <div class="rule-list">
+          <div class="rule">
+            <strong>医疗</strong>
+            <span>不要说治疗、治愈、调理疾病，也不要替代医生判断。</span>
+          </div>
+          <div class="rule">
+            <strong>保证</strong>
+            <span>不要说一定有效、几天见效、包好。体验感受要留出个体差异。</span>
+          </div>
+          <div class="rule">
+            <strong>夸大</strong>
+            <span>不要说最好、第一、唯一。说清楚服务特点，比喊口号更稳。</span>
+          </div>
+        </div>
+        <div class="note">这页只帮你做前置检查。门头、广告物料和正式对外材料，还要负责人确认。</div>
+      </aside>
+    </main>
+  </div>
+
+  <script>
+    const brandTextInput = document.getElementById("brandTextInput");
+    const brandCheckResult = document.getElementById("brandCheckResult");
+    const defaultApiBase = window.location.origin && window.location.origin !== "null"
+      ? window.location.origin
+      : "http://127.0.0.1:18081";
+
+    const defaultRiskRules = [
+      {
+        type: "医疗",
+        level: "bad",
+        words: ["治疗", "治愈", "治好", "根治", "诊断", "处方", "疗效", "调理疾病", "改善高血压", "治疗失眠", "改善睡眠", "治疗脚气"],
+        advice: "不要把服务说成医疗行为。"
+      },
+      {
+        type: "保证",
+        level: "bad",
+        words: ["保证", "一定有效", "一周见效", "见效", "一次见效", "立刻见效", "包好", "保证有效", "无效退款", "祛湿排毒"],
+        advice: "不要承诺确定结果。"
+      },
+      {
+        type: "夸大",
+        level: "warn",
+        words: ["最好", "第一", "唯一", "顶级", "神奇", "年轻十岁", "医美级"],
+        advice: "不要用无法证明的绝对化表达。"
+      }
+    ];
+    let riskRules = defaultRiskRules.map((rule) => ({ ...rule, words: [...rule.words] }));
+
+    async function requestJson(path, options = {}) {
+      const response = await fetch(`${defaultApiBase}${path}`, options);
+      if (!response.ok) {
+        throw new Error(`${response.status} ${response.statusText}`);
+      }
+      return response.json();
+    }
+
+    function normalizeRiskRules(rules) {
+      return rules
+        .filter((rule) => rule && Array.isArray(rule.words) && rule.words.length > 0)
+        .map((rule) => ({
+          type: rule.type || "禁用词",
+          level: rule.level === "bad" ? "bad" : "warn",
+          words: [...new Set(rule.words.filter(Boolean).map(String))],
+          advice: rule.advice || "这类说法先换成更克制、更具体的表达。"
+        }));
+    }
+
+    async function loadBrandRiskRules() {
+      try {
+        const result = await requestJson("/api/operating-brain/brand-risk-rules");
+        const loadedRules = normalizeRiskRules(result.rules || []);
+        if (loadedRules.length > 0) {
+          riskRules = loadedRules;
+        }
+      } catch (error) {
+        riskRules = defaultRiskRules.map((rule) => ({ ...rule, words: [...rule.words] }));
+      }
+    }
+
+    const samples = {
+      price: "我们不是单纯比便宜，而是把草本泡脚、肩颈放松和到店体验放在一起，适合身体累了想轻松一下的人。",
+      effect: "泡脚和按摩可以帮助身体放松，具体感受因人而异。如果长期不舒服，建议先咨询医生。"
+    };
+
+    function escapeHtml(text) {
+      return text.replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "\"": "&quot;",
+        "'": "&#39;"
+      }[char]));
+    }
+
+    const boundaryMarkers = ["不能", "不要", "不得", "禁止", "禁用", "避免", "不做", "不说", "不承诺", "不替代", "不能替代", "不是"];
+
+    function sentenceWindow(text, word, index) {
+      const left = Math.max(
+        text.lastIndexOf("。", index),
+        text.lastIndexOf("！", index),
+        text.lastIndexOf("？", index),
+        text.lastIndexOf("\n", index)
+      );
+      const rightPositions = ["。", "！", "？", "\n"]
+        .map((mark) => text.indexOf(mark, index))
+        .filter((position) => position !== -1);
+      const right = rightPositions.length ? Math.min(...rightPositions) : text.length;
+      return text.slice(left + 1, right + word.length);
+    }
+
+    function isBoundaryUse(text, word, index) {
+      const sentence = sentenceWindow(text, word, index);
+      const before = text.slice(Math.max(0, index - 14), index);
+      return boundaryMarkers.some((marker) => sentence.includes(marker) && before.includes(marker));
+    }
+
+    function hasRiskWord(text, word) {
+      let start = 0;
+      while (start < text.length) {
+        const index = text.indexOf(word, start);
+        if (index === -1) {
+          return false;
+        }
+        if (!isBoundaryUse(text, word, index)) {
+          return true;
+        }
+        start = index + word.length;
+      }
+      return false;
+    }
+
+    function softerRewrite(text) {
+      return text
+        .replaceAll("治疗失眠", "帮助放松")
+        .replaceAll("治疗脚气", "不替代医疗建议")
+        .replaceAll("改善高血压", "不替代医疗建议")
+        .replaceAll("改善睡眠", "帮助放松")
+        .replaceAll("治疗", "帮助放松")
+        .replaceAll("治愈", "缓解疲惫感")
+        .replaceAll("治好", "缓解疲惫感")
+        .replaceAll("根治", "日常放松")
+        .replaceAll("诊断", "了解体验需求")
+        .replaceAll("处方", "服务建议")
+        .replaceAll("疗效", "体验感受")
+        .replaceAll("调理疾病", "日常放松")
+        .replaceAll("祛湿排毒", "泡着舒服")
+        .replaceAll("保证", "建议")
+        .replaceAll("一定有效", "因人而异")
+        .replaceAll("一周见效", "持续体验后再观察")
+        .replaceAll("一次见效", "体验感受因人而异")
+        .replaceAll("立刻见效", "体验后感受会因人而异")
+        .replaceAll("见效", "感受")
+        .replaceAll("保证有效", "体验感受因人而异")
+        .replaceAll("包好", "不替代医疗建议")
+        .replaceAll("无效退款", "到店前可先了解服务内容")
+        .replaceAll("最好", "更适合一部分")
+        .replaceAll("第一", "专注")
+        .replaceAll("唯一", "主打")
+        .replaceAll("顶级", "稳定")
+        .replaceAll("神奇", "舒服")
+        .replaceAll("年轻十岁", "状态更轻松")
+        .replaceAll("医美级", "体验感更精致");
+    }
+
+    function renderBrandResult(status, level, message, hits, rewrite) {
+      const hitHtml = hits.length
+        ? `<div class="hit-list">${hits.map((hit) => `<span>${hit.type}：${hit.words.join("、")}。${hit.advice}</span>`).join("")}</div>`
+        : "";
+
+      brandCheckResult.innerHTML = `
+        <span class="status ${level}">${status}</span>
+        <p>${message}</p>
+        ${hitHtml}
+        <div class="rewrite">
+          <strong>改成这样说</strong>
+          <p>${escapeHtml(rewrite)}</p>
+        </div>
+      `;
+    }
+
+    function runBrandCheck() {
+      const text = brandTextInput.value.trim();
+
+      if (!text) {
+        brandCheckResult.innerHTML = '<span class="status warn">建议改</span><p>先贴入一句准备对外使用的话，再检查。</p>';
+        brandTextInput.focus();
+        return;
+      }
+
+      const hits = riskRules
+        .map((rule) => ({
+          ...rule,
+          words: rule.words.filter((word) => hasRiskWord(text, word))
+        }))
+        .filter((rule) => rule.words.length > 0);
+
+      const hasBad = hits.some((hit) => hit.level === "bad");
+      const rewrite = softerRewrite(text);
+
+      if (hasBad) {
+        renderBrandResult("不要发", "bad", "这句话命中了高风险禁用词，先改掉再用。", hits, rewrite);
+        return;
+      }
+
+      if (hits.length > 0) {
+        renderBrandResult("建议改", "warn", "这句话可以继续打磨，先去掉绝对化或夸大的部分。", hits, rewrite);
+        return;
+      }
+
+      renderBrandResult("可以发", "ok", "没有命中当前禁用词。仍建议保持具体、克制、讲人话。", [], text);
+    }
+
+    function loadBrandSample(name) {
+      brandTextInput.value = samples[name] || "";
+      runBrandCheck();
+    }
+
+    loadBrandRiskRules();
+  </script>
+</body>
+</html>
