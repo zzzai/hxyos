@@ -1,13 +1,34 @@
 # Local secrets
 ops/env/*.env
+ops/env/*.toml
 !ops/env/*.env.example
 
+# HXY local brand knowledge and operating artifacts
+knowledge/raw/
+knowledge/normalized/
+knowledge/structured/
+knowledge/reports/
+knowledge/runs/
+knowledge/wiki/
+knowledge/okf/core/
+knowledge/taxonomy-overrides.json
+data/seeds/
+apps/menu-h5/api/v1/wellness/catalog
+docs/product/
+docs/project-brain/assets/
+docs/project-brain/deliverables/
+docs/project-brain/specs/brand-*.md
+docs/project-brain/specs/store-model-*.md
+docs/project-brain/2026-*-current-status.md
+
 # Sensitive exports and backups
-data/exports/*.sensitive.sql
+data/exports/
 data/backups/
 quarantine/
 
 # Runtime and dependency artifacts
+.hermes-source/
+.hermes-runtime/
 .venv/
 node_modules/
 dist/
