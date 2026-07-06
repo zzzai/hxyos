@@ -208,6 +208,110 @@ def test_run_ingest_loop_skips_duplicate_text_compilation_and_builds_parser_jobs
     assert all(job["official_use_allowed"] is False for job in state["parser_jobs"])
 
 
+def test_run_ingest_loop_compiles_extracted_reference_and_skips_completed_parser_job(tmp_path):
+    from hxy_knowledge.ingest_loop import run_ingest_loop
+
+    raw_dir = tmp_path / "knowledge" / "raw" / "inbox"
+    wiki_dir = tmp_path / "knowledge" / "wiki"
+    report_path = tmp_path / "knowledge" / "reports" / "ingest-latest.json"
+    runs_dir = tmp_path / "knowledge" / "runs"
+    raw_dir.mkdir(parents=True)
+    (raw_dir / "plan.docx").write_bytes(b"PK placeholder")
+    reference = raw_dir / "extracted-reference" / "knowledge" / "raw" / "inbox" / "plan.docx.reference.txt"
+    reference.parent.mkdir(parents=True)
+    reference.write_text("荷小悦 DOCX 解析文本。员工不能说治疗失眠。", encoding="utf-8")
+
+    state = run_ingest_loop(
+        raw_dir=raw_dir,
+        wiki_dir=wiki_dir,
+        report_path=report_path,
+        runs_dir=runs_dir,
+        run_id="ingest-loop-test",
+        root_dir=tmp_path,
+    )
+
+    assert state["task_count"] == 2
+    assert state["parsed_reference_count"] == 1
+    assert state["parser_job_count"] == 0
+    assert state["compiler_ready_unique_count"] == 1
+    assert state["extract_count"] == 1
+    assert state["claim_count"] >= 1
+
+    tasks = {item["source_path"]: item for item in state["tasks"]}
+    docx_task = tasks["knowledge/raw/inbox/plan.docx"]
+    assert docx_task["status"] == "PARSED_REFERENCE_READY"
+    assert docx_task["parse_status"] == "extracted_reference_available"
+    assert docx_task["artifact_refs"]["extracted_reference"].endswith("plan.docx.reference.txt")
+
+    reference_task = tasks[
+        "knowledge/raw/inbox/extracted-reference/knowledge/raw/inbox/plan.docx.reference.txt"
+    ]
+    assert reference_task["status"] == "REVIEWING"
+    assert reference_task["compiler_ready"] is True
+
+
+def test_run_ingest_loop_accepts_legacy_extracted_reference_location(tmp_path):
+    from hxy_knowledge.ingest_loop import run_ingest_loop
+
+    raw_dir = tmp_path / "knowledge" / "raw" / "inbox"
+    wiki_dir = tmp_path / "knowledge" / "wiki"
+    report_path = tmp_path / "knowledge" / "reports" / "ingest-latest.json"
+    runs_dir = tmp_path / "knowledge" / "runs"
+    raw_dir.mkdir(parents=True)
+    (raw_dir / "deck.pdf").write_bytes(b"%PDF-1.4 placeholder")
+    reference = raw_dir / "extracted-reference" / "deck.pdf.reference.txt"
+    reference.parent.mkdir(parents=True)
+    reference.write_text("荷小悦 PDF 解析文本。不能承诺治疗。", encoding="utf-8")
+
+    state = run_ingest_loop(
+        raw_dir=raw_dir,
+        wiki_dir=wiki_dir,
+        report_path=report_path,
+        runs_dir=runs_dir,
+        run_id="ingest-loop-test",
+        root_dir=tmp_path,
+    )
+
+    tasks = {item["source_path"]: item for item in state["tasks"]}
+    pdf_task = tasks["knowledge/raw/inbox/deck.pdf"]
+    assert pdf_task["status"] == "PARSED_REFERENCE_READY"
+    assert pdf_task["artifact_refs"]["extracted_reference"] == "knowledge/raw/inbox/extracted-reference/deck.pdf.reference.txt"
+    assert state["parser_job_count"] == 0
+    assert state["parsed_reference_count"] == 1
+    assert state["extract_count"] == 1
+
+
+def test_run_ingest_loop_accepts_legacy_stem_extracted_reference_location(tmp_path):
+    from hxy_knowledge.ingest_loop import run_ingest_loop
+
+    raw_dir = tmp_path / "knowledge" / "raw" / "inbox"
+    wiki_dir = tmp_path / "knowledge" / "wiki"
+    report_path = tmp_path / "knowledge" / "reports" / "ingest-latest.json"
+    runs_dir = tmp_path / "knowledge" / "runs"
+    raw_dir.mkdir(parents=True)
+    (raw_dir / "deck.pdf").write_bytes(b"%PDF-1.4 placeholder")
+    reference = raw_dir / "extracted-reference" / "deck.reference.txt"
+    reference.parent.mkdir(parents=True)
+    reference.write_text("荷小悦 PDF 解析文本。不能承诺治疗。", encoding="utf-8")
+
+    state = run_ingest_loop(
+        raw_dir=raw_dir,
+        wiki_dir=wiki_dir,
+        report_path=report_path,
+        runs_dir=runs_dir,
+        run_id="ingest-loop-test",
+        root_dir=tmp_path,
+    )
+
+    tasks = {item["source_path"]: item for item in state["tasks"]}
+    pdf_task = tasks["knowledge/raw/inbox/deck.pdf"]
+    assert pdf_task["status"] == "PARSED_REFERENCE_READY"
+    assert pdf_task["artifact_refs"]["extracted_reference"] == "knowledge/raw/inbox/extracted-reference/deck.reference.txt"
+    assert state["parser_job_count"] == 0
+    assert state["parsed_reference_count"] == 1
+    assert state["extract_count"] == 1
+
+
 def test_ingest_loop_cli_writes_state(tmp_path):
     raw_dir = tmp_path / "knowledge" / "raw" / "inbox"
     raw_dir.mkdir(parents=True)

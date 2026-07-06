@@ -63,6 +63,22 @@ def _parser_strategy_for_suffix(suffix: str) -> str:
     return "manual_review"
 
 
+def _extracted_reference_path_for(inbox_dir: Path, source_path: str) -> Path:
+    clean_source = source_path.strip("/").replace("\\", "/")
+    return inbox_dir / "extracted-reference" / f"{clean_source}.reference.txt"
+
+
+def _existing_extracted_reference_path(inbox_dir: Path, source_path: str) -> Path | None:
+    current_path = _extracted_reference_path_for(inbox_dir, source_path)
+    if current_path.is_file():
+        return current_path
+    legacy_path = inbox_dir / "extracted-reference" / f"{Path(source_path).name}.reference.txt"
+    if legacy_path.is_file():
+        return legacy_path
+    legacy_stem_path = inbox_dir / "extracted-reference" / f"{Path(source_path).stem}.reference.txt"
+    return legacy_stem_path if legacy_stem_path.is_file() else None
+
+
 def discover_inbox_materials(inbox_dir: Path, *, root_dir: Path) -> dict[str, Any]:
     items = []
     ignored_items = []
@@ -86,6 +102,17 @@ def discover_inbox_materials(inbox_dir: Path, *, root_dir: Path) -> dict[str, An
         duplicate_of = seen_by_hash.get(content_hash)
         if duplicate_of is None:
             seen_by_hash[content_hash] = rel_path
+        extracted_reference_path = _existing_extracted_reference_path(inbox_dir, rel_path)
+        extracted_reference_rel = (
+            _relative(extracted_reference_path, root_dir)
+            if not compiler_ready and extracted_reference_path is not None
+            else ""
+        )
+        parse_status = (
+            "compiler_ready"
+            if compiler_ready
+            else ("extracted_reference_available" if extracted_reference_rel else "external_parser_required")
+        )
         timestamp = _utc_now()
         items.append(
             {
@@ -95,16 +122,24 @@ def discover_inbox_materials(inbox_dir: Path, *, root_dir: Path) -> dict[str, An
                 "source_type": "file",
                 "suffix": suffix,
                 "content_hash": content_hash,
-                "status": "DISCOVERED" if compiler_ready else "PARSING_REQUIRED",
+                "status": (
+                    "DISCOVERED"
+                    if compiler_ready
+                    else ("PARSED_REFERENCE_READY" if extracted_reference_rel else "PARSING_REQUIRED")
+                ),
                 "compiler_ready": compiler_ready,
-                "parse_status": "compiler_ready" if compiler_ready else "external_parser_required",
-                "parser_hint": "hxy_text_compiler" if compiler_ready else f"{_parser_strategy_for_suffix(suffix)}_required",
+                "parse_status": parse_status,
+                "parser_hint": (
+                    "hxy_text_compiler"
+                    if compiler_ready
+                    else ("compiled_from_extracted_reference" if extracted_reference_rel else f"{_parser_strategy_for_suffix(suffix)}_required")
+                ),
                 "duplicate_of": duplicate_of,
                 "canonical_source_path": duplicate_of or rel_path,
                 "official_use_allowed": False,
                 "requires_human_review": True,
                 "risk_flags": [],
-                "artifact_refs": {},
+                "artifact_refs": {"extracted_reference": extracted_reference_rel} if extracted_reference_rel else {},
                 "created_at": timestamp,
                 "updated_at": timestamp,
             }
@@ -133,7 +168,8 @@ def discover_inbox_materials(inbox_dir: Path, *, root_dir: Path) -> dict[str, An
         "compiler_ready_unique_count": sum(
             1 for item in items if item["compiler_ready"] and not item["duplicate_of"]
         ),
-        "parsing_required_count": sum(1 for item in items if not item["compiler_ready"]),
+        "parsing_required_count": sum(1 for item in items if item["parse_status"] == "external_parser_required"),
+        "parsed_reference_count": sum(1 for item in items if item["parse_status"] == "extracted_reference_available"),
         "ignored_count": len(ignored_items),
         "items": items,
         "ignored_items": ignored_items,
@@ -153,7 +189,7 @@ def _public_compiler_report(report: dict[str, Any]) -> dict[str, Any]:
 def _build_parser_jobs(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     jobs = []
     for task in tasks:
-        if task.get("compiler_ready") or task.get("duplicate_of"):
+        if task.get("compiler_ready") or task.get("duplicate_of") or task.get("parse_status") != "external_parser_required":
             continue
         suffix = str(task.get("suffix") or "")
         jobs.append(
@@ -204,6 +240,7 @@ def run_ingest_loop(
         "compiler_ready_count": discovery["compiler_ready_count"],
         "compiler_ready_unique_count": discovery["compiler_ready_unique_count"],
         "parsing_required_count": discovery["parsing_required_count"],
+        "parsed_reference_count": discovery["parsed_reference_count"],
         "ignored_count": discovery["ignored_count"],
         "parser_job_count": len(parser_jobs),
         "extract_count": int(compiler_report.get("extract_count") or 0),
@@ -217,7 +254,11 @@ def run_ingest_loop(
                 "status": (
                     "DUPLICATE"
                     if task.get("duplicate_of")
-                    else ("REVIEWING" if task.get("compiler_ready") else "PARSING_REQUIRED")
+                    else (
+                        "REVIEWING"
+                        if task.get("compiler_ready")
+                        else ("PARSED_REFERENCE_READY" if task.get("parse_status") == "extracted_reference_available" else "PARSING_REQUIRED")
+                    )
                 ),
                 "artifact_refs": (
                     {
@@ -227,7 +268,7 @@ def run_ingest_loop(
                         "compliance_review_pack": (wiki_dir / "compliance-review-pack.json").as_posix(),
                     }
                     if task.get("compiler_ready") and not task.get("duplicate_of")
-                    else {}
+                    else dict(task.get("artifact_refs") or {})
                 ),
                 "updated_at": _utc_now(),
             }

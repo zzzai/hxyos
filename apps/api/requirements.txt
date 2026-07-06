@@ -7,3 +7,4 @@ uvicorn[standard]>=0.30,<0.35
 psycopg[binary]>=3.2,<4.0
 python-multipart>=0.0.9,<1.0
 pytest>=8.2,<9.0
+markitdown>=0.1.6,<0.2.0

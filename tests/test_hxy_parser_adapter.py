@@ -156,3 +156,11 @@ def test_run_hxy_parser_jobs_cli_reads_ingest_loop_state(tmp_path, monkeypatch):
     output_path = root / "knowledge" / "raw" / "inbox" / "extracted-reference" / "knowledge/raw/inbox/plan.docx.reference.txt"
     assert output_path.exists()
     assert "CLI 解析: plan.docx" in output_path.read_text(encoding="utf-8")
+
+
+def test_api_requirements_pin_markitdown_for_parser_jobs():
+    requirements = (Path(__file__).resolve().parents[1] / "apps" / "api" / "requirements.txt").read_text(
+        encoding="utf-8"
+    )
+
+    assert "markitdown" in requirements
