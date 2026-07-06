@@ -53,11 +53,40 @@ def test_discover_inbox_materials_tracks_parse_readiness_and_ignores_scripts(tmp
     assert pdf_task["status"] == "PARSING_REQUIRED"
     assert pdf_task["compiler_ready"] is False
     assert pdf_task["parse_status"] == "external_parser_required"
-    assert pdf_task["parser_hint"] == "mineru_or_markitdown_required"
+    assert pdf_task["parser_hint"] == "mineru_required"
 
     ignored = result["ignored_items"][0]
     assert ignored["source_path"] == "knowledge/raw/inbox/danger.bat"
     assert ignored["reason"] == "unsupported_or_unsafe_suffix"
+
+
+def test_discover_inbox_materials_marks_duplicate_files_without_losing_traceability(tmp_path):
+    from hxy_knowledge.ingest_loop import discover_inbox_materials
+
+    inbox = tmp_path / "knowledge" / "raw" / "inbox"
+    inbox.mkdir(parents=True)
+    (inbox / "a.md").write_text("荷小悦是社区轻养生项目。", encoding="utf-8")
+    (inbox / "b.md").write_text("荷小悦是社区轻养生项目。", encoding="utf-8")
+    (inbox / "c.md").write_text("清泡调补养不能说治疗。", encoding="utf-8")
+
+    result = discover_inbox_materials(inbox, root_dir=tmp_path)
+
+    assert result["count"] == 3
+    assert result["unique_count"] == 2
+    assert result["duplicate_count"] == 1
+    assert result["duplicate_groups"] == [
+        {
+            "content_hash": result["items"][0]["content_hash"],
+            "canonical_source_path": "knowledge/raw/inbox/a.md",
+            "duplicates": ["knowledge/raw/inbox/b.md"],
+        }
+    ]
+
+    tasks = {item["source_path"]: item for item in result["items"]}
+    assert tasks["knowledge/raw/inbox/a.md"]["duplicate_of"] is None
+    assert tasks["knowledge/raw/inbox/a.md"]["canonical_source_path"] == "knowledge/raw/inbox/a.md"
+    assert tasks["knowledge/raw/inbox/b.md"]["duplicate_of"] == "knowledge/raw/inbox/a.md"
+    assert tasks["knowledge/raw/inbox/b.md"]["canonical_source_path"] == "knowledge/raw/inbox/a.md"
 
 
 def test_run_ingest_loop_compiles_and_stops_at_review(tmp_path):
@@ -130,6 +159,53 @@ def test_run_ingest_loop_separates_compiler_ready_and_parsing_required_tasks(tmp
     assert tasks["knowledge/raw/inbox/finance.docx"]["compiler_ready"] is False
     assert tasks["knowledge/raw/inbox/finance.docx"]["artifact_refs"] == {}
     assert "先解析 PDF/DOCX/PPTX/图片等非文本资料，再进入编译。" in state["next_actions"]
+
+
+def test_run_ingest_loop_skips_duplicate_text_compilation_and_builds_parser_jobs(tmp_path):
+    from hxy_knowledge.ingest_loop import run_ingest_loop
+
+    raw_dir = tmp_path / "knowledge" / "raw" / "inbox"
+    wiki_dir = tmp_path / "knowledge" / "wiki"
+    report_path = tmp_path / "knowledge" / "reports" / "ingest-latest.json"
+    runs_dir = tmp_path / "knowledge" / "runs"
+    raw_dir.mkdir(parents=True)
+    duplicate_text = "荷小悦定位是社区轻养生。员工不能说治疗失眠。"
+    (raw_dir / "brand-a.md").write_text(duplicate_text, encoding="utf-8")
+    (raw_dir / "brand-b.md").write_text(duplicate_text, encoding="utf-8")
+    (raw_dir / "deck.pdf").write_bytes(b"%PDF-1.4 placeholder")
+    (raw_dir / "plan.docx").write_bytes(b"PK placeholder")
+    (raw_dir / "photo.png").write_bytes(b"\x89PNG placeholder")
+
+    state = run_ingest_loop(
+        raw_dir=raw_dir,
+        wiki_dir=wiki_dir,
+        report_path=report_path,
+        runs_dir=runs_dir,
+        run_id="ingest-loop-test",
+        root_dir=tmp_path,
+    )
+
+    assert state["task_count"] == 5
+    assert state["unique_count"] == 4
+    assert state["duplicate_count"] == 1
+    assert state["compiler_ready_count"] == 2
+    assert state["compiler_ready_unique_count"] == 1
+    assert state["extract_count"] == 1
+    assert state["parsing_required_count"] == 3
+
+    tasks = {item["source_path"]: item for item in state["tasks"]}
+    assert tasks["knowledge/raw/inbox/brand-a.md"]["status"] == "REVIEWING"
+    assert tasks["knowledge/raw/inbox/brand-b.md"]["status"] == "DUPLICATE"
+    assert tasks["knowledge/raw/inbox/brand-b.md"]["artifact_refs"] == {}
+    assert tasks["knowledge/raw/inbox/brand-b.md"]["duplicate_of"] == "knowledge/raw/inbox/brand-a.md"
+
+    assert state["parser_job_count"] == 3
+    jobs = {item["source_path"]: item for item in state["parser_jobs"]}
+    assert jobs["knowledge/raw/inbox/deck.pdf"]["parser_strategy"] == "mineru"
+    assert jobs["knowledge/raw/inbox/plan.docx"]["parser_strategy"] == "markitdown"
+    assert jobs["knowledge/raw/inbox/photo.png"]["parser_strategy"] == "ocr_or_vision"
+    assert all(job["status"] == "PENDING" for job in state["parser_jobs"])
+    assert all(job["official_use_allowed"] is False for job in state["parser_jobs"])
 
 
 def test_ingest_loop_cli_writes_state(tmp_path):

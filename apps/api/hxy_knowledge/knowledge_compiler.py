@@ -399,14 +399,20 @@ def build_knowledge_graph(*, extracts: list[dict[str, Any]], claims: list[dict[s
     }
 
 
-def compile_directory(raw_dir: str | Path, wiki_dir: str | Path) -> dict[str, Any]:
+def compile_directory(
+    raw_dir: str | Path,
+    wiki_dir: str | Path,
+    *,
+    source_paths: list[str | Path] | None = None,
+) -> dict[str, Any]:
     raw_root = Path(raw_dir)
     wiki_root = Path(wiki_dir)
     wiki_root.mkdir(parents=True, exist_ok=True)
 
     extracts: list[dict[str, Any]] = []
     claims: list[dict[str, Any]] = []
-    for path in sorted(raw_root.rglob("*")):
+    paths = [Path(path) for path in source_paths] if source_paths is not None else sorted(raw_root.rglob("*"))
+    for path in sorted(paths, key=lambda item: item.as_posix()):
         if not path.is_file() or path.suffix.lower() not in {".md", ".txt"}:
             continue
         content = path.read_text(encoding="utf-8")

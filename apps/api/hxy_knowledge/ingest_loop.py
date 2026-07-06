@@ -29,6 +29,9 @@ PARSING_REQUIRED_SUFFIXES = {
     ".xlsx",
 }
 DISCOVERABLE_SUFFIXES = TEXT_COMPILABLE_SUFFIXES | PARSING_REQUIRED_SUFFIXES
+MINERU_SUFFIXES = {".pdf"}
+MARKITDOWN_SUFFIXES = {".csv", ".doc", ".docx", ".epub", ".html", ".htm", ".json", ".ppt", ".pptx", ".xls", ".xlsx"}
+VISION_SUFFIXES = {".jpeg", ".jpg", ".png", ".webp"}
 
 
 def _utc_now() -> str:
@@ -50,9 +53,20 @@ def _relative(path: Path, root_dir: Path) -> str:
         return path.as_posix()
 
 
+def _parser_strategy_for_suffix(suffix: str) -> str:
+    if suffix in MINERU_SUFFIXES:
+        return "mineru"
+    if suffix in MARKITDOWN_SUFFIXES:
+        return "markitdown"
+    if suffix in VISION_SUFFIXES:
+        return "ocr_or_vision"
+    return "manual_review"
+
+
 def discover_inbox_materials(inbox_dir: Path, *, root_dir: Path) -> dict[str, Any]:
     items = []
     ignored_items = []
+    seen_by_hash: dict[str, str] = {}
     for path in sorted(inbox_dir.rglob("*")):
         if not path.is_file():
             continue
@@ -69,6 +83,9 @@ def discover_inbox_materials(inbox_dir: Path, *, root_dir: Path) -> dict[str, An
             continue
         compiler_ready = suffix in TEXT_COMPILABLE_SUFFIXES
         content_hash = _hash_file(path)
+        duplicate_of = seen_by_hash.get(content_hash)
+        if duplicate_of is None:
+            seen_by_hash[content_hash] = rel_path
         timestamp = _utc_now()
         items.append(
             {
@@ -81,7 +98,9 @@ def discover_inbox_materials(inbox_dir: Path, *, root_dir: Path) -> dict[str, An
                 "status": "DISCOVERED" if compiler_ready else "PARSING_REQUIRED",
                 "compiler_ready": compiler_ready,
                 "parse_status": "compiler_ready" if compiler_ready else "external_parser_required",
-                "parser_hint": "hxy_text_compiler" if compiler_ready else "mineru_or_markitdown_required",
+                "parser_hint": "hxy_text_compiler" if compiler_ready else f"{_parser_strategy_for_suffix(suffix)}_required",
+                "duplicate_of": duplicate_of,
+                "canonical_source_path": duplicate_of or rel_path,
                 "official_use_allowed": False,
                 "requires_human_review": True,
                 "risk_flags": [],
@@ -90,14 +109,35 @@ def discover_inbox_materials(inbox_dir: Path, *, root_dir: Path) -> dict[str, An
                 "updated_at": timestamp,
             }
         )
+    duplicate_groups = []
+    for content_hash, canonical_source_path in seen_by_hash.items():
+        duplicates = [
+            str(item["source_path"])
+            for item in items
+            if item.get("content_hash") == content_hash and item.get("duplicate_of")
+        ]
+        if duplicates:
+            duplicate_groups.append(
+                {
+                    "content_hash": content_hash,
+                    "canonical_source_path": canonical_source_path,
+                    "duplicates": duplicates,
+                }
+            )
     return {
         "version": "hxy-ingest-discovery.v1",
         "count": len(items),
+        "unique_count": sum(1 for item in items if not item["duplicate_of"]),
+        "duplicate_count": sum(1 for item in items if item["duplicate_of"]),
         "compiler_ready_count": sum(1 for item in items if item["compiler_ready"]),
+        "compiler_ready_unique_count": sum(
+            1 for item in items if item["compiler_ready"] and not item["duplicate_of"]
+        ),
         "parsing_required_count": sum(1 for item in items if not item["compiler_ready"]),
         "ignored_count": len(ignored_items),
         "items": items,
         "ignored_items": ignored_items,
+        "duplicate_groups": duplicate_groups,
     }
 
 
@@ -110,6 +150,30 @@ def _public_compiler_report(report: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in report.items() if key != "artifacts"}
 
 
+def _build_parser_jobs(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    jobs = []
+    for task in tasks:
+        if task.get("compiler_ready") or task.get("duplicate_of"):
+            continue
+        suffix = str(task.get("suffix") or "")
+        jobs.append(
+            {
+                "version": "hxy-parser-job.v1",
+                "job_id": f"hxy-parser-job:{str(task.get('content_hash') or '')[:16]}",
+                "source_path": task.get("source_path") or "",
+                "source_type": task.get("source_type") or "file",
+                "suffix": suffix,
+                "content_hash": task.get("content_hash") or "",
+                "parser_strategy": _parser_strategy_for_suffix(suffix),
+                "status": "PENDING",
+                "output_contract": "write extracted text/reference artifact, then rerun ingest loop",
+                "official_use_allowed": False,
+                "requires_human_review": True,
+            }
+        )
+    return jobs
+
+
 def run_ingest_loop(
     *,
     raw_dir: Path,
@@ -120,8 +184,14 @@ def run_ingest_loop(
     root_dir: Path,
 ) -> dict[str, Any]:
     discovery = discover_inbox_materials(raw_dir, root_dir=root_dir)
-    compiler_report = compile_directory(raw_dir, wiki_dir)
+    compiler_source_paths = [
+        root_dir / str(task["source_path"])
+        for task in discovery["items"]
+        if task.get("compiler_ready") and not task.get("duplicate_of")
+    ]
+    compiler_report = compile_directory(raw_dir, wiki_dir, source_paths=compiler_source_paths)
     _write_json(report_path, _public_compiler_report(compiler_report))
+    parser_jobs = _build_parser_jobs(discovery["items"])
 
     state = {
         "version": "hxy-ingest-loop-state.v1",
@@ -129,9 +199,13 @@ def run_ingest_loop(
         "status": "review_required",
         "stop_reason": "human_review_required",
         "task_count": discovery["count"],
+        "unique_count": discovery["unique_count"],
+        "duplicate_count": discovery["duplicate_count"],
         "compiler_ready_count": discovery["compiler_ready_count"],
+        "compiler_ready_unique_count": discovery["compiler_ready_unique_count"],
         "parsing_required_count": discovery["parsing_required_count"],
         "ignored_count": discovery["ignored_count"],
+        "parser_job_count": len(parser_jobs),
         "extract_count": int(compiler_report.get("extract_count") or 0),
         "claim_count": int(compiler_report.get("claim_count") or 0),
         "review_queue_count": int(compiler_report.get("review_queue_count") or 0),
@@ -140,7 +214,11 @@ def run_ingest_loop(
         "tasks": [
             {
                 **task,
-                "status": "REVIEWING" if task.get("compiler_ready") else "PARSING_REQUIRED",
+                "status": (
+                    "DUPLICATE"
+                    if task.get("duplicate_of")
+                    else ("REVIEWING" if task.get("compiler_ready") else "PARSING_REQUIRED")
+                ),
                 "artifact_refs": (
                     {
                         "ingest_report": report_path.as_posix(),
@@ -148,14 +226,16 @@ def run_ingest_loop(
                         "answer_card_drafts": (wiki_dir / "answer-card-drafts.json").as_posix(),
                         "compliance_review_pack": (wiki_dir / "compliance-review-pack.json").as_posix(),
                     }
-                    if task.get("compiler_ready")
+                    if task.get("compiler_ready") and not task.get("duplicate_of")
                     else {}
                 ),
                 "updated_at": _utc_now(),
             }
             for task in discovery["items"]
         ],
+        "parser_jobs": parser_jobs,
         "ignored_items": discovery["ignored_items"],
+        "duplicate_groups": discovery["duplicate_groups"],
         "official_use_allowed": False,
         "requires_human_review": True,
         "authority_rule": "ingest_loop_outputs_are_candidates_until_human_review",
