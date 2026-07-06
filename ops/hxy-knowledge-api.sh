@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="${HXY_ROOT_DIR:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
-ENV_FILE="${HXY_ENV_FILE:-${ROOT_DIR}/ops/env/hxy-postgres.env}"
+ENV_FILE="${HXY_ENV_FILE:-${ROOT_DIR}/ops/env/hxy-knowledge-api.env}"
 HOST="${HXY_API_HOST:-127.0.0.1}"
 PORT="${HXY_API_PORT:-18081}"
 LOG_FILE="${HXY_API_LOG:-/tmp/hxy-knowledge-api.log}"
@@ -15,13 +15,7 @@ if [[ -f "${ENV_FILE}" ]]; then
   set +a
 fi
 
-if [[ -z "${HXY_DATABASE_URL:-}" ]]; then
-  : "${POSTGRES_DB:?POSTGRES_DB is required when HXY_DATABASE_URL is not set}"
-  : "${POSTGRES_USER:?POSTGRES_USER is required when HXY_DATABASE_URL is not set}"
-  : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required when HXY_DATABASE_URL is not set}"
-  HXY_DATABASE_URL="host=127.0.0.1 port=${HXY_PG_HOST_PORT:-55433} dbname=${POSTGRES_DB} user=${POSTGRES_USER} password=${POSTGRES_PASSWORD}"
-fi
-
+: "${HXY_DATABASE_URL:?HXY_DATABASE_URL is required for hxy-knowledge-api}"
 : "${HXY_API_TOKEN:?HXY_API_TOKEN is required for hxy-knowledge-api}"
 
 mkdir -p "$(dirname "${LOG_FILE}")"

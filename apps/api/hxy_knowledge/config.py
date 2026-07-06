@@ -55,7 +55,10 @@ def get_settings() -> KnowledgeSettings:
         database_url=os.environ.get("HXY_DATABASE_URL", ""),
         run_name=os.environ.get("HXY_KNOWLEDGE_RUN", "inbox-2026-06-11"),
         api_token=os.environ.get("HXY_API_TOKEN", "").strip(),
-        cors_origins=_csv_env("HXY_CORS_ORIGINS", "http://127.0.0.1:8088,http://localhost:8088"),
+        cors_origins=_csv_env(
+            "HXY_CORS_ORIGINS",
+            "http://127.0.0.1:8088,http://localhost:8088,http://127.0.0.1:18084,http://localhost:18084",
+        ),
         max_upload_bytes=_int_env("HXY_MAX_UPLOAD_BYTES", 10 * 1024 * 1024),
         allowed_upload_extensions=tuple(
             extension.lower()

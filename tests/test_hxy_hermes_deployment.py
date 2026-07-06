@@ -100,10 +100,26 @@ def test_hxy_hermes_runtime_artifacts_are_gitignored() -> None:
 def test_hxy_knowledge_api_script_exports_model_router_environment() -> None:
     script = read("ops/hxy-knowledge-api.sh")
 
+    assert ": \"${HXY_DATABASE_URL:?HXY_DATABASE_URL is required for hxy-knowledge-api}\"" in script
+    assert "POSTGRES_DB" not in script
+    assert "POSTGRES_USER" not in script
+    assert "POSTGRES_PASSWORD" not in script
+    assert "HXY_PG_HOST_PORT" not in script
     assert "export HXY_MODEL_ROUTER_ENABLED" in script
     assert "export HXY_MODEL_API_KEY" in script
     assert "export HXY_MODEL_CONFIG_PATH" in script
-    assert "HXY_MODEL_API_KEY" not in read("ops/env/hxy-postgres.env.example")
+    assert "hxy-knowledge-api.env" in script
+
+    api_env_template = read("ops/env/hxy-knowledge-api.env.example")
+    assert 'HXY_DATABASE_URL="host=127.0.0.1 port=55433 dbname=hxy user=hxy_app password=change-me"' in api_env_template
+    assert "HXY_API_TOKEN=" in api_env_template
+    assert "http://127.0.0.1:18084" in api_env_template
+    assert "POSTGRES_PASSWORD" not in api_env_template
+    assert "HXY_MODEL_API_KEY" not in api_env_template
+
+    postgres_env_template = read("ops/env/hxy-postgres.env.example")
+    assert "POSTGRES_DB=hxy" in postgres_env_template
+    assert "POSTGRES_USER=hxy_app" in postgres_env_template
 
 
 def test_hxy_hermes_prepare_uses_local_pinned_tag_before_network_fetch() -> None:

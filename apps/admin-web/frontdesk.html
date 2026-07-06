@@ -655,6 +655,10 @@
     const dontSay = document.querySelector("#dontSay");
     const toast = document.querySelector("#frontdeskToast");
     const frontdeskInput = document.querySelector("#frontdeskInput");
+    const apiBaseCandidates = [
+      window.location.origin && window.location.origin !== "null" ? window.location.origin : "",
+      "http://127.0.0.1:18081"
+    ].filter(Boolean);
 
     const frontdeskQuestionRoutes = [
       { id: "first", match: ["第一次", "第一次来", "新客", "没来过", "怎么选", "选什么"] },
@@ -666,6 +670,13 @@
 
     let activeQuestion = "first";
     let activeItem = questions.first;
+    let approvedAnswerCards = [];
+
+    function normalizeQuestion(text) {
+      return String(text || "")
+        .replace(/[，。！？?；;：:、（）()[\]【】"'“”‘’\s]/g, "")
+        .toLowerCase();
+    }
 
     function renderQuestion(questionId) {
       activeQuestion = questionId;
@@ -683,11 +694,34 @@
       toast.textContent = "直接照着说，别现场扩展口径。";
     }
 
+    function renderApprovedAnswerCard(card, originalQuestion) {
+      activeQuestion = `card:${card.card_id || card.question_pattern || "approved"}`;
+      activeItem = {
+        question: originalQuestion || card.question_pattern || "正式口径",
+        direct: card.answer || "这张答案卡暂时没有正文。",
+        next: Array.isArray(card.next_actions) && card.next_actions.length
+          ? card.next_actions[0]
+          : "按正式口径说，不现场加承诺。",
+        dont: Array.isArray(card.forbidden_terms) && card.forbidden_terms.length
+          ? `不要说：${card.forbidden_terms.slice(0, 5).join("、")}。`
+          : "不要现场承诺效果、医疗结论或绝对化表达。"
+      };
+      questionButtons.forEach((button) => {
+        button.classList.remove("active");
+        button.setAttribute("aria-pressed", "false");
+      });
+      currentQuestion.textContent = activeItem.question;
+      directSay.textContent = activeItem.direct;
+      nextLine.textContent = activeItem.next;
+      dontSay.textContent = activeItem.dont;
+      toast.textContent = "已匹配正式口径。只按这张卡说。";
+    }
+
     function renderCustomQuestion(text) {
       activeQuestion = "custom";
       activeItem = {
         question: text,
-        direct: "这句不在标准库里。\n先接住顾客问题，\n再回到已批准说法。\n不要现场承诺效果。",
+        direct: "这句不在标准库里。\n先接住顾客问题，\n再回到正式说法。\n不要现场承诺效果。",
         next: "你可以说：我先按你今天的状态帮你看适合哪一类。",
         dont: "不要为了回答快，临时说治疗、保证见效、最好第一。"
       };
@@ -702,11 +736,49 @@
       toast.textContent = "没命中标准问题。先用安全兜底，再提交补充。";
     }
 
+    function matchApprovedAnswerCard(text) {
+      const normalizedText = normalizeQuestion(text);
+      return approvedAnswerCards.find((card) => {
+        if (card.status && card.status !== "approved") return false;
+        const candidates = [card.question_pattern || "", ...(card.aliases || [])]
+          .filter(Boolean)
+          .map(normalizeQuestion);
+        return candidates.some((candidate) => {
+          if (!candidate) return false;
+          return normalizedText.includes(candidate) || candidate.includes(normalizedText);
+        });
+      });
+    }
+
+    async function loadApprovedAnswerCards() {
+      for (const apiBase of apiBaseCandidates) {
+        try {
+          const response = await fetch(`${apiBase}/api/knowledge/answer-cards?status=approved&limit=200`);
+          if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+          const payload = await response.json();
+          approvedAnswerCards = Array.isArray(payload.items) ? payload.items : [];
+          if (approvedAnswerCards.length > 0) {
+            toast.textContent = "已加载正式口径。现场问题会先匹配标准说法。";
+          }
+          return;
+        } catch (error) {
+          approvedAnswerCards = [];
+        }
+      }
+      toast.textContent = "暂时离线。先用本页安全话术，不新增正式口径。";
+    }
+
     function askFrontdeskQuestion() {
       const text = frontdeskInput.value.trim();
       if (!text) {
         toast.textContent = "先写下顾客原话，再判断该用哪一句。";
         frontdeskInput.focus();
+        return;
+      }
+
+      const approvedCard = matchApprovedAnswerCard(text);
+      if (approvedCard) {
+        renderApprovedAnswerCard(approvedCard, text);
         return;
       }
 
@@ -743,6 +815,8 @@
       }
       toast.textContent = `已记录：${activeItem.question}。先使用当前标准说法。`;
     });
+
+    loadApprovedAnswerCards();
   </script>
 </body>
 </html>

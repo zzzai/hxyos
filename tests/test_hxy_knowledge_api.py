@@ -1530,7 +1530,7 @@ used_by:
         self.assertEqual(body["memory_target"], "training_card")
         self.assertIn("治疗", body["risk_boundary"])
 
-    def test_answer_cards_endpoint_returns_only_repository_approved_cards(self):
+    def test_answer_cards_endpoint_returns_repository_and_builtin_approved_cards(self):
         self.repo.answer_cards.append(
             {
                 "card_id": "repo-card-1",
@@ -1552,12 +1552,17 @@ used_by:
 
         self.assertEqual(response.status_code, 200)
         body = response.json()
-        self.assertEqual(body["count"], 1)
+        self.assertGreater(body["count"], 1)
         questions = {item["question_pattern"] for item in body["items"]}
         self.assertIn("门店例会怎么开？", questions)
+        self.assertIn("荷小悦是什么？", questions)
         repo_card = next(item for item in body["items"] if item["question_pattern"] == "门店例会怎么开？")
         self.assertFalse(repo_card["builtin"])
         self.assertEqual(repo_card["source"], "repository")
+        builtin_card = next(item for item in body["items"] if item["question_pattern"] == "荷小悦是什么？")
+        self.assertTrue(builtin_card["builtin"])
+        self.assertEqual(builtin_card["source"], "builtin")
+        self.assertEqual(builtin_card["status"], "approved")
 
     def test_operating_brain_understand_endpoint_returns_depth_and_application_contract(self):
         response = self.client.post(

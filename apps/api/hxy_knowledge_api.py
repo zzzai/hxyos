@@ -3679,7 +3679,23 @@ def create_app(
             _public_answer_card(card, source="repository")
             for card in _list_repository_answer_cards(make_repository(), status=status, limit=limit)
         ]
-        items = [*repo_items]
+        builtin_items = [
+            _public_answer_card(card, source="builtin")
+            for card in [*authority_cards(), *brand_authority_cards()]
+            if status is None or card.get("status") == status
+        ]
+        seen_patterns = {
+            _normalize_question_pattern(str(item.get("question_pattern") or ""))
+            for item in repo_items
+        }
+        items = [
+            *repo_items,
+            *[
+                item
+                for item in builtin_items
+                if _normalize_question_pattern(str(item.get("question_pattern") or "")) not in seen_patterns
+            ],
+        ]
         return {"items": items[:limit], "count": len(items[:limit])}
 
     @app.post("/api/knowledge/answer-cards", dependencies=[Depends(require_api_token)])
