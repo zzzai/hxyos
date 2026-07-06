@@ -1,0 +1,5 @@
+-r requirements.txt
+
+# Optional heavy parser worker dependencies.
+# Install this only on machines dedicated to high-fidelity PDF/OCR parsing.
+mineru[pipeline]==3.4.2

@@ -29,8 +29,8 @@ PARSING_REQUIRED_SUFFIXES = {
     ".xlsx",
 }
 DISCOVERABLE_SUFFIXES = TEXT_COMPILABLE_SUFFIXES | PARSING_REQUIRED_SUFFIXES
-MINERU_SUFFIXES = {".pdf"}
-MARKITDOWN_SUFFIXES = {".csv", ".doc", ".docx", ".epub", ".html", ".htm", ".json", ".ppt", ".pptx", ".xls", ".xlsx"}
+MINERU_SUFFIXES: set[str] = set()
+MARKITDOWN_SUFFIXES = {".csv", ".doc", ".docx", ".epub", ".html", ".htm", ".json", ".pdf", ".ppt", ".pptx", ".xls", ".xlsx"}
 VISION_SUFFIXES = {".jpeg", ".jpg", ".png", ".webp"}
 
 

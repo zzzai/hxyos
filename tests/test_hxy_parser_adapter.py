@@ -96,6 +96,140 @@ def test_run_parser_jobs_executes_markitdown_cli_and_writes_reference_artifact(t
     assert manifest["items"][0]["source_path"] == "knowledge/raw/inbox/plan.docx"
 
 
+def test_run_parser_jobs_marks_mineru_missing_without_failing(tmp_path, monkeypatch):
+    from hxy_knowledge.parser_adapter import run_parser_jobs
+
+    monkeypatch.setenv("PATH", str(tmp_path / "empty-bin"))
+    root = tmp_path / "hxy"
+    source = root / "knowledge" / "raw" / "inbox" / "brand.pdf"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"%PDF placeholder")
+    output_dir = tmp_path / "extracted"
+
+    result = run_parser_jobs(
+        [
+            {
+                "version": "hxy-parser-job.v1",
+                "job_id": "job-pdf-1",
+                "source_path": "knowledge/raw/inbox/brand.pdf",
+                "parser_strategy": "mineru",
+                "status": "PENDING",
+            }
+        ],
+        root_dir=root,
+        output_dir=output_dir,
+        strategies={"mineru"},
+    )
+
+    assert result["processed_count"] == 0
+    assert result["skipped_count"] == 1
+    item = result["items"][0]
+    assert item["status"] == "SKIPPED_DEPENDENCY_MISSING"
+    assert item["dependency"] == "mineru"
+    assert item["official_use_allowed"] is False
+    assert item["requires_human_review"] is True
+
+
+def test_run_parser_jobs_executes_mineru_cli_and_writes_reference_artifact(tmp_path, monkeypatch):
+    from hxy_knowledge.parser_adapter import run_parser_jobs
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_mineru = bin_dir / "mineru"
+    fake_mineru.write_text(
+        "#!/usr/bin/env python3\n"
+        "import pathlib, sys\n"
+        "assert sys.argv[sys.argv.index('-b') + 1] == 'pipeline'\n"
+        "assert sys.argv[sys.argv.index('-m') + 1] == 'auto'\n"
+        "source = pathlib.Path(sys.argv[sys.argv.index('-p') + 1])\n"
+        "out = pathlib.Path(sys.argv[sys.argv.index('-o') + 1])\n"
+        "artifact = out / source.stem / (source.stem + '.md')\n"
+        "artifact.parent.mkdir(parents=True, exist_ok=True)\n"
+        "artifact.write_text('# 荷小悦 PDF 解析\\n\\n来自 ' + source.name, encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    fake_mineru.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+    root = tmp_path / "hxy"
+    source = root / "knowledge" / "raw" / "inbox" / "brand.pdf"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"%PDF placeholder")
+    output_dir = tmp_path / "extracted"
+
+    result = run_parser_jobs(
+        [
+            {
+                "version": "hxy-parser-job.v1",
+                "job_id": "job-pdf-1",
+                "source_path": "knowledge/raw/inbox/brand.pdf",
+                "parser_strategy": "mineru",
+                "status": "PENDING",
+            }
+        ],
+        root_dir=root,
+        output_dir=output_dir,
+        strategies={"mineru"},
+    )
+
+    assert result["processed_count"] == 1
+    assert result["failed_count"] == 0
+    item = result["items"][0]
+    assert item["status"] == "EXTRACTED"
+    assert item["parser"] == "mineru"
+    assert item["output_path"].endswith("knowledge/raw/inbox/brand.pdf.reference.txt")
+    assert item["official_use_allowed"] is False
+    assert item["requires_human_review"] is True
+
+    output_path = Path(item["output_path"])
+    assert output_path.exists()
+    assert "来自 brand.pdf" in output_path.read_text(encoding="utf-8")
+
+
+def test_run_parser_jobs_marks_mineru_runtime_module_missing_as_dependency(tmp_path, monkeypatch):
+    from hxy_knowledge.parser_adapter import run_parser_jobs
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_mineru = bin_dir / "mineru"
+    fake_mineru.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "sys.stderr.write(\"ModuleNotFoundError: No module named 'torch'\\n\")\n"
+        "raise SystemExit(1)\n",
+        encoding="utf-8",
+    )
+    fake_mineru.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+    root = tmp_path / "hxy"
+    source = root / "knowledge" / "raw" / "inbox" / "brand.pdf"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"%PDF placeholder")
+    output_dir = tmp_path / "extracted"
+
+    result = run_parser_jobs(
+        [
+            {
+                "version": "hxy-parser-job.v1",
+                "job_id": "job-pdf-1",
+                "source_path": "knowledge/raw/inbox/brand.pdf",
+                "parser_strategy": "mineru",
+                "status": "PENDING",
+            }
+        ],
+        root_dir=root,
+        output_dir=output_dir,
+        strategies={"mineru"},
+    )
+
+    item = result["items"][0]
+    assert item["status"] == "SKIPPED_DEPENDENCY_MISSING"
+    assert item["dependency"] == "torch"
+    assert item["official_use_allowed"] is False
+    assert item["requires_human_review"] is True
+
+
 def test_run_hxy_parser_jobs_cli_reads_ingest_loop_state(tmp_path, monkeypatch):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -163,4 +297,4 @@ def test_api_requirements_pin_markitdown_for_parser_jobs():
         encoding="utf-8"
     )
 
-    assert "markitdown[docx,pptx,xls,xlsx]" in requirements
+    assert "markitdown[docx,pdf,pptx,xls,xlsx]" in requirements

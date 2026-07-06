@@ -53,7 +53,7 @@ def test_discover_inbox_materials_tracks_parse_readiness_and_ignores_scripts(tmp
     assert pdf_task["status"] == "PARSING_REQUIRED"
     assert pdf_task["compiler_ready"] is False
     assert pdf_task["parse_status"] == "external_parser_required"
-    assert pdf_task["parser_hint"] == "mineru_required"
+    assert pdf_task["parser_hint"] == "markitdown_required"
 
     ignored = result["ignored_items"][0]
     assert ignored["source_path"] == "knowledge/raw/inbox/danger.bat"
@@ -201,7 +201,7 @@ def test_run_ingest_loop_skips_duplicate_text_compilation_and_builds_parser_jobs
 
     assert state["parser_job_count"] == 3
     jobs = {item["source_path"]: item for item in state["parser_jobs"]}
-    assert jobs["knowledge/raw/inbox/deck.pdf"]["parser_strategy"] == "mineru"
+    assert jobs["knowledge/raw/inbox/deck.pdf"]["parser_strategy"] == "markitdown"
     assert jobs["knowledge/raw/inbox/plan.docx"]["parser_strategy"] == "markitdown"
     assert jobs["knowledge/raw/inbox/photo.png"]["parser_strategy"] == "ocr_or_vision"
     assert all(job["status"] == "PENDING" for job in state["parser_jobs"])
