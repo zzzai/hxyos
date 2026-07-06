@@ -9,7 +9,26 @@ from typing import Any
 from hxy_knowledge.knowledge_compiler import compile_directory
 
 
-SUPPORTED_SUFFIXES = {".md", ".txt"}
+TEXT_COMPILABLE_SUFFIXES = {".md", ".txt"}
+PARSING_REQUIRED_SUFFIXES = {
+    ".csv",
+    ".doc",
+    ".docx",
+    ".epub",
+    ".html",
+    ".htm",
+    ".jpeg",
+    ".jpg",
+    ".json",
+    ".pdf",
+    ".png",
+    ".ppt",
+    ".pptx",
+    ".webp",
+    ".xls",
+    ".xlsx",
+}
+DISCOVERABLE_SUFFIXES = TEXT_COMPILABLE_SUFFIXES | PARSING_REQUIRED_SUFFIXES
 
 
 def _utc_now() -> str:
@@ -33,11 +52,23 @@ def _relative(path: Path, root_dir: Path) -> str:
 
 def discover_inbox_materials(inbox_dir: Path, *, root_dir: Path) -> dict[str, Any]:
     items = []
+    ignored_items = []
     for path in sorted(inbox_dir.rglob("*")):
-        if not path.is_file() or path.suffix.lower() not in SUPPORTED_SUFFIXES:
+        if not path.is_file():
             continue
-        content_hash = _hash_file(path)
+        suffix = path.suffix.lower()
         rel_path = _relative(path, root_dir)
+        if suffix not in DISCOVERABLE_SUFFIXES:
+            ignored_items.append(
+                {
+                    "source_path": rel_path,
+                    "suffix": suffix,
+                    "reason": "unsupported_or_unsafe_suffix",
+                }
+            )
+            continue
+        compiler_ready = suffix in TEXT_COMPILABLE_SUFFIXES
+        content_hash = _hash_file(path)
         timestamp = _utc_now()
         items.append(
             {
@@ -45,8 +76,12 @@ def discover_inbox_materials(inbox_dir: Path, *, root_dir: Path) -> dict[str, An
                 "task_id": f"hxy-ingest-task:{content_hash[:16]}",
                 "source_path": rel_path,
                 "source_type": "file",
+                "suffix": suffix,
                 "content_hash": content_hash,
-                "status": "DISCOVERED",
+                "status": "DISCOVERED" if compiler_ready else "PARSING_REQUIRED",
+                "compiler_ready": compiler_ready,
+                "parse_status": "compiler_ready" if compiler_ready else "external_parser_required",
+                "parser_hint": "hxy_text_compiler" if compiler_ready else "mineru_or_markitdown_required",
                 "official_use_allowed": False,
                 "requires_human_review": True,
                 "risk_flags": [],
@@ -55,7 +90,15 @@ def discover_inbox_materials(inbox_dir: Path, *, root_dir: Path) -> dict[str, An
                 "updated_at": timestamp,
             }
         )
-    return {"version": "hxy-ingest-discovery.v1", "count": len(items), "items": items}
+    return {
+        "version": "hxy-ingest-discovery.v1",
+        "count": len(items),
+        "compiler_ready_count": sum(1 for item in items if item["compiler_ready"]),
+        "parsing_required_count": sum(1 for item in items if not item["compiler_ready"]),
+        "ignored_count": len(ignored_items),
+        "items": items,
+        "ignored_items": ignored_items,
+    }
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -86,6 +129,9 @@ def run_ingest_loop(
         "status": "review_required",
         "stop_reason": "human_review_required",
         "task_count": discovery["count"],
+        "compiler_ready_count": discovery["compiler_ready_count"],
+        "parsing_required_count": discovery["parsing_required_count"],
+        "ignored_count": discovery["ignored_count"],
         "extract_count": int(compiler_report.get("extract_count") or 0),
         "claim_count": int(compiler_report.get("claim_count") or 0),
         "review_queue_count": int(compiler_report.get("review_queue_count") or 0),
@@ -94,22 +140,28 @@ def run_ingest_loop(
         "tasks": [
             {
                 **task,
-                "status": "REVIEWING",
-                "artifact_refs": {
-                    "ingest_report": report_path.as_posix(),
-                    "review_queue": (wiki_dir / "review-queue.json").as_posix(),
-                    "answer_card_drafts": (wiki_dir / "answer-card-drafts.json").as_posix(),
-                    "compliance_review_pack": (wiki_dir / "compliance-review-pack.json").as_posix(),
-                },
+                "status": "REVIEWING" if task.get("compiler_ready") else "PARSING_REQUIRED",
+                "artifact_refs": (
+                    {
+                        "ingest_report": report_path.as_posix(),
+                        "review_queue": (wiki_dir / "review-queue.json").as_posix(),
+                        "answer_card_drafts": (wiki_dir / "answer-card-drafts.json").as_posix(),
+                        "compliance_review_pack": (wiki_dir / "compliance-review-pack.json").as_posix(),
+                    }
+                    if task.get("compiler_ready")
+                    else {}
+                ),
                 "updated_at": _utc_now(),
             }
             for task in discovery["items"]
         ],
+        "ignored_items": discovery["ignored_items"],
         "official_use_allowed": False,
         "requires_human_review": True,
         "authority_rule": "ingest_loop_outputs_are_candidates_until_human_review",
         "next_actions": [
             "在知识工作台复核 review queue。",
+            "先解析 PDF/DOCX/PPTX/图片等非文本资料，再进入编译。",
             "禁止自动发布 approved answer card。",
             "复核后再决定是否进入正式知识库。",
         ],
