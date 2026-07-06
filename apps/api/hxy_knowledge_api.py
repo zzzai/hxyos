@@ -2257,6 +2257,52 @@ def _compiler_review_queue_from_payload(payload: dict[str, Any] | None, *, limit
     }
 
 
+def _compiler_claim_triage_from_payload(payload: dict[str, Any] | None, *, limit: int) -> dict[str, Any]:
+    if not payload:
+        return {
+            "version": "hxy-claim-triage.v1",
+            "status": "missing",
+            "count": 0,
+            "total": 0,
+            "total_claim_count": 0,
+            "noise_claim_count": 0,
+            "duplicate_claim_count": 0,
+            "unique_reviewable_claim_count": 0,
+            "cluster_count": 0,
+            "selected_count": 0,
+            "items": [],
+            "official_use_allowed": False,
+            "requires_human_review": True,
+            "next_actions": ["运行知识编译器生成 knowledge/wiki/claim-triage.json。"],
+            "authority_rule": "claim_triage_items_are_prioritized_candidates_not_approved_knowledge",
+        }
+    items = []
+    for item in payload.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        public = dict(item)
+        public.setdefault("status", "needs_review")
+        public["official_use_allowed"] = False
+        public["requires_human_review"] = True
+        items.append(public)
+    return {
+        "version": payload.get("version") or "hxy-claim-triage.v1",
+        "status": payload.get("status") or ("ready" if items else "empty"),
+        "count": len(items[:limit]),
+        "total": len(items),
+        "total_claim_count": int(payload.get("total_claim_count") or 0),
+        "noise_claim_count": int(payload.get("noise_claim_count") or 0),
+        "duplicate_claim_count": int(payload.get("duplicate_claim_count") or 0),
+        "unique_reviewable_claim_count": int(payload.get("unique_reviewable_claim_count") or 0),
+        "cluster_count": int(payload.get("cluster_count") or 0),
+        "selected_count": int(payload.get("selected_count") or len(items)),
+        "items": items[:limit],
+        "official_use_allowed": False,
+        "requires_human_review": True,
+        "authority_rule": "claim_triage_items_are_prioritized_candidates_not_approved_knowledge",
+    }
+
+
 def _compiler_compliance_review_pack_from_payload(payload: dict[str, Any] | None, *, limit: int) -> dict[str, Any]:
     if not payload:
         return {
@@ -2786,6 +2832,13 @@ def create_app(
     ) -> dict[str, Any]:
         payload = _read_json_file(resolved_root / "knowledge" / "wiki" / "review-queue.json")
         return _compiler_review_queue_from_payload(payload, limit=limit)
+
+    @app.get("/api/operating-brain/knowledge-compiler/claim-triage")
+    async def operating_brain_knowledge_compiler_claim_triage_endpoint(
+        limit: int = Query(default=200, ge=1, le=200),
+    ) -> dict[str, Any]:
+        payload = _read_json_file(resolved_root / "knowledge" / "wiki" / "claim-triage.json")
+        return _compiler_claim_triage_from_payload(payload, limit=limit)
 
     @app.get("/api/operating-brain/knowledge-compiler/compliance-review-pack")
     async def operating_brain_knowledge_compiler_compliance_review_pack_endpoint(

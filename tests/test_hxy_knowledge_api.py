@@ -810,6 +810,66 @@ used_by:
         self.assertEqual(body["items"][0]["claim_id"], "claim-001")
         self.assertFalse(body["items"][0]["official_use_allowed"])
 
+    def test_operating_brain_compiler_claim_triage_endpoint_limits_and_marks_candidates(self):
+        wiki_dir = self.root / "knowledge" / "wiki"
+        wiki_dir.mkdir(parents=True)
+        (wiki_dir / "claim-triage.json").write_text(
+            json.dumps(
+                {
+                    "version": "hxy-claim-triage.v1",
+                    "total_claim_count": 218895,
+                    "noise_claim_count": 1123,
+                    "duplicate_claim_count": 11930,
+                    "unique_reviewable_claim_count": 205842,
+                    "cluster_count": 15657,
+                    "selected_count": 2,
+                    "items": [
+                        {
+                            "claim_id": "triage-001",
+                            "claim": "员工不能承诺治疗脚气或保证有效。",
+                            "review_group": "risk_boundary",
+                            "priority": "high",
+                            "source_class": "risk_compliance",
+                            "cluster_member_count": 42,
+                            "duplicate_count": 3,
+                            "sources": ["risk.md"],
+                        },
+                        {
+                            "claim_id": "triage-002",
+                            "claim": "门店话术需要保持口语化。",
+                            "review_group": "brand_expression",
+                            "priority": "medium",
+                            "source_class": "brand",
+                            "cluster_member_count": 9,
+                            "duplicate_count": 1,
+                            "sources": ["brand.md"],
+                        },
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        response = self.client.get("/api/operating-brain/knowledge-compiler/claim-triage?limit=1")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-claim-triage.v1")
+        self.assertEqual(body["count"], 1)
+        self.assertEqual(body["total"], 2)
+        self.assertEqual(body["total_claim_count"], 218895)
+        self.assertEqual(body["noise_claim_count"], 1123)
+        self.assertEqual(body["duplicate_claim_count"], 11930)
+        self.assertEqual(body["unique_reviewable_claim_count"], 205842)
+        self.assertEqual(body["cluster_count"], 15657)
+        self.assertEqual(body["selected_count"], 2)
+        self.assertFalse(body["official_use_allowed"])
+        self.assertTrue(body["requires_human_review"])
+        self.assertEqual(body["items"][0]["claim_id"], "triage-001")
+        self.assertFalse(body["items"][0]["official_use_allowed"])
+        self.assertTrue(body["items"][0]["requires_human_review"])
+
     def test_operating_brain_compiler_compliance_review_pack_endpoint_is_read_only(self):
         wiki_dir = self.root / "knowledge" / "wiki"
         wiki_dir.mkdir(parents=True)

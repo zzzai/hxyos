@@ -229,6 +229,34 @@ class HxyBrainFrontendTest(unittest.TestCase):
         governance_index = html.index("P0 合规闸门")
         self.assertLess(front_index, governance_index)
 
+    def test_knowledge_page_exposes_claim_triage_workbench_before_review_queue(self):
+        page = ROOT / "apps" / "admin-web" / "knowledge.html"
+        html = page.read_text(encoding="utf-8")
+
+        for label in [
+            "Claim 去噪工作台",
+            "不是正式知识",
+            "id=\"claimTriage\"",
+            "id=\"claimTriageMeta\"",
+            "id=\"claimTriageSourceFilter\"",
+            "id=\"claimTriageGroupFilter\"",
+            "id=\"claimTriagePriorityFilter\"",
+            "id=\"claimTriageSearch\"",
+            "renderClaimTriage",
+            "filterClaimTriageItems",
+            "refreshClaimTriage",
+            "/api/operating-brain/knowledge-compiler/claim-triage?limit=200",
+            "claimTriageState",
+            "cluster_member_count",
+            "duplicate_count",
+            "requires_human_review",
+        ]:
+            self.assertIn(label, html)
+
+        triage_index = html.index("Claim 去噪工作台")
+        review_index = html.index("候选 Claim 复核")
+        self.assertLess(triage_index, review_index)
+
     def test_startup_stage_product_focuses_on_today_action_not_full_os(self):
         page = ROOT / "apps" / "admin-web" / "startup.html"
         self.assertTrue(page.exists(), "startup stage product page should exist")

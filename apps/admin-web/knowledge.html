@@ -664,6 +664,46 @@
       align-items: end;
     }
 
+    .triage-tools {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(150px, 0.4fr)) minmax(220px, 1fr) auto;
+      gap: 10px;
+      align-items: end;
+      margin-bottom: 14px;
+    }
+
+    .triage-metrics {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 1px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--line);
+      margin-bottom: 14px;
+    }
+
+    .triage-metric {
+      min-height: 66px;
+      background: #fbfcfb;
+      padding: 10px 12px;
+    }
+
+    .triage-metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.3;
+    }
+
+    .triage-metric strong {
+      display: block;
+      margin-top: 9px;
+      font-family: var(--mono);
+      font-size: 20px;
+      line-height: 1;
+    }
+
     .table-wrap {
       width: 100%;
       overflow-x: auto;
@@ -734,14 +774,16 @@
     }
 
     .review-list,
-    .correction-list {
+    .correction-list,
+    .claim-triage-list {
       display: grid;
       gap: 10px;
       max-height: 520px;
       overflow: auto;
     }
 
-    .review-item {
+    .review-item,
+    .claim-triage-item {
       display: grid;
       grid-template-columns: 150px 1fr auto;
       gap: 12px;
@@ -760,19 +802,22 @@
     }
 
     .review-item:first-child,
-    .correction-item:first-child {
+    .correction-item:first-child,
+    .claim-triage-item:first-child {
       border-top: 0;
       padding-top: 0;
     }
 
     .review-main,
-    .correction-main {
+    .correction-main,
+    .claim-triage-main {
       display: grid;
       gap: 6px;
       min-width: 0;
     }
 
-    .review-claim {
+    .review-claim,
+    .claim-triage-claim {
       line-height: 1.5;
       overflow-wrap: anywhere;
     }
@@ -812,10 +857,13 @@
       .workbench-topbar,
       .api-control,
       .system-strip,
+      .triage-tools,
+      .triage-metrics,
       .search-tools,
       .upload-row,
       .metrics,
       .review-item,
+      .claim-triage-item,
       .correction-item {
         grid-template-columns: 1fr;
       }
@@ -833,7 +881,8 @@
 
       .gate-actions label,
       .review-actions button,
-      .gate-actions button {
+      .gate-actions button,
+      .triage-tools button {
         width: 100%;
       }
 
@@ -1053,7 +1102,53 @@
 
       <div class="panel full">
         <div class="panel-header">
-          <div class="panel-title">候选知识复核 <small id="reviewQueueMeta">等待编译产物</small></div>
+          <div class="panel-title">Claim 去噪工作台 <small id="claimTriageMeta">不是正式知识 · 等待 triage 产物</small></div>
+          <button class="secondary" id="refreshClaimTriage" type="button">刷新去噪结果</button>
+        </div>
+        <div class="panel-body">
+          <div class="triage-metrics" aria-label="Claim triage 统计">
+            <div class="triage-metric"><span>原始 claim</span><strong id="claimTriageTotalClaims">0</strong></div>
+            <div class="triage-metric"><span>噪音</span><strong id="claimTriageNoiseClaims">0</strong></div>
+            <div class="triage-metric"><span>重复</span><strong id="claimTriageDuplicateClaims">0</strong></div>
+            <div class="triage-metric"><span>可复核</span><strong id="claimTriageReviewableClaims">0</strong></div>
+            <div class="triage-metric"><span>聚类</span><strong id="claimTriageClusters">0</strong></div>
+            <div class="triage-metric"><span>优先审核</span><strong id="claimTriageSelected">0</strong></div>
+          </div>
+          <div class="triage-tools" aria-label="Claim triage 筛选">
+            <label>
+              来源
+              <select id="claimTriageSourceFilter">
+                <option value="">全部</option>
+              </select>
+            </label>
+            <label>
+              分组
+              <select id="claimTriageGroupFilter">
+                <option value="">全部</option>
+              </select>
+            </label>
+            <label>
+              优先级
+              <select id="claimTriagePriorityFilter">
+                <option value="">全部</option>
+              </select>
+            </label>
+            <label>
+              搜索
+              <input id="claimTriageSearch" type="search" placeholder="claim / 来源">
+            </label>
+            <button class="secondary" id="applyClaimTriageFilters" type="button">筛选</button>
+          </div>
+          <div class="result">Triage 只做去噪、聚类和优先级筛选。requires_human_review，不能当作 approved answer card 或正式知识引用。</div>
+          <div id="claimTriage" class="claim-triage-list" aria-label="Claim triage 列表">
+            <div class="result">等待刷新</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel full">
+        <div class="panel-header">
+          <div class="panel-title">候选 Claim 复核 <small id="reviewQueueMeta">等待编译产物</small></div>
           <button class="secondary" id="refreshReviewQueue" type="button">刷新复核队列</button>
         </div>
         <div class="panel-body">
@@ -1191,6 +1286,11 @@
     const actionResult = document.querySelector("#actionResult");
     const assetTable = document.querySelector("#assetTable");
     const searchResults = document.querySelector("#searchResults");
+    const claimTriage = document.querySelector("#claimTriage");
+    const claimTriageSourceFilter = document.querySelector("#claimTriageSourceFilter");
+    const claimTriageGroupFilter = document.querySelector("#claimTriageGroupFilter");
+    const claimTriagePriorityFilter = document.querySelector("#claimTriagePriorityFilter");
+    const claimTriageSearch = document.querySelector("#claimTriageSearch");
     const reviewQueue = document.querySelector("#reviewQueue");
     const complianceReviewPack = document.querySelector("#complianceReviewPack");
     const benchmarkCorrections = document.querySelector("#benchmarkCorrections");
@@ -1201,6 +1301,7 @@
     const p0DecisionPreviewResult = document.querySelector("#p0DecisionPreviewResult");
     const ingestLoopStatus = document.querySelector("#ingestLoopStatus");
     const brandDecisionResult = document.querySelector("#brandDecisionResult");
+    const claimTriageState = { items: [] };
 
     function defaultApiBase() {
       if (window.location.origin && window.location.origin !== "null") {
@@ -1288,6 +1389,90 @@
           <div class="path"><code>${escapeHtml(item.source_path || "")}</code></div>
         </article>
       `).join("");
+    }
+
+    function setSelectOptions(select, values) {
+      const current = select.value;
+      const options = [`<option value="">全部</option>`].concat(
+        values.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`)
+      );
+      select.innerHTML = options.join("");
+      if (values.includes(current)) select.value = current;
+    }
+
+    function filterClaimTriageItems() {
+      const source = claimTriageSourceFilter.value;
+      const group = claimTriageGroupFilter.value;
+      const priority = claimTriagePriorityFilter.value;
+      const query = claimTriageSearch.value.trim().toLowerCase();
+      return claimTriageState.items.filter((item) => {
+        if (source && item.source_class !== source) return false;
+        if (group && item.review_group !== group) return false;
+        if (priority && item.priority !== priority) return false;
+        if (!query) return true;
+        const haystack = [
+          item.claim,
+          item.claim_id,
+          item.source_class,
+          item.review_group,
+          item.priority,
+          ...(item.sources || []),
+        ].join(" ").toLowerCase();
+        return haystack.includes(query);
+      });
+    }
+
+    function renderClaimTriageRows() {
+      const items = filterClaimTriageItems();
+      if (!items.length) {
+        claimTriage.innerHTML = `<div class="result">没有匹配的 triage claim。调整筛选条件，或重新运行知识编译器生成 claim-triage.json。</div>`;
+        return;
+      }
+      claimTriage.innerHTML = items.map((item) => {
+        const sources = (item.sources || []).slice(0, 2).join(" · ");
+        return `
+          <article class="claim-triage-item">
+            <div>
+              <div class="tag">${escapeHtml(item.priority || "medium")}</div>
+              <div style="height:6px"></div>
+              <div class="tag">${escapeHtml(item.source_class || "unknown")}</div>
+              <div style="height:6px"></div>
+              <div class="tag">${escapeHtml(item.review_group || "general")}</div>
+            </div>
+            <div class="claim-triage-main">
+              <div class="claim-triage-claim">${escapeHtml(item.claim || "")}</div>
+              <div class="path">
+                cluster_member_count: ${Number(item.cluster_member_count || 0)} ·
+                duplicate_count: ${Number(item.duplicate_count || 0)} ·
+                requires_human_review: ${String(Boolean(item.requires_human_review))}
+              </div>
+              <div class="path"><code>${escapeHtml(sources || "无来源样本")}</code></div>
+            </div>
+            <div>
+              <span class="status-pill strong">candidate</span>
+            </div>
+          </article>
+        `;
+      }).join("");
+    }
+
+    function renderClaimTriage(payload) {
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      claimTriageState.items = items;
+      document.querySelector("#claimTriageMeta").textContent = `${payload.count || 0}/${payload.total || 0} 条 · 不是正式知识`;
+      document.querySelector("#claimTriageTotalClaims").textContent = payload.total_claim_count ?? 0;
+      document.querySelector("#claimTriageNoiseClaims").textContent = payload.noise_claim_count ?? 0;
+      document.querySelector("#claimTriageDuplicateClaims").textContent = payload.duplicate_claim_count ?? 0;
+      document.querySelector("#claimTriageReviewableClaims").textContent = payload.unique_reviewable_claim_count ?? 0;
+      document.querySelector("#claimTriageClusters").textContent = payload.cluster_count ?? 0;
+      document.querySelector("#claimTriageSelected").textContent = payload.selected_count ?? items.length;
+      const sources = [...new Set(items.map((item) => item.source_class).filter(Boolean))].sort();
+      const groups = [...new Set(items.map((item) => item.review_group).filter(Boolean))].sort();
+      const priorities = [...new Set(items.map((item) => item.priority).filter(Boolean))].sort();
+      setSelectOptions(claimTriageSourceFilter, sources);
+      setSelectOptions(claimTriageGroupFilter, groups);
+      setSelectOptions(claimTriagePriorityFilter, priorities);
+      renderClaimTriageRows();
     }
 
     function renderReviewQueue(payload) {
@@ -1442,10 +1627,14 @@
       const claimCount = payload.claim_count || 0;
       const reviewCount = payload.review_queue_count || 0;
       const draftCount = payload.answer_card_draft_count || 0;
+      const triageClusters = payload.claim_triage_cluster_count || 0;
+      const triageSelected = payload.claim_triage_selected_count || 0;
+      const triageReduction = payload.claim_triage_reduction_count || 0;
       const stopReason = payload.stop_reason || "waiting_for_manual_run";
       ingestLoopStatus.innerHTML = `
         <strong>${escapeHtml(status)}</strong>
         <div>资料：${taskCount} · 候选 claim：${claimCount} · 待复核：${reviewCount} · 答案卡草稿：${draftCount}</div>
+        <div>Triage：${triageClusters} 类 · 优先 ${triageSelected} 条 · 降噪 ${triageReduction} 条</div>
         <div>停止原因：${escapeHtml(stopReason)}</div>
         <div>候选资料不等于正式知识，Loop 自动停在人工审核。</div>
       `;
@@ -1476,9 +1665,10 @@
       try {
         await requestJson("/health");
         setServiceState(true, "已连接");
-        const [summary, assets, queue, compliancePack, corrections, ingestLoop, p0Status, p0Todo] = await Promise.all([
+        const [summary, assets, triage, queue, compliancePack, corrections, ingestLoop, p0Status, p0Todo] = await Promise.all([
           requestJson("/api/knowledge/summary"),
           requestJson("/api/knowledge/assets?limit=100"),
+          requestJson("/api/operating-brain/knowledge-compiler/claim-triage?limit=200"),
           requestJson("/api/operating-brain/knowledge-compiler/review-queue?limit=20"),
           requestJson("/api/operating-brain/knowledge-compiler/compliance-review-pack?limit=20"),
           requestJson("/api/operating-brain/benchmark/corrections?limit=20"),
@@ -1488,6 +1678,7 @@
         ]);
         renderSummary(summary);
         renderAssets(assets.items || []);
+        renderClaimTriage(triage);
         renderReviewQueue(queue);
         renderComplianceReviewPack(compliancePack);
         renderBenchmarkCorrections(corrections);
@@ -1545,6 +1736,16 @@
         renderSearch(result.items || []);
       } catch (error) {
         searchResults.innerHTML = `<div class="result error">${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    async function refreshClaimTriage() {
+      try {
+        const triage = await requestJson("/api/operating-brain/knowledge-compiler/claim-triage?limit=200");
+        renderClaimTriage(triage);
+        setResult("Claim 去噪结果已刷新。不是正式知识，仍需人工复核。", "ok");
+      } catch (error) {
+        setResult(error.message, "error");
       }
     }
 
@@ -1648,6 +1849,7 @@
         setResult("正在运行资料入库 Loop...");
         const payload = await requestJson("/api/operating-brain/ingest-loop/run", { method: "POST" });
         renderIngestLoopStatus(payload);
+        await refreshClaimTriage();
         await refreshReviewQueue();
         await refreshComplianceReviewPack();
         setResult("资料入库 Loop 已停在人工复核。", "ok");
@@ -1713,6 +1915,12 @@
     document.querySelector("#refreshIngestLoop").addEventListener("click", refreshIngestLoop);
     document.querySelector("#runIngestLoop").addEventListener("click", runIngestLoop);
     document.querySelector("#runBrandDecision").addEventListener("click", runBrandDecision);
+    document.querySelector("#refreshClaimTriage").addEventListener("click", refreshClaimTriage);
+    document.querySelector("#applyClaimTriageFilters").addEventListener("click", renderClaimTriageRows);
+    claimTriageSourceFilter.addEventListener("change", renderClaimTriageRows);
+    claimTriageGroupFilter.addEventListener("change", renderClaimTriageRows);
+    claimTriagePriorityFilter.addEventListener("change", renderClaimTriageRows);
+    claimTriageSearch.addEventListener("input", renderClaimTriageRows);
     document.querySelector("#refreshReviewQueue").addEventListener("click", refreshReviewQueue);
     document.querySelector("#refreshComplianceReviewPack").addEventListener("click", refreshComplianceReviewPack);
     document.querySelector("#refreshBenchmarkCorrections").addEventListener("click", refreshBenchmarkCorrections);
