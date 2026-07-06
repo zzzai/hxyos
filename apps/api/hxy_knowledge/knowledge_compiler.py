@@ -46,6 +46,15 @@ SAFE_BOUNDARY_PATTERNS = [
 NOISE_TERMS = ["PDF_TEXT_START", "资料状态：reference", "权威使用：false", "人工复核：required", "---"]
 HXY_TERMS = ["荷小悦", "清泡调补养", "清泡", "调泡", "补泡", "养泡", "社区小店", "草本真现煮"]
 COMPETITOR_ONLY_TERMS = ["奈晚", "谷小推", "郑远元", "LANN", "蘭泰式", "秀域", "足康树", "素可泰", "长风拨筋", "贡小推"]
+TOPIC_HINTS = {
+    "risk_medical": ["治疗", "治愈", "医学", "诊断", "疗效", "医院", "药品", "一次见效", "包好", "保证有效"],
+    "brand_position": ["定位", "品牌", "核爆点", "品类", "轻养生", "足疗", "社区草本"],
+    "product_qing_tiao_bu_yang": ["清泡调补养", "清泡", "调泡", "补泡", "养泡", "草本", "泡脚"],
+    "store_model": ["社区小店", "门店模型", "小店", "房间数量", "人员配置", "单店模型", "坪效", "人效"],
+    "unit_economics": ["投资", "回本", "客单价", "利润", "成本", "租金", "毛利", "现金流"],
+    "employee_script": ["员工", "话术", "技师", "接待", "推荐", "培训", "复训"],
+    "competitor": COMPETITOR_ONLY_TERMS,
+}
 REVIEW_DOMAIN_HINTS = {
     "store_model": ["门店模型", "小店", "社区小店", "面积", "房间", "人员配置", "单店模型", "坪效", "人效"],
     "competitor_research": ["竞品", "奈晚", "谷小推", "郑远元", "LANN", "秀域", "足康树", "品牌数据", "排名"],
@@ -77,7 +86,8 @@ def _domain_for(text: str) -> str:
 
 
 def _risk_flags(text: str) -> list[str]:
-    has_overclaim_term = any(term in text for term in OVERCLAIM_TERMS)
+    risk_text = re.sub(r"不一定有效[应果]?", "", text)
+    has_overclaim_term = any(term in risk_text for term in OVERCLAIM_TERMS)
     if not has_overclaim_term:
         return []
     if re.search(r"不做.{0,12}治疗", text):
@@ -115,6 +125,14 @@ def _is_noise_claim(text: str) -> bool:
     stripped = text.strip()
     if not stripped:
         return True
+    if re.fullmatch(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", stripped):
+        return True
+    if re.fullmatch(r"(?:\+?86[- ]?)?(?:400[- ]?\d{3}[- ]?\d{4}|1\d{2}[- ]?\d{4}[- ]?\d{4})", stripped):
+        return True
+    if re.fullmatch(r"[\w.-]+\.(?:com|cn|net|org|io)", stripped, flags=re.IGNORECASE):
+        return True
+    if re.fullmatch(r"\[.*?\]\(.*?\)", stripped):
+        return True
     if any(term in stripped for term in NOISE_TERMS):
         return True
     if "\f" in stripped:
@@ -128,23 +146,137 @@ def _is_noise_claim(text: str) -> bool:
     return False
 
 
+def _clean_claim_fragment(text: str) -> str:
+    cleaned = re.sub(r"!\[[^\]]*]\([^)]+\)", " ", text)
+    cleaned = re.sub(r"\[[^\]]*]\([^)]+\)", " ", cleaned)
+    cleaned = cleaned.replace("\u0001", " ").replace("\ufeff", " ")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" \t\r\n#*-|")
+    return cleaned
+
+
+def _normalise_claim_key(text: str) -> str:
+    cleaned = _clean_claim_fragment(text).lower()
+    cleaned = re.sub(r"^(?:第?[一二三四五六七八九十百千万\d]+[、.．:：-]?)+", "", cleaned)
+    return "".join(char for char in cleaned if char.isalnum())
+
+
+def _topic_for_claim(text: str, domain: str | None = None) -> str:
+    haystack = f"{domain or ''}\n{text}"
+    for topic, terms in TOPIC_HINTS.items():
+        if any(term in haystack for term in terms):
+            return topic
+    key = _normalise_claim_key(text)
+    return f"literal_{key[:16] or 'general'}"
+
+
+def _cluster_key_for_review_item(item: dict[str, Any]) -> str:
+    group = str(item.get("review_group") or "general")
+    source_class = str(item.get("source_class") or "unknown")
+    if source_class == "external_reference":
+        return f"{group}:external_reference"
+    topic = _topic_for_claim(str(item.get("claim") or ""), str(item.get("domain") or ""))
+    return f"{group}:{topic}"
+
+
+def _source_class_for(sources: list[str]) -> str:
+    joined = "\n".join(sources)
+    if "09_风险与合规" in joined or "风险与合规" in joined:
+        return "risk_compliance"
+    if "09_知识库与参考资料" in joined:
+        return "external_reference"
+    if any(
+        marker in joined
+        for marker in [
+            "01_市场洞察",
+            "02_战略方向",
+            "03_门店模型",
+            "04_产品系统",
+            "05_运营方法",
+            "06_融资商务",
+            "07_演示素材",
+        ]
+    ):
+        return "hxy_owned"
+    return "general"
+
+
+def _source_rank(source_class: str) -> int:
+    return {
+        "risk_compliance": 0,
+        "hxy_owned": 1,
+        "general": 2,
+        "external_reference": 3,
+    }.get(source_class, 2)
+
+
+def _has_project_context(text: str, source_class: str) -> bool:
+    if source_class in {"risk_compliance", "hxy_owned"}:
+        return True
+    if any(term in text for term in HXY_TERMS):
+        return True
+    return "员工" in text and any(marker in text for marker in FORBIDDEN_REFERENCE_MARKERS)
+
+
+def _review_item_for_claim(claim: dict[str, Any]) -> dict[str, Any] | None:
+    raw_text = str(claim.get("claim") or "")
+    if _is_noise_claim(raw_text):
+        return None
+    text = _clean_claim_fragment(raw_text)
+    sources = [str(source) for source in (claim.get("sources") or [])]
+    source_class = _source_class_for(sources)
+    score = _claim_value_score({**claim, "claim": text, "sources": sources, "source_class": source_class})
+    if score <= 0:
+        return None
+    group = _review_group_for(text, str(claim.get("domain") or ""))
+    risk_flags = list(claim.get("risk_flags") or [])
+    project_context = _has_project_context(text, source_class)
+    priority = "high" if (risk_flags and project_context) or score >= 0.8 else ("medium" if score >= 0.6 else "low")
+    reviewer = "运营/合规负责人" if risk_flags or group == "risk_boundary" else "创始人/运营负责人"
+    recommended_action = "先复核风险边界，禁止直接发布。" if risk_flags else "复核来源和业务适用范围，通过后生成答案卡。"
+    return {
+        "version": "hxy-review-queue-item.v1",
+        "claim_id": claim.get("claim_id"),
+        "claim": text,
+        "domain": claim.get("domain") or "general",
+        "review_group": group,
+        "priority": priority,
+        "score": score,
+        "source_class": source_class,
+        "risk_flags": risk_flags,
+        "sources": sources,
+        "status": "needs_review",
+        "official_use_allowed": False,
+        "requires_human_review": True,
+        "recommended_reviewer": reviewer,
+        "recommended_action": recommended_action,
+    }
+
+
 def _claim_value_score(claim: dict[str, Any]) -> float:
     text = str(claim.get("claim") or "")
     domain = str(claim.get("domain") or "")
     if _is_noise_claim(text):
         return 0.0
+    source_class = str(claim.get("source_class") or _source_class_for([str(source) for source in (claim.get("sources") or [])]))
+    project_context = _has_project_context(text, source_class)
     score = 0.35
     group = _review_group_for(text, domain)
     if group != "general":
-        score += 0.2
+        score += 0.2 if project_context else 0.05
     if claim.get("risk_flags"):
-        score += 0.35
+        score += 0.35 if project_context else 0.05
     if any(term in text for terms in REVIEW_DOMAIN_HINTS.values() for term in terms):
         score += 0.15
     if any(term in text for term in HXY_TERMS):
         score += 0.25
     if any(term in text for term in COMPETITOR_ONLY_TERMS) and not any(term in text for term in HXY_TERMS):
         score -= 0.2
+    if source_class == "risk_compliance":
+        score += 0.25
+    elif source_class == "hxy_owned":
+        score += 0.18
+    elif source_class == "external_reference":
+        score -= 0.3
     if 18 <= len(text) <= 220:
         score += 0.1
     if claim.get("sources"):
@@ -153,8 +285,13 @@ def _claim_value_score(claim: dict[str, Any]) -> float:
 
 
 def _sentences(text: str) -> list[str]:
-    candidates = re.split(r"[。！？!?]\s*", text)
-    return [item.strip(" \n\t#") for item in candidates if len(item.strip(" \n\t#")) >= 8]
+    candidates: list[str] = []
+    for line in text.splitlines():
+        line = _clean_claim_fragment(line)
+        if not line:
+            continue
+        candidates.extend(re.split(r"[。！？!?]\s*", line))
+    return [item for item in (_clean_claim_fragment(candidate) for candidate in candidates) if len(item) >= 8 and not _is_noise_claim(item)]
 
 
 def compile_material(material: dict[str, Any]) -> dict[str, Any]:
@@ -204,48 +341,154 @@ def extract_candidate_claims(extract: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def build_review_queue(claims: list[dict[str, Any]], limit: int = 20) -> dict[str, Any]:
-    items: list[dict[str, Any]] = []
-    noise_count = 0
-    for claim in claims:
-        text = str(claim.get("claim") or "")
-        score = _claim_value_score(claim)
-        if score <= 0:
-            noise_count += 1
-            continue
-        group = _review_group_for(text, str(claim.get("domain") or ""))
-        risk_flags = list(claim.get("risk_flags") or [])
-        priority = "high" if risk_flags or score >= 0.8 else ("medium" if score >= 0.6 else "low")
-        reviewer = "运营/合规负责人" if risk_flags or group == "risk_boundary" else "创始人/运营负责人"
-        recommended_action = "先复核风险边界，禁止直接发布。" if risk_flags else "复核来源和业务适用范围，通过后生成答案卡。"
-        item = {
-            "version": "hxy-review-queue-item.v1",
-            "claim_id": claim.get("claim_id"),
-            "claim": text,
-            "domain": claim.get("domain") or "general",
-            "review_group": group,
-            "priority": priority,
-            "score": score,
-            "risk_flags": risk_flags,
-            "sources": claim.get("sources") or [],
-            "status": "needs_review",
-            "official_use_allowed": False,
-            "requires_human_review": True,
-            "recommended_reviewer": reviewer,
-            "recommended_action": recommended_action,
-        }
-        items.append(item)
-    priority_order = {"high": 0, "medium": 1, "low": 2}
-    items.sort(key=lambda item: (priority_order[item["priority"]], -float(item["score"]), str(item["claim_id"] or "")))
+    triage = build_claim_triage(claims, limit=limit)
+    items = list(triage["items"])
     grouped: dict[str, int] = {}
-    for item in items:
-        grouped[item["review_group"]] = grouped.get(item["review_group"], 0) + 1
+    for cluster in triage["clusters"]:
+        group = str(cluster.get("review_group") or "general")
+        grouped[group] = grouped.get(group, 0) + 1
     return {
         "version": "hxy-review-queue.v1",
         "total_claim_count": len(claims),
-        "noise_claim_count": noise_count,
-        "reviewable_claim_count": len(items),
+        "noise_claim_count": triage["noise_claim_count"],
+        "duplicate_claim_count": triage["duplicate_claim_count"],
+        "reviewable_claim_count": triage["unique_reviewable_claim_count"],
+        "cluster_count": triage["cluster_count"],
+        "selected_count": len(items),
         "group_counts": grouped,
         "items": items[: max(0, limit)],
+    }
+
+
+def build_claim_triage(claims: list[dict[str, Any]], limit: int = 80) -> dict[str, Any]:
+    noise_count = 0
+    duplicate_count = 0
+    by_normalised_claim: dict[str, dict[str, Any]] = {}
+    for claim in claims:
+        item = _review_item_for_claim(claim)
+        if item is None:
+            noise_count += 1
+            continue
+        normalised_key = _normalise_claim_key(str(item.get("claim") or ""))
+        if not normalised_key:
+            noise_count += 1
+            continue
+        existing = by_normalised_claim.get(normalised_key)
+        if existing is None:
+            item["duplicate_count"] = 0
+            item["duplicate_claim_ids_sample"] = []
+            by_normalised_claim[normalised_key] = item
+            continue
+
+        duplicate_count += 1
+        existing["duplicate_count"] = int(existing.get("duplicate_count") or 0) + 1
+        duplicate_ids = list(existing.get("duplicate_claim_ids_sample") or [])
+        if len(duplicate_ids) < 8:
+            duplicate_ids.append(str(item.get("claim_id") or ""))
+        existing["duplicate_claim_ids_sample"] = duplicate_ids
+        existing_sources = list(existing.get("sources") or [])
+        for source in item.get("sources") or []:
+            if source not in existing_sources:
+                existing_sources.append(source)
+        existing["sources"] = existing_sources
+        if float(item.get("score") or 0) > float(existing.get("score") or 0):
+            for key in [
+                "claim_id",
+                "claim",
+                "domain",
+                "review_group",
+                "priority",
+                "score",
+                "risk_flags",
+                "recommended_reviewer",
+                "recommended_action",
+            ]:
+                existing[key] = item.get(key)
+
+    clusters_by_key: dict[str, list[dict[str, Any]]] = {}
+    for item in by_normalised_claim.values():
+        clusters_by_key.setdefault(_cluster_key_for_review_item(item), []).append(item)
+
+    priority_order = {"high": 0, "medium": 1, "low": 2}
+    clusters: list[dict[str, Any]] = []
+    for cluster_key, members in clusters_by_key.items():
+        members.sort(
+            key=lambda item: (
+                priority_order[str(item.get("priority") or "low")],
+                -float(item.get("score") or 0),
+                _source_rank(str(item.get("source_class") or "general")),
+                -int(item.get("duplicate_count") or 0),
+                str(item.get("claim_id") or ""),
+            )
+        )
+        representative = dict(members[0])
+        source_set: list[str] = []
+        duplicate_total = 0
+        for member in members:
+            duplicate_total += int(member.get("duplicate_count") or 0)
+            for source in member.get("sources") or []:
+                if source not in source_set:
+                    source_set.append(str(source))
+        representative["sources"] = source_set
+        representative["duplicate_count"] = int(representative.get("duplicate_count") or 0)
+        representative["cluster_member_count"] = len(members)
+        representative["cluster_duplicate_count"] = duplicate_total
+        representative["cluster_id"] = _stable_id("hxy-claim-cluster", cluster_key)
+        representative["cluster_key"] = cluster_key
+        representative["similar_claim_ids_sample"] = [str(member.get("claim_id") or "") for member in members[1:9]]
+        clusters.append(
+            {
+                "version": "hxy-claim-cluster.v1",
+                "cluster_id": representative["cluster_id"],
+                "cluster_key": cluster_key,
+                "review_group": representative.get("review_group") or "general",
+                "priority": representative.get("priority") or "low",
+                "score": representative.get("score") or 0,
+                "source_class": representative.get("source_class") or "general",
+                "representative_claim_id": representative.get("claim_id"),
+                "representative_claim": representative.get("claim"),
+                "member_count": len(members),
+                "duplicate_count": duplicate_total,
+                "source_count": len(source_set),
+                "sources_sample": source_set[:8],
+                "claim_ids_sample": [str(member.get("claim_id") or "") for member in members[:8]],
+                "representative_item": representative,
+            }
+        )
+
+    clusters.sort(
+        key=lambda cluster: (
+            priority_order[str(cluster.get("priority") or "low")],
+            0 if cluster.get("representative_item", {}).get("risk_flags") else 1,
+            _source_rank(str(cluster.get("source_class") or "general")),
+            -float(cluster.get("score") or 0),
+            -int(cluster.get("member_count") or 0),
+            str(cluster.get("representative_claim_id") or ""),
+        )
+    )
+    selected_clusters = clusters[: max(0, limit)]
+    items = [dict(cluster["representative_item"]) for cluster in selected_clusters]
+    group_counts: dict[str, int] = {}
+    for cluster in clusters:
+        group = str(cluster.get("review_group") or "general")
+        group_counts[group] = group_counts.get(group, 0) + 1
+    return {
+        "version": "hxy-claim-triage.v1",
+        "total_claim_count": len(claims),
+        "noise_claim_count": noise_count,
+        "duplicate_claim_count": duplicate_count,
+        "unique_reviewable_claim_count": len(by_normalised_claim),
+        "cluster_count": len(clusters),
+        "selected_count": len(items),
+        "group_counts": group_counts,
+        "clusters": [
+            {key: value for key, value in cluster.items() if key != "representative_item"}
+            for cluster in selected_clusters
+        ],
+        "items": items,
+        "official_use_allowed": False,
+        "requires_human_review": True,
+        "authority_rule": "claim_triage_is_for_review_prioritization_not_approved_knowledge",
     }
 
 
@@ -421,12 +664,13 @@ def compile_directory(
         claims.extend(extract_candidate_claims(extract))
 
     graph = build_knowledge_graph(extracts=extracts, claims=claims)
+    claim_triage = build_claim_triage(claims, limit=200)
     review_queue = build_review_queue(claims, limit=20)
-    full_review_queue = build_review_queue(claims, limit=max(len(claims), 20))
     answer_card_drafts = build_answer_card_drafts(review_queue["items"], limit=10)
-    compliance_review_pack = build_compliance_review_pack(full_review_queue["items"], limit=20)
+    compliance_review_pack = build_compliance_review_pack(claim_triage["items"], limit=20)
     (wiki_root / "graph.json").write_text(json.dumps(graph, ensure_ascii=False, indent=2), encoding="utf-8")
     (wiki_root / "index.md").write_text(_render_index(extracts, claims), encoding="utf-8")
+    (wiki_root / "claim-triage.json").write_text(json.dumps(claim_triage, ensure_ascii=False, indent=2), encoding="utf-8")
     (wiki_root / "review-queue.json").write_text(json.dumps(review_queue, ensure_ascii=False, indent=2), encoding="utf-8")
     (wiki_root / "answer-card-drafts.json").write_text(json.dumps(answer_card_drafts, ensure_ascii=False, indent=2), encoding="utf-8")
     (wiki_root / "compliance-review-pack.json").write_text(json.dumps(compliance_review_pack, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -439,6 +683,10 @@ def compile_directory(
         "review_queue_count": len(review_queue["items"]),
         "reviewable_claim_count": review_queue["reviewable_claim_count"],
         "noise_claim_count": review_queue["noise_claim_count"],
+        "duplicate_claim_count": claim_triage["duplicate_claim_count"],
+        "claim_triage_cluster_count": claim_triage["cluster_count"],
+        "claim_triage_selected_count": claim_triage["selected_count"],
+        "claim_triage_reduction_count": max(0, int(claim_triage["unique_reviewable_claim_count"]) - int(claim_triage["cluster_count"])),
         "answer_card_draft_count": answer_card_drafts["draft_count"],
         "compliance_review_count": compliance_review_pack["count"],
         "graph_node_count": len(graph["nodes"]),
@@ -447,6 +695,7 @@ def compile_directory(
         "artifacts": {
             "extracts": extracts,
             "claims": claims,
+            "claim_triage": claim_triage,
             "graph": graph,
             "review_queue": review_queue,
             "answer_card_drafts": answer_card_drafts,
@@ -544,6 +793,7 @@ def write_harness_run(
         "06_review_queue.json": artifacts.get("review_queue") or {"version": "hxy-review-queue.v1", "items": []},
         "07_answer_card_drafts.json": artifacts.get("answer_card_drafts") or {"version": "hxy-answer-card-drafts.v1", "items": []},
         "08_compliance_review_pack.json": artifacts.get("compliance_review_pack") or {"version": "hxy-compliance-review-pack.v1", "items": []},
+        "09_claim_triage.json": artifacts.get("claim_triage") or {"version": "hxy-claim-triage.v1", "items": []},
     }
     phase_paths: dict[str, str] = {}
     for file_name, payload in phase_payloads.items():

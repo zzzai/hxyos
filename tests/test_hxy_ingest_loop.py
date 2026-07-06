@@ -117,6 +117,9 @@ def test_run_ingest_loop_compiles_and_stops_at_review(tmp_path):
     assert state["official_use_allowed"] is False
     assert state["task_count"] == 1
     assert state["claim_count"] >= 1
+    assert "claim_triage_cluster_count" in state
+    assert "claim_triage_selected_count" in state
+    assert "claim_triage_reduction_count" in state
     assert state["review_queue_count"] >= 1
     assert "compliance_review_count" in state
     assert state["compliance_review_count"] >= 1

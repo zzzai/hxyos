@@ -90,6 +90,20 @@ def test_extract_claims_distinguishes_compliance_boundary_from_overclaim():
     assert by_text["错误话术：草本泡脚可以治疗失眠"]["risk_flags"] == ["overclaim_risk"]
 
 
+def test_extract_claims_does_not_mark_negative_effectiveness_as_overclaim():
+    from apps.api.hxy_knowledge.knowledge_compiler import extract_candidate_claims
+
+    claims = extract_candidate_claims(
+        {
+            "extract_id": "marketing-extract-001",
+            "content": "广告有滞后效应，而且滞后之后还不一定有效应。",
+            "sources": ["marketing.md"],
+        }
+    )
+
+    assert claims[0]["risk_flags"] == []
+
+
 def test_extract_claims_marks_checklists_as_forbidden_references_not_claims():
     from apps.api.hxy_knowledge.knowledge_compiler import extract_candidate_claims
 
@@ -113,6 +127,31 @@ def test_extract_claims_marks_checklists_as_forbidden_references_not_claims():
     ]
     assert by_text["有没有把艾灸、热敷、拨筋说成治疗手段"]["risk_flags"] == ["forbidden_expression_reference"]
     assert by_text["我们这里不做脚气治疗"]["risk_flags"] == []
+
+
+def test_extract_claims_splits_markdown_slides_and_filters_contact_noise():
+    from apps.api.hxy_knowledge.knowledge_compiler import extract_candidate_claims
+
+    claims = extract_candidate_claims(
+        {
+            "extract_id": "slide-extract-001",
+            "content": (
+                "[](Picture3.jpg)\n"
+                "荷小悦 · 社区草本养生连锁品牌\n"
+                "致力于成为中国社区的健康信任基础设施\n"
+                "400-123-4567\n"
+                "contact@hexiaoyue.com\n"
+            ),
+            "sources": ["bp.pdf.reference.txt"],
+        }
+    )
+
+    texts = [claim["claim"] for claim in claims]
+    assert "荷小悦 · 社区草本养生连锁品牌" in texts
+    assert "致力于成为中国社区的健康信任基础设施" in texts
+    assert all("Picture3.jpg" not in text for text in texts)
+    assert all("contact@" not in text for text in texts)
+    assert all("400-123-4567" not in text for text in texts)
 
 
 def test_build_review_queue_prioritizes_high_value_claims_and_filters_pdf_noise():
@@ -152,6 +191,66 @@ def test_build_review_queue_prioritizes_high_value_claims_and_filters_pdf_noise(
     assert queue["items"][0]["recommended_reviewer"] == "运营/合规负责人"
 
 
+def test_build_claim_triage_deduplicates_clusters_and_selects_representatives():
+    from apps.api.hxy_knowledge.knowledge_compiler import build_claim_triage
+
+    claims = [
+        {
+            "claim_id": "risk-1",
+            "claim": "员工不能承诺泡脚可以治疗失眠。",
+            "domain": "risk_boundary",
+            "sources": ["risk-a.md"],
+            "risk_flags": ["forbidden_expression_reference"],
+        },
+        {
+            "claim_id": "risk-2",
+            "claim": "员工不能承诺泡脚可以治疗失眠。",
+            "domain": "risk_boundary",
+            "sources": ["risk-b.md"],
+            "risk_flags": ["forbidden_expression_reference"],
+        },
+        {
+            "claim_id": "store-1",
+            "claim": "荷小悦社区小店要围绕入口产品、房间数量、人员配置和单店模型关键参数做复核。",
+            "domain": "store_model",
+            "sources": ["store.md"],
+            "risk_flags": [],
+        },
+        {
+            "claim_id": "store-2",
+            "claim": "荷小悦社区小店需要复核房间数量、人员配置和单店模型。",
+            "domain": "store_model",
+            "sources": ["store-2.md"],
+            "risk_flags": [],
+        },
+        {
+            "claim_id": "noise",
+            "claim": "第 1 页 目录 1 2 3",
+            "domain": "general",
+            "sources": ["book.pdf"],
+            "risk_flags": [],
+        },
+    ]
+
+    triage = build_claim_triage(claims, limit=10)
+
+    assert triage["version"] == "hxy-claim-triage.v1"
+    assert triage["total_claim_count"] == 5
+    assert triage["noise_claim_count"] == 1
+    assert triage["duplicate_claim_count"] == 1
+    assert triage["unique_reviewable_claim_count"] == 3
+    assert triage["cluster_count"] == 2
+    assert triage["selected_count"] == 2
+    assert [item["claim_id"] for item in triage["items"]] == ["risk-1", "store-1"]
+    risk_item = triage["items"][0]
+    assert risk_item["duplicate_count"] == 1
+    assert risk_item["cluster_member_count"] == 1
+    assert risk_item["sources"] == ["risk-a.md", "risk-b.md"]
+    store_item = triage["items"][1]
+    assert store_item["cluster_member_count"] == 2
+    assert store_item["cluster_id"].startswith("hxy-claim-cluster:")
+
+
 def test_review_queue_prefers_hxy_claims_over_competitor_fragments():
     from apps.api.hxy_knowledge.knowledge_compiler import build_review_queue
 
@@ -183,6 +282,75 @@ def test_review_queue_prefers_hxy_claims_over_competitor_fragments():
 
     assert queue["items"][0]["claim_id"] == "hxy-store-model"
     assert "page-break-fragment" not in [item["claim_id"] for item in queue["items"]]
+
+
+def test_review_queue_uses_claim_triage_instead_of_raw_claim_flood():
+    from apps.api.hxy_knowledge.knowledge_compiler import build_review_queue
+
+    claims = []
+    for index in range(30):
+        claims.append(
+            {
+                "claim_id": f"store-{index}",
+                "claim": f"荷小悦社区小店需要复核房间数量、人员配置和单店模型 {index}。",
+                "domain": "store_model",
+                "sources": [f"store-{index}.md"],
+                "risk_flags": [],
+            }
+        )
+    claims.append(
+        {
+            "claim_id": "risk",
+            "claim": "员工不能承诺泡脚可以治疗失眠。",
+            "domain": "risk_boundary",
+            "sources": ["risk.md"],
+            "risk_flags": ["forbidden_expression_reference"],
+        }
+    )
+
+    queue = build_review_queue(claims, limit=20)
+
+    assert queue["total_claim_count"] == 31
+    assert queue["cluster_count"] == 2
+    assert queue["reviewable_claim_count"] == 31
+    assert len(queue["items"]) == 2
+    assert [item["claim_id"] for item in queue["items"]] == ["risk", "store-0"]
+    assert queue["items"][1]["cluster_member_count"] == 30
+
+
+def test_claim_triage_deprioritizes_external_book_fragments_against_hxy_sources():
+    from apps.api.hxy_knowledge.knowledge_compiler import build_review_queue
+
+    claims = [
+        {
+            "claim_id": "external-therapy",
+            "claim": "更好的心理治疗师需要长期训练。",
+            "domain": "risk_boundary",
+            "sources": ["knowledge/raw/inbox/荷小悦资料/09_知识库与参考资料/营销类书籍/动机与人格.pdf.reference.txt"],
+            "risk_flags": ["overclaim_risk"],
+        },
+        {
+            "claim_id": "hxy-risk",
+            "claim": "员工不能承诺泡脚可以治疗失眠。",
+            "domain": "risk_boundary",
+            "sources": ["knowledge/raw/inbox/荷小悦资料/09_知识库与参考资料/09_风险与合规/荷小悦禁用表达库.md"],
+            "risk_flags": ["forbidden_expression_reference"],
+        },
+        {
+            "claim_id": "hxy-store",
+            "claim": "荷小悦社区小店要围绕入口产品、房间数量、人员配置和单店模型关键参数做复核。",
+            "domain": "store_model",
+            "sources": ["knowledge/raw/inbox/荷小悦资料/03_门店模型/门店_荷小悦_小店模型_20260201.pdf.reference.txt"],
+            "risk_flags": [],
+        },
+    ]
+
+    queue = build_review_queue(claims, limit=3)
+
+    assert [item["claim_id"] for item in queue["items"][:2]] == ["hxy-risk", "hxy-store"]
+    assert queue["items"][0]["source_class"] == "risk_compliance"
+    assert queue["items"][2]["source_class"] == "external_reference"
+    assert queue["items"][2]["priority"] == "low"
 
 
 def test_build_answer_card_drafts_only_uses_reviewable_claims():
@@ -308,11 +476,40 @@ def test_compile_directory_builds_compliance_pack_from_full_reviewable_queue(tmp
 
     report = compile_directory(raw_dir, wiki_dir)
 
-    assert report["review_queue_count"] == 20
+    assert 1 <= report["review_queue_count"] < 20
     assert report["compliance_review_count"] >= 1
     pack = json.loads((wiki_dir / "compliance-review-pack.json").read_text(encoding="utf-8"))
     assert pack["count"] >= 1
     assert any("治疗" in item["claim"] for item in pack["items"])
+
+
+def test_compile_directory_writes_claim_triage_and_reports_reduction(tmp_path: Path):
+    from apps.api.hxy_knowledge.knowledge_compiler import compile_directory
+
+    raw_dir = tmp_path / "raw"
+    wiki_dir = tmp_path / "wiki"
+    raw_dir.mkdir(parents=True)
+    for index in range(30):
+        (raw_dir / f"store-{index:02d}.md").write_text(
+            f"荷小悦社区小店需要复核房间数量、人员配置和单店模型 {index}。",
+            encoding="utf-8",
+        )
+    (raw_dir / "risk.md").write_text(
+        "员工不能承诺泡脚可以治疗失眠。",
+        encoding="utf-8",
+    )
+
+    report = compile_directory(raw_dir, wiki_dir)
+
+    assert (wiki_dir / "claim-triage.json").is_file()
+    triage = json.loads((wiki_dir / "claim-triage.json").read_text(encoding="utf-8"))
+    review_queue = json.loads((wiki_dir / "review-queue.json").read_text(encoding="utf-8"))
+    assert report["claim_triage_cluster_count"] == 2
+    assert report["claim_triage_selected_count"] == 2
+    assert report["claim_triage_reduction_count"] >= 29
+    assert triage["selected_count"] == 2
+    assert review_queue["cluster_count"] == 2
+    assert review_queue["items"][0]["claim_id"] != review_queue["items"][1]["claim_id"]
 
 
 def test_build_knowledge_graph_links_claims_sources_domains_and_risks():

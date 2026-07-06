@@ -262,6 +262,9 @@ def run_ingest_loop(
         "extract_count": int(compiler_report.get("extract_count") or 0),
         "claim_count": int(compiler_report.get("claim_count") or 0),
         "review_queue_count": int(compiler_report.get("review_queue_count") or 0),
+        "claim_triage_cluster_count": int(compiler_report.get("claim_triage_cluster_count") or 0),
+        "claim_triage_selected_count": int(compiler_report.get("claim_triage_selected_count") or 0),
+        "claim_triage_reduction_count": int(compiler_report.get("claim_triage_reduction_count") or 0),
         "answer_card_draft_count": int(compiler_report.get("answer_card_draft_count") or 0),
         "compliance_review_count": int(compiler_report.get("compliance_review_count") or 0),
         "tasks": [
