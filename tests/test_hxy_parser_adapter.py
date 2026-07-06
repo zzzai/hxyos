@@ -163,4 +163,4 @@ def test_api_requirements_pin_markitdown_for_parser_jobs():
         encoding="utf-8"
     )
 
-    assert "markitdown" in requirements
+    assert "markitdown[docx,pptx,xls,xlsx]" in requirements

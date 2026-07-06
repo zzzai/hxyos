@@ -312,6 +312,66 @@ def test_run_ingest_loop_accepts_legacy_stem_extracted_reference_location(tmp_pa
     assert state["extract_count"] == 1
 
 
+def test_run_ingest_loop_does_not_create_reference_of_reference_tasks(tmp_path):
+    from hxy_knowledge.ingest_loop import run_ingest_loop
+
+    raw_dir = tmp_path / "knowledge" / "raw" / "inbox"
+    wiki_dir = tmp_path / "knowledge" / "wiki"
+    report_path = tmp_path / "knowledge" / "reports" / "ingest-latest.json"
+    runs_dir = tmp_path / "knowledge" / "runs"
+    raw_dir.mkdir(parents=True)
+    long_name = f"{'荷小悦品牌资产参考书' * 8}.epub"
+    (raw_dir / long_name).write_bytes(b"epub placeholder")
+    reference = raw_dir / "extracted-reference" / f"{Path(long_name).stem}.reference.txt"
+    reference.parent.mkdir(parents=True)
+    reference.write_text("荷小悦参考书解析文本。不能承诺治疗。", encoding="utf-8")
+
+    state = run_ingest_loop(
+        raw_dir=raw_dir,
+        wiki_dir=wiki_dir,
+        report_path=report_path,
+        runs_dir=runs_dir,
+        run_id="ingest-loop-test",
+        root_dir=tmp_path,
+    )
+
+    assert state["task_count"] == 2
+    assert state["parser_job_count"] == 0
+    assert all(
+        not item["source_path"].endswith(".reference.txt.reference.txt")
+        for item in state["tasks"]
+    )
+    assert f"knowledge/raw/inbox/extracted-reference/{Path(long_name).stem}.reference.txt" in {
+        item["source_path"] for item in state["tasks"]
+    }
+
+
+def test_run_ingest_loop_ignores_parser_run_manifest_in_extracted_reference(tmp_path):
+    from hxy_knowledge.ingest_loop import run_ingest_loop
+
+    raw_dir = tmp_path / "knowledge" / "raw" / "inbox"
+    wiki_dir = tmp_path / "knowledge" / "wiki"
+    report_path = tmp_path / "knowledge" / "reports" / "ingest-latest.json"
+    runs_dir = tmp_path / "knowledge" / "runs"
+    manifest = raw_dir / "extracted-reference" / "parser-run-manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text('{"version":"hxy-parser-run.v1"}', encoding="utf-8")
+
+    state = run_ingest_loop(
+        raw_dir=raw_dir,
+        wiki_dir=wiki_dir,
+        report_path=report_path,
+        runs_dir=runs_dir,
+        run_id="ingest-loop-test",
+        root_dir=tmp_path,
+    )
+
+    assert state["task_count"] == 0
+    assert state["parser_job_count"] == 0
+    assert state["ignored_count"] == 1
+    assert state["ignored_items"][0]["source_path"] == "knowledge/raw/inbox/extracted-reference/parser-run-manifest.json"
+
+
 def test_ingest_loop_cli_writes_state(tmp_path):
     raw_dir = tmp_path / "knowledge" / "raw" / "inbox"
     raw_dir.mkdir(parents=True)

@@ -68,15 +68,22 @@ def _extracted_reference_path_for(inbox_dir: Path, source_path: str) -> Path:
     return inbox_dir / "extracted-reference" / f"{clean_source}.reference.txt"
 
 
+def _is_file_safely(path: Path) -> bool:
+    try:
+        return path.is_file()
+    except OSError:
+        return False
+
+
 def _existing_extracted_reference_path(inbox_dir: Path, source_path: str) -> Path | None:
     current_path = _extracted_reference_path_for(inbox_dir, source_path)
-    if current_path.is_file():
+    if _is_file_safely(current_path):
         return current_path
     legacy_path = inbox_dir / "extracted-reference" / f"{Path(source_path).name}.reference.txt"
-    if legacy_path.is_file():
+    if _is_file_safely(legacy_path):
         return legacy_path
     legacy_stem_path = inbox_dir / "extracted-reference" / f"{Path(source_path).stem}.reference.txt"
-    return legacy_stem_path if legacy_stem_path.is_file() else None
+    return legacy_stem_path if _is_file_safely(legacy_stem_path) else None
 
 
 def discover_inbox_materials(inbox_dir: Path, *, root_dir: Path) -> dict[str, Any]:
@@ -88,6 +95,15 @@ def discover_inbox_materials(inbox_dir: Path, *, root_dir: Path) -> dict[str, An
             continue
         suffix = path.suffix.lower()
         rel_path = _relative(path, root_dir)
+        if "extracted-reference/" in rel_path and not rel_path.endswith(".reference.txt"):
+            ignored_items.append(
+                {
+                    "source_path": rel_path,
+                    "suffix": suffix,
+                    "reason": "parser_runtime_artifact",
+                }
+            )
+            continue
         if suffix not in DISCOVERABLE_SUFFIXES:
             ignored_items.append(
                 {
@@ -102,7 +118,7 @@ def discover_inbox_materials(inbox_dir: Path, *, root_dir: Path) -> dict[str, An
         duplicate_of = seen_by_hash.get(content_hash)
         if duplicate_of is None:
             seen_by_hash[content_hash] = rel_path
-        extracted_reference_path = _existing_extracted_reference_path(inbox_dir, rel_path)
+        extracted_reference_path = None if compiler_ready else _existing_extracted_reference_path(inbox_dir, rel_path)
         extracted_reference_rel = (
             _relative(extracted_reference_path, root_dir)
             if not compiler_ready and extracted_reference_path is not None
