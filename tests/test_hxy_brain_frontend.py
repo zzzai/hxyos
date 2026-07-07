@@ -282,6 +282,11 @@ class HxyBrainFrontendTest(unittest.TestCase):
             "可以发",
             "建议改",
             "不要发",
+            "风险等级",
+            "命中规则",
+            "原因",
+            "建议改法",
+            "不可发布为正式知识",
         ]:
             self.assertIn(label, html)
 
@@ -291,6 +296,12 @@ class HxyBrainFrontendTest(unittest.TestCase):
             "cluster_member_count",
             "sample_claims",
             "chunk_id",
+            "risk_level：",
+            "hit_gates：",
+            "risk_reason：",
+            "rewrite_suggestion：",
+            "can_publish：",
+            "official_use_allowed：",
         ]:
             self.assertNotIn(forbidden, html)
 
