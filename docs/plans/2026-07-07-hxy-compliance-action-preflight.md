@@ -21,6 +21,7 @@ Add tests for:
 
 - `brand-decision/review` includes `compliance_preflight` and blocks risky content from continuing
 - `training/evaluate` with risky employee answer returns `needs_retrain=true` and `answer_card_draft=null`
+- `training/evaluate` with risky employee answer returns `needs_retrain=true` and `training_artifact_gate.can_promote_to_answer_card=false`
 - `POST /api/knowledge/answer-cards` rejects risky `status=approved`
 - `POST /api/knowledge/answer-cards` allows risky `status=draft` and returns `compliance_preflight`
 - `POST /api/operating-brain/menu-draft/preflight` returns a dry-run project menu preflight and `write_to_database=false`
@@ -95,7 +96,7 @@ Before creating review task:
 
 - compute preflight with `workflow_type=staff_script`
 - add it to result
-- if `can_continue=false`, set `needs_retrain=true`, `answer_card_draft=None`, append correction point
+- if `can_continue=false`, set `needs_retrain=true`, append correction point, and set `training_artifact_gate.can_promote_to_answer_card=false`
 
 **Step 3: Answer-card creation**
 

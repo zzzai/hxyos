@@ -195,6 +195,12 @@ class ComplianceWorkflowGateRequest(BaseModel):
     audience: str = "customer"
 
 
+class MenuDraftPreflightRequest(BaseModel):
+    text: str = ""
+    channel: str = "项目菜单"
+    audience: str = "customer"
+
+
 class SourceBriefRequest(BaseModel):
     question: str = ""
     scenario: str = "经营问答"
@@ -2754,6 +2760,87 @@ def _compliance_workflow_gate_result(
     }
 
 
+def _compliance_preflight_for_text(
+    text: str,
+    *,
+    workflow_type: str,
+    channel: str,
+    audience: str,
+    root_dir: Path,
+) -> dict[str, Any]:
+    preflight = _compliance_workflow_gate_result(
+        ComplianceWorkflowGateRequest(
+            workflow_type=workflow_type,
+            text=text,
+            channel=channel,
+            audience=audience,
+        ),
+        root_dir=root_dir,
+    )
+    return {
+        **preflight,
+        "preflight": True,
+        "write_to_database": False,
+        "can_publish": False,
+        "official_use_allowed": False,
+    }
+
+
+def _workflow_type_for_brand_artifact(artifact_type: str) -> str:
+    if artifact_type == "first_order_menu":
+        return "project_menu"
+    if artifact_type == "staff_script":
+        return "staff_script"
+    return "content_publish"
+
+
+def _workflow_type_for_answer_card(request: AnswerCardRequest) -> str:
+    combined = f"{request.intent} {request.audience} {request.question_pattern}"
+    if any(term in combined for term in ["menu", "菜单", "product", "产品", "project_menu"]):
+        return "project_menu"
+    if any(term in combined for term in ["staff", "员工", "training", "训练", "话术"]):
+        return "staff_script"
+    return "content_publish"
+
+
+def _apply_training_compliance_preflight(result: dict[str, Any], preflight: dict[str, Any]) -> None:
+    can_continue = bool(preflight.get("can_continue"))
+    result["compliance_preflight"] = preflight
+    result["training_artifact_gate"] = {
+        "version": "hxy-training-artifact-gate.v1",
+        "can_promote_to_answer_card": can_continue and not bool(result.get("needs_retrain")),
+        "official_use_allowed": False,
+        "requires_human_review": True,
+        "reason": "通过员工话术合规预检后，仍需店长/运营复核。" if can_continue else "员工话术未通过合规预检，不能晋升为权威答案卡。",
+    }
+    if can_continue:
+        return
+
+    result["needs_retrain"] = True
+    result["level"] = "retrain"
+    result["level_label"] = "需复训"
+    try:
+        result["score"] = min(int(result.get("score") or 0), 70)
+    except (TypeError, ValueError):
+        result["score"] = 70
+    correction_points = list(result.get("correction_points") or [])
+    reason = str(preflight.get("risk_reason") or "命中合规风险，需要改写后复训。")
+    if reason and reason not in correction_points:
+        correction_points.append(reason)
+    result["correction_points"] = correction_points
+    package = result.get("correction_package") or {}
+    package["compliance_preflight"] = preflight
+    package["can_promote_to_answer_card"] = False
+    result["correction_package"] = package
+    dimensions = list(result.get("dimensions") or [])
+    for dimension in dimensions:
+        if dimension.get("key") == "compliance":
+            dimension["score"] = min(int(dimension.get("score") or 0), 60)
+            dimension["passed"] = False
+            dimension["detail"] = reason
+    result["dimensions"] = dimensions
+
+
 AUTOMATION_TASK_CATALOG: list[dict[str, Any]] = [
     {
         "task_id": "automation_ingest_loop_manual",
@@ -3561,8 +3648,39 @@ def create_app(
     @app.post("/api/operating-brain/brand-decision/review", dependencies=[Depends(require_api_token)])
     async def operating_brain_brand_decision_review_endpoint(request: BrandDecisionRequest) -> dict[str, Any]:
         review = review_brand_artifact(request.model_dump())
+        preflight = _compliance_preflight_for_text(
+            request.text,
+            workflow_type=_workflow_type_for_brand_artifact(request.artifact_type),
+            channel=request.artifact_type,
+            audience="customer",
+            root_dir=resolved_root,
+        )
+        review["compliance_preflight"] = preflight
+        review["can_continue"] = bool(preflight.get("can_continue"))
+        review["can_publish"] = False
         review_path = write_brand_review_record(review, reviews_dir=resolved_root / "knowledge" / "brand" / "reviews")
         return {**review, "review_path": review_path.as_posix()}
+
+    @app.post("/api/operating-brain/menu-draft/preflight", dependencies=[Depends(require_api_token)])
+    async def operating_brain_menu_draft_preflight_endpoint(request: MenuDraftPreflightRequest) -> dict[str, Any]:
+        if not request.text.strip():
+            raise HTTPException(status_code=400, detail="text is required")
+        preflight = _compliance_preflight_for_text(
+            request.text,
+            workflow_type="project_menu",
+            channel=request.channel,
+            audience=request.audience,
+            root_dir=resolved_root,
+        )
+        return {
+            "version": "hxy-menu-draft-compliance-preflight.v1",
+            "compliance_preflight": preflight,
+            "can_save_draft": bool(preflight.get("can_continue")),
+            "write_to_database": False,
+            "can_publish": False,
+            "official_use_allowed": False,
+            "authority_rule": "menu_draft_preflight_is_dry_run_and_does_not_save_menu_data",
+        }
 
     @app.post(
         "/api/operating-brain/knowledge-compiler/review-queue/{claim_id}/decision",
@@ -4029,6 +4147,14 @@ def create_app(
             raise HTTPException(status_code=400, detail="employee_answer is required")
         rule_result = evaluate_training_script(request)
         result = _evaluate_training_with_model(model_router=model_router, request=request, rule_result=rule_result)
+        training_preflight = _compliance_preflight_for_text(
+            request.employee_answer,
+            workflow_type="staff_script",
+            channel="员工话术",
+            audience="staff",
+            root_dir=resolved_root,
+        )
+        _apply_training_compliance_preflight(result, training_preflight)
         repo = make_repository()
         if result["needs_retrain"]:
             review_task_id = repo.create_review_task(
@@ -4442,11 +4568,27 @@ def create_app(
             raise HTTPException(status_code=400, detail="question_pattern is required")
         if not request.answer.strip():
             raise HTTPException(status_code=400, detail="answer is required")
+        preflight = _compliance_preflight_for_text(
+            request.answer,
+            workflow_type=_workflow_type_for_answer_card(request),
+            channel="answer_card",
+            audience=request.audience,
+            root_dir=resolved_root,
+        )
+        if request.status == "approved" and not bool(preflight.get("can_continue")):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": "approved answer card failed compliance preflight",
+                    "compliance_preflight": preflight,
+                },
+            )
         payload = request.model_dump()
         payload["question_pattern"] = request.question_pattern.strip()
         payload["answer"] = request.answer.strip()
+        payload["compliance_preflight"] = preflight
         card_id = make_repository().create_answer_card(payload)
-        return {"card_id": card_id, "status": "created"}
+        return {"card_id": card_id, "status": "created", "compliance_preflight": preflight}
 
     @app.post("/api/knowledge/upload", dependencies=[Depends(require_api_token)])
     async def upload_knowledge_file(file: UploadFile = File(...)) -> dict[str, Any]:

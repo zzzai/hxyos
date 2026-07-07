@@ -1692,6 +1692,25 @@ used_by:
         self.assertTrue(body["requires_human_review"])
         self.assertTrue((self.root / "knowledge" / "brand" / "reviews").exists())
 
+    def test_compliance_preflight_attaches_to_brand_decision_review(self):
+        response = self.client.post(
+            "/api/operating-brain/brand-decision/review",
+            json={
+                "artifact_type": "opening_content",
+                "stage": "first_store_opening",
+                "text": "泡脚能治疗失眠，一次见效。",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        preflight = body["compliance_preflight"]
+        self.assertEqual(preflight["workflow_type"], "content_publish")
+        self.assertEqual(preflight["workflow_status"], "blocked")
+        self.assertFalse(preflight["can_continue"])
+        self.assertFalse(body["can_continue"])
+        self.assertFalse(body["can_publish"])
+
     def test_operating_brain_workspace_event_creates_and_lists_latest_topic(self):
         response = self.client.post(
             "/api/operating-brain/workspace/events",
@@ -2627,6 +2646,26 @@ used_by:
         dimensions = {item["key"]: item for item in body["dimensions"]}
         self.assertFalse(dimensions["compliance"]["passed"])
         self.assertLess(dimensions["compliance"]["score"], 75)
+
+    def test_compliance_preflight_prevents_risky_training_from_promotion(self):
+        response = self.client.post(
+            "/api/operating-brain/training/evaluate",
+            json={
+                "training_item": "清泡调补养门店推荐话术",
+                "customer_question": "顾客问：能不能治失眠？",
+                "employee_answer": "可以治疗失眠，一次见效，建议办疗程。",
+                "scenario": "门店员工培训",
+                "role": "门店员工",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertTrue(body["needs_retrain"])
+        self.assertEqual(body["compliance_preflight"]["workflow_type"], "staff_script")
+        self.assertEqual(body["compliance_preflight"]["workflow_status"], "blocked")
+        self.assertFalse(body["training_artifact_gate"]["can_promote_to_answer_card"])
+        self.assertFalse(body["training_artifact_gate"]["official_use_allowed"])
 
     def test_training_manager_summary_endpoint_returns_actionable_training_metrics(self):
         response = self.client.get("/api/operating-brain/training/manager-summary?store_id=store-001&days=7")
@@ -3877,6 +3916,61 @@ used_by:
         self.assertIn("result_card", body)
         self.assertEqual(body["result_card"]["stability_level"], "stable")
         self.assertIn("招商话术", body["result_card"]["business_result"])
+
+    def test_compliance_preflight_rejects_risky_approved_answer_card(self):
+        response = self.client.post(
+            "/api/knowledge/answer-cards",
+            json={
+                "question_pattern": "泡脚能治什么",
+                "intent": "risk_boundary",
+                "audience": "customer",
+                "answer": "荷小悦泡脚可以治疗失眠，一次见效。",
+                "status": "approved",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        body = response.json()
+        self.assertIn("compliance_preflight", body["detail"])
+        self.assertEqual(self.repo.saved_answer_card, None)
+
+    def test_compliance_preflight_allows_risky_draft_answer_card_with_warning(self):
+        response = self.client.post(
+            "/api/knowledge/answer-cards",
+            json={
+                "question_pattern": "泡脚能治什么",
+                "intent": "risk_boundary",
+                "audience": "customer",
+                "answer": "草稿待改：泡脚可以治疗失眠。",
+                "status": "draft",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["status"], "created")
+        self.assertIn("compliance_preflight", body)
+        self.assertEqual(body["compliance_preflight"]["workflow_status"], "blocked")
+        self.assertFalse(body["compliance_preflight"]["can_publish"])
+        self.assertEqual(self.repo.saved_answer_card["status"], "draft")
+
+    def test_compliance_preflight_menu_draft_is_dry_run(self):
+        response = self.client.post(
+            "/api/operating-brain/menu-draft/preflight",
+            json={
+                "text": "艾灸调理体质，改善慢病。",
+                "channel": "项目菜单",
+                "audience": "customer",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-menu-draft-compliance-preflight.v1")
+        self.assertEqual(body["compliance_preflight"]["workflow_type"], "project_menu")
+        self.assertEqual(body["compliance_preflight"]["workflow_status"], "blocked")
+        self.assertFalse(body["write_to_database"])
+        self.assertFalse(body["can_publish"])
 
     def test_store_model_question_classifies_as_store_model_before_operations(self):
         class StoreModelRepository(FakeRepository):

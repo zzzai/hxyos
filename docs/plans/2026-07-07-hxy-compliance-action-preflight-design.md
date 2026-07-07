@@ -52,7 +52,8 @@ If compliance blocks the text, the brand review can still be recorded, but the r
 If the answer hits a compliance block:
 
 - `needs_retrain=true`
-- `answer_card_draft=null`
+- any generated correction draft remains a training correction asset, not an approved answer-card candidate
+- `training_artifact_gate.can_promote_to_answer_card=false`
 - correction points include the compliance reason
 - review task remains a training/retrain task, not an answer-card candidate
 
