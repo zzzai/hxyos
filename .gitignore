@@ -36,6 +36,8 @@ build/
 .next/
 .turbo/
 .cache/
+.worktrees
+.worktrees/
 .pytest_cache/
 __pycache__/
 *.pyc
