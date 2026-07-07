@@ -266,6 +266,34 @@ class HxyBrainFrontendTest(unittest.TestCase):
         ]:
             self.assertNotIn(forbidden, html)
 
+    def test_knowledge_page_exposes_compliance_language_check_execution_panel(self):
+        html = (ROOT / "apps" / "admin-web" / "knowledge.html").read_text(encoding="utf-8")
+
+        for label in [
+            "对外话语检查",
+            "这句话能不能发",
+            "id=\"complianceTextInput\"",
+            "id=\"complianceChannelSelect\"",
+            "id=\"complianceLanguageCheckResult\"",
+            "id=\"runComplianceLanguageCheck\"",
+            "runComplianceLanguageCheck",
+            "renderComplianceLanguageCheckResult",
+            "/api/operating-brain/skills/hxy-compliance-language-check/run",
+            "可以发",
+            "建议改",
+            "不要发",
+        ]:
+            self.assertIn(label, html)
+
+        for forbidden in [
+            "批准为正式知识",
+            "发布 approved",
+            "cluster_member_count",
+            "sample_claims",
+            "chunk_id",
+        ]:
+            self.assertNotIn(forbidden, html)
+
     def test_knowledge_page_shows_product_objects_not_raw_artifacts(self):
         page = ROOT / "apps" / "admin-web" / "knowledge.html"
         html = page.read_text(encoding="utf-8")

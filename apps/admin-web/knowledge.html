@@ -1185,6 +1185,33 @@
 
       <div class="panel">
         <div class="panel-header">
+          <div class="panel-title">对外话语检查 <small>这句话能不能发</small></div>
+          <button class="primary" id="runComplianceLanguageCheck" type="button">检查</button>
+        </div>
+        <div class="panel-body actions">
+          <label>
+            待检查内容
+            <textarea id="complianceTextInput">草本现煮，泡着舒服，适合下班后来放松一下。</textarea>
+          </label>
+          <div class="upload-row">
+            <label>
+              场景
+              <select id="complianceChannelSelect">
+                <option value="朋友圈">朋友圈</option>
+                <option value="团购页">团购页</option>
+                <option value="海报">海报</option>
+                <option value="员工话术">员工话术</option>
+              </select>
+            </label>
+          </div>
+          <div id="complianceLanguageCheckResult" class="result">
+            只检查对外表达风险，不会发布正式知识，也不会写入正式答案。
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
           <div class="panel-title">资料入库 Loop <small>候选资料不等于正式知识</small></div>
           <div class="review-actions">
             <button class="secondary" id="refreshIngestLoop" type="button">刷新状态</button>
@@ -1358,6 +1385,7 @@
     const p0DecisionPreviewResult = document.querySelector("#p0DecisionPreviewResult");
     const ingestLoopStatus = document.querySelector("#ingestLoopStatus");
     const brandDecisionResult = document.querySelector("#brandDecisionResult");
+    const complianceLanguageCheckResult = document.querySelector("#complianceLanguageCheckResult");
     const reviewTopicState = { items: [] };
 
     function defaultApiBase() {
@@ -1429,7 +1457,7 @@
         <div class="product-object-line">
           <strong>${escapeHtml(item.name || item.retrieval_app_id || "")}</strong><br>
           ${escapeHtml(item.purpose || "")}<br>
-          <span class="tag">${item.can_publish_approved ? "可发布" : "不能发布 approved"}</span>
+          <span class="tag">${item.can_publish_approved ? "可发布" : "输出不是正式知识"}</span>
         </div>
       `).join("") : `<div class="product-object-line">暂无检索应用。</div>`;
     }
@@ -1499,6 +1527,30 @@
           <div class="path"><code>${escapeHtml(item.source_path || "")}</code></div>
         </article>
       `).join("");
+    }
+
+    function renderComplianceLanguageCheckResult(payload) {
+      const decisionLabels = {
+        allow: "可以发",
+        revise: "建议改",
+        block: "不要发",
+      };
+      const decision = payload.decision || "revise";
+      const hitGates = Array.isArray(payload.hit_gates) ? payload.hit_gates : [];
+      const evidence = Array.isArray(payload.evidence) ? payload.evidence : [];
+      const evidenceTags = evidence.slice(0, 6).map((item) => `
+        <span class="tag">${escapeHtml(item.rule_name || "规则")} · ${escapeHtml(item.source || "规则来源")}</span>
+      `).join("");
+      complianceLanguageCheckResult.className = `result ${decision === "allow" ? "ok" : "error"}`;
+      complianceLanguageCheckResult.innerHTML = `
+        <strong>${escapeHtml(decisionLabels[decision] || "建议改")}</strong>
+        <div>risk_level：${escapeHtml(payload.risk_level || "unknown")} · hit_gates：${escapeHtml(hitGates.join("、") || "无")}</div>
+        <div>risk_reason：${escapeHtml(payload.risk_reason || "未命中高风险规则。")}</div>
+        <div>rewrite_suggestion：${escapeHtml(payload.rewrite_suggestion || "保持克制表达，正式发布前按负责人要求复核。")}</div>
+        <div>can_publish：${String(Boolean(payload.can_publish))} · official_use_allowed：${String(Boolean(payload.official_use_allowed))}</div>
+        <div>这里只检查风险，结果不是正式知识，不能自动发布。</div>
+        ${evidenceTags ? `<div class="review-actions" aria-label="规则来源">${evidenceTags}</div>` : ""}
+      `;
     }
 
     function renderReviewTopics(payload) {
@@ -1887,6 +1939,34 @@
       }
     }
 
+    async function runComplianceLanguageCheck() {
+      const textInput = document.querySelector("#complianceTextInput");
+      const text = textInput.value.trim();
+      if (!text) {
+        complianceLanguageCheckResult.className = "result error";
+        complianceLanguageCheckResult.textContent = "请输入要检查的话术。";
+        textInput.focus();
+        return;
+      }
+      try {
+        const payload = await requestJson("/api/operating-brain/skills/hxy-compliance-language-check/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text,
+            channel: document.querySelector("#complianceChannelSelect").value,
+            audience: "customer",
+          }),
+        });
+        renderComplianceLanguageCheckResult(payload);
+        setResult("对外话语检查完成。结果不是正式知识，不能自动发布。", "ok");
+      } catch (error) {
+        complianceLanguageCheckResult.className = "result error";
+        complianceLanguageCheckResult.textContent = error.message;
+        setResult(error.message, "error");
+      }
+    }
+
     async function runIngestLoop() {
       try {
         setResult("正在运行资料入库 Loop...");
@@ -1939,6 +2019,7 @@
     document.querySelector("#refresh").addEventListener("click", refreshAll);
     document.querySelector("#refreshIngestLoop").addEventListener("click", refreshIngestLoop);
     document.querySelector("#runIngestLoop").addEventListener("click", runIngestLoop);
+    document.querySelector("#runComplianceLanguageCheck").addEventListener("click", runComplianceLanguageCheck);
     document.querySelector("#runBrandDecision").addEventListener("click", runBrandDecision);
     document.querySelector("#refreshReviewTopics").addEventListener("click", refreshReviewTopics);
     document.querySelector("#refreshComplianceReviewPack").addEventListener("click", refreshComplianceReviewPack);
