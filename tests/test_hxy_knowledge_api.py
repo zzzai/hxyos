@@ -672,6 +672,32 @@ class HxyKnowledgeApiTest(unittest.TestCase):
             self.assertIn(term, serialized_rules)
         self.assertIn("09_风险与合规/荷小悦禁用表达库.md", " ".join(body["source_paths"]))
 
+    def test_brand_risk_rules_compile_employee_scripts_and_project_red_lines(self):
+        from hxy_knowledge.compliance_rules import check_brand_risk_text, load_brand_risk_rules
+
+        rules = load_brand_risk_rules(root_dir=self.root)
+
+        self.assertEqual(rules["status"], "candidate_rules")
+        self.assertFalse(rules["official_use_allowed"])
+        self.assertTrue(rules["requires_human_review"])
+        serialized_rules = json.dumps(rules["rules"], ensure_ascii=False)
+        self.assertIn("你这是湿气重", serialized_rules)
+        self.assertIn("调理体质", serialized_rules)
+        self.assertIn("改善慢病", serialized_rules)
+        self.assertIn("safe_replacements", rules)
+        self.assertIn(
+            {"unsafe": "治疗颈椎病", "safe": "久坐肩颈紧，按一按松一点"},
+            rules["safe_replacements"],
+        )
+
+        risky = check_brand_risk_text("艾灸调理体质，改善慢病。", root_dir=self.root)
+        self.assertEqual(risky["status"], "bad")
+        self.assertTrue(any(hit["level"] == "bad" for hit in risky["hits"]))
+
+        boundary = check_brand_risk_text("我们不做治疗，也不能替代医院检查。", root_dir=self.root)
+        self.assertEqual(boundary["status"], "ok")
+        self.assertEqual(boundary["hits"], [])
+
     def test_operating_brain_brand_answer_cards_endpoint_returns_approved_brand_cards(self):
         response = self.client.get("/api/operating-brain/brand-answer-cards")
 

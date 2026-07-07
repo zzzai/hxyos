@@ -8,6 +8,11 @@ from typing import Any
 
 RULE_VERSION = "hxy-brand-risk-rules.v1"
 RISK_MATERIAL = Path("knowledge/raw/inbox/荷小悦资料/09_知识库与参考资料/09_风险与合规/荷小悦禁用表达库.md")
+EMPLOYEE_SCRIPT_MATERIAL = Path(
+    "knowledge/raw/inbox/荷小悦资料/09_知识库与参考资料/09_风险与合规/荷小悦员工功效问题标准话术.md"
+)
+PROJECT_RED_LINE_MATERIAL = Path("knowledge/raw/inbox/荷小悦资料/09_知识库与参考资料/09_风险与合规/荷小悦项目红线卡.md")
+RISK_MATERIALS = [RISK_MATERIAL, EMPLOYEE_SCRIPT_MATERIAL, PROJECT_RED_LINE_MATERIAL]
 
 DEFAULT_RULES: list[dict[str, Any]] = [
     {
@@ -82,6 +87,58 @@ def _codeblock_terms(markdown: str) -> list[str]:
     return terms
 
 
+def _split_terms(value: str) -> list[str]:
+    terms: list[str] = []
+    for item in re.split(r"[、,，；;]\s*", value):
+        term = item.strip(" \t\r\n。.")
+        if term and term not in terms:
+            terms.append(term)
+    return terms
+
+
+def _markdown_table_rows(markdown: str) -> list[list[str]]:
+    rows: list[list[str]] = []
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|") or not stripped.endswith("|"):
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if not cells or all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells):
+            continue
+        rows.append(cells)
+    return rows
+
+
+def _section_between(markdown: str, start_pattern: str, end_pattern: str = r"^##\s+") -> str:
+    start = re.search(start_pattern, markdown, flags=re.M)
+    if not start:
+        return ""
+    end = re.search(end_pattern, markdown[start.end() :], flags=re.M)
+    return markdown[start.end() : start.end() + end.start()] if end else markdown[start.end() :]
+
+
+def _codeblock_terms_in_section(markdown: str, start_pattern: str) -> list[str]:
+    section = _section_between(markdown, start_pattern)
+    return _codeblock_terms(section)
+
+
+def _risk_type_for_term(term: str) -> str:
+    if any(marker in term for marker in ["治疗", "治病", "诊疗", "疾病", "慢病", "医院", "药", "颈椎", "腰椎", "肩周"]):
+        return "医疗"
+    if any(marker in term for marker in ["疗效", "见效", "包好", "保证", "祛湿", "排毒", "调理", "体质", "经络", "气血"]):
+        return "保证"
+    if any(marker in term for marker in ["医美", "抗衰", "瘦", "美白", "皮肤", "年轻", "无创"]):
+        return "夸大"
+    return "保证"
+
+
+def _terms_by_risk_type(terms: list[str]) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    for term in terms:
+        result.setdefault(_risk_type_for_term(term), []).append(term)
+    return result
+
+
 def _merge_terms(target: dict[str, Any], terms: list[str]) -> None:
     existing = list(target.get("words") or [])
     for term in terms:
@@ -92,7 +149,7 @@ def _merge_terms(target: dict[str, Any], terms: list[str]) -> None:
 
 def _terms_by_section(markdown: str) -> dict[str, list[str]]:
     result: dict[str, list[str]] = {}
-    headings = list(re.finditer(r"^###\s+\d+\.\d+\s+(.+)$", markdown, flags=re.M))
+    headings = list(re.finditer(r"^(?:##\s+\d+\.\s+|###\s+\d+\.\d+\s+)(.+)$", markdown, flags=re.M))
     for index, heading in enumerate(headings):
         section_title = heading.group(1).strip()
         start = heading.end()
@@ -104,18 +161,83 @@ def _terms_by_section(markdown: str) -> dict[str, list[str]]:
     return result
 
 
+def _safe_replacements_from_forbidden_material(markdown: str) -> list[dict[str, str]]:
+    section = _section_between(markdown, r"^##\s+6\.\s+常见错误与替换\s*$")
+    replacements: list[dict[str, str]] = []
+    for cells in _markdown_table_rows(section):
+        if len(cells) < 2 or cells[0] == "不要这样说":
+            continue
+        unsafe, safe = cells[0], cells[1]
+        if unsafe and safe:
+            replacements.append({"unsafe": unsafe, "safe": safe})
+    return replacements
+
+
+def _employee_forbidden_terms(markdown: str) -> list[str]:
+    terms = _codeblock_terms_in_section(markdown, r"^##\s+2\.\s+员工绝对不能说\s*$")
+    for match in re.finditer(r"不能说：\s*```(?:text)?\s*(.*?)```", markdown, flags=re.S):
+        for term in _codeblock_terms(match.group(0)):
+            if term not in terms:
+                terms.append(term)
+    return terms
+
+
+def _employee_safe_answers(markdown: str) -> list[dict[str, str]]:
+    answers: list[dict[str, str]] = []
+    pattern = re.compile(
+        r"^##\s+\d+\.\s+顾客问：(.+?)\n.*?标准回答：\s*```(?:text)?\s*(.*?)```",
+        flags=re.M | re.S,
+    )
+    for match in pattern.finditer(markdown):
+        question = match.group(1).strip()
+        answer = " ".join(match.group(2).split())
+        if question and answer:
+            answers.append({"question": question, "answer": answer})
+    return answers
+
+
+def _project_red_line_terms(markdown: str) -> list[str]:
+    terms: list[str] = []
+    for cells in _markdown_table_rows(markdown):
+        if len(cells) < 2 or cells[0] != "不能怎么说":
+            continue
+        for term in _split_terms(cells[1]):
+            if term not in terms:
+                terms.append(term)
+    return terms
+
+
+def _material_markdown(root: Path, material: Path) -> str:
+    material_path = root / material
+    if not material_path.exists() and root != _project_root():
+        material_path = _project_root() / material
+    if not material_path.exists():
+        return ""
+    return material_path.read_text(encoding="utf-8")
+
+
 def load_brand_risk_rules(*, root_dir: str | Path | None = None) -> dict[str, Any]:
     root = Path(root_dir).resolve() if root_dir else _project_root()
     rules = deepcopy(DEFAULT_RULES)
     source_paths: list[str] = []
-    material_path = root / RISK_MATERIAL
-    if not material_path.exists() and root != _project_root():
-        material_path = _project_root() / RISK_MATERIAL
-    if material_path.exists():
-        markdown = material_path.read_text(encoding="utf-8")
-        source_paths.append(RISK_MATERIAL.as_posix())
-        for rule_type, terms in _terms_by_section(markdown).items():
-            _merge_terms(_rule_by_type(rules, rule_type), terms)
+    safe_replacements: list[dict[str, str]] = []
+    safe_answer_snippets: list[dict[str, str]] = []
+    for material in RISK_MATERIALS:
+        markdown = _material_markdown(root, material)
+        if not markdown:
+            continue
+        source_paths.append(material.as_posix())
+        if material == RISK_MATERIAL:
+            for rule_type, terms in _terms_by_section(markdown).items():
+                _merge_terms(_rule_by_type(rules, rule_type), terms)
+            safe_replacements.extend(_safe_replacements_from_forbidden_material(markdown))
+        elif material == EMPLOYEE_SCRIPT_MATERIAL:
+            for rule_type, terms in _terms_by_risk_type(_employee_forbidden_terms(markdown)).items():
+                _merge_terms(_rule_by_type(rules, rule_type), terms)
+            safe_answer_snippets.extend(_employee_safe_answers(markdown))
+        elif material == PROJECT_RED_LINE_MATERIAL:
+            for rule_type, terms in _terms_by_risk_type(_project_red_line_terms(markdown)).items():
+                _merge_terms(_rule_by_type(rules, rule_type), terms)
 
     return {
         "version": RULE_VERSION,
@@ -123,6 +245,8 @@ def load_brand_risk_rules(*, root_dir: str | Path | None = None) -> dict[str, An
         "official_use_allowed": False,
         "requires_human_review": True,
         "source_paths": source_paths,
+        "safe_replacements": safe_replacements,
+        "safe_answer_snippets": safe_answer_snippets,
         "rules": rules,
     }
 
