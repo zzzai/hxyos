@@ -130,24 +130,38 @@ class HxyBrainFrontendTest(unittest.TestCase):
         for label in [
             "<title>HXYOS 说法检查</title>",
             "HXYOS 说法检查",
+            "动作前预检",
             "这句话能不能发？",
-            "把准备发出去的话贴进来",
-            "立即检查",
-            "可以发",
-            "建议改",
-            "不要发",
-            "改成这样说",
-            "禁用词",
+            "先预检，不直接发布",
+            "把准备使用的话贴进来",
+            "用途",
+            "发出去",
+            "给员工说",
+            "放进项目菜单",
+            "立即预检",
+            "可以继续",
+            "先改再继续",
+            "不要继续",
+            "能不能继续",
+            "为什么",
+            "怎么改",
+            "下一步",
             "医疗",
             "保证",
             "夸大",
             "id=\"brandTextInput\"",
+            "id=\"brandPurposeSelect\"",
             "id=\"brandCheckResult\"",
-            "runBrandCheck",
+            "runBrandPreflight",
+            "renderBrandPreflightResult",
+            "buildBrandPreflightPayload",
+            "apiBaseCandidates",
+            "http://127.0.0.1:18081",
             "defaultRiskRules",
             "riskRules",
             "loadBrandRiskRules",
             "/api/operating-brain/brand-risk-rules",
+            "/api/operating-brain/workflow-gates/compliance/run",
             "index.html",
         ]:
             self.assertIn(label, html)
@@ -163,6 +177,9 @@ class HxyBrainFrontendTest(unittest.TestCase):
             "资料入库",
             "知识图谱",
             "审核人",
+            "合规审核包",
+            "P0 合规",
+            "review queue",
             "招商",
             "加盟",
         ]:
@@ -180,6 +197,7 @@ class HxyBrainFrontendTest(unittest.TestCase):
                 value: "我们不做祛湿排毒承诺，也不能替代医疗治疗。可以说草本现煮，泡着舒服。",
                 focus() {{}}
               }},
+              brandPurposeSelect: {{ value: "content_publish" }},
               brandCheckResult: {{ innerHTML: "" }}
             }};
             const context = {{
@@ -192,8 +210,13 @@ class HxyBrainFrontendTest(unittest.TestCase):
             }};
             vm.createContext(context);
             vm.runInContext({script!r}, context);
-            vm.runInContext("runBrandCheck()", context);
-            process.stdout.write(elements.brandCheckResult.innerHTML);
+            (async () => {{
+              await vm.runInContext("runBrandPreflight()", context);
+              process.stdout.write(elements.brandCheckResult.innerHTML);
+            }})().catch((error) => {{
+              console.error(error);
+              process.exit(1);
+            }});
             """
         )
         result = subprocess.run(
@@ -203,8 +226,81 @@ class HxyBrainFrontendTest(unittest.TestCase):
             capture_output=True,
             text=True,
         )
-        self.assertIn("可以发", result.stdout)
-        self.assertNotIn("不要发", result.stdout)
+        self.assertIn("可以继续", result.stdout)
+        self.assertNotIn("不要继续", result.stdout)
+
+    def test_brand_check_renders_workflow_gate_result_from_api(self):
+        page = ROOT / "apps" / "admin-web" / "brand-check.html"
+        html = page.read_text(encoding="utf-8")
+        script = html.split("<script>", 1)[1].split("</script>", 1)[0]
+        runner = textwrap.dedent(
+            f"""
+            const vm = require("node:vm");
+            const calls = [];
+            const elements = {{
+              brandTextInput: {{
+                value: "泡一次就能治疗失眠，保证一周见效。",
+                focus() {{}}
+              }},
+              brandPurposeSelect: {{ value: "staff_script" }},
+              brandCheckResult: {{ innerHTML: "" }}
+            }};
+            const context = {{
+              console,
+              window: {{ location: {{ origin: "http://127.0.0.1:18084" }} }},
+              fetch: async (url, options = {{}}) => {{
+                calls.push([url, options]);
+                if (String(url).includes("/brand-risk-rules")) {{
+                  return {{ ok: true, json: async () => ({{ rules: [] }}) }};
+                }}
+                return {{
+                  ok: true,
+                  json: async () => ({{
+                    decision: "block",
+                    workflow_status: "blocked",
+                    risk_level: "high",
+                    risk_reason: "涉及治疗和保证效果表达。",
+                    rewrite_suggestion: "可以说泡着舒服，适合下班后来放松一下。",
+                    next_step: "先改掉风险表达，再交给运营负责人确认。",
+                    human_owner: "运营负责人",
+                    hit_gates: ["medical_claim", "guaranteed_effect"],
+                    can_publish: false,
+                    official_use_allowed: false
+                  }})
+                }};
+              }},
+              document: {{
+                getElementById(id) {{ return elements[id]; }}
+              }}
+            }};
+            vm.createContext(context);
+            vm.runInContext({script!r}, context);
+            (async () => {{
+              await vm.runInContext("runBrandPreflight()", context);
+              process.stdout.write(JSON.stringify({{
+                html: elements.brandCheckResult.innerHTML,
+                workflowCall: calls.find(([url]) => String(url).includes("/workflow-gates/compliance/run")),
+              }}));
+            }})().catch((error) => {{
+              console.error(error);
+              process.exit(1);
+            }});
+            """
+        )
+        result = subprocess.run(
+            ["node", "-e", runner],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        payload = __import__("json").loads(result.stdout)
+        self.assertIn("/api/operating-brain/workflow-gates/compliance/run", payload["workflowCall"][0])
+        self.assertIn('"workflow_type":"staff_script"', payload["workflowCall"][1]["body"])
+        self.assertIn("不要继续", payload["html"])
+        self.assertIn("涉及治疗和保证效果表达", payload["html"])
+        self.assertIn("可以说泡着舒服", payload["html"])
+        self.assertIn("先改掉风险表达", payload["html"])
 
     def test_knowledge_page_starts_with_front_stage_intake_not_governance_console(self):
         page = ROOT / "apps" / "admin-web" / "knowledge.html"

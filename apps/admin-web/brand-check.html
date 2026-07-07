@@ -6,24 +6,24 @@
   <title>HXYOS 说法检查</title>
   <style>
     :root {
-      --bg: #f5f6f2;
+      --bg: #f6f7f3;
       --paper: #ffffff;
-      --ink: #1f251f;
-      --muted: #667064;
+      --ink: #20251f;
+      --muted: #687266;
       --subtle: #8b9489;
-      --line: #dde3d8;
-      --line-strong: #bfcbc0;
+      --line: #dde4d9;
+      --line-strong: #bdc9bd;
       --accent: #17634f;
       --accent-ink: #0c3d30;
-      --accent-soft: #e7f1eb;
+      --accent-soft: #e8f2ec;
       --bad: #8f2f1f;
       --bad-soft: #f8e8e3;
       --warn: #8a6219;
       --warn-soft: #f5efe3;
       --ok: #17634f;
-      --ok-soft: #e7f1eb;
-      --radius: 10px;
-      --shadow: 0 22px 70px rgba(38, 48, 36, 0.10);
+      --ok-soft: #e8f2ec;
+      --radius: 8px;
+      --shadow: 0 20px 64px rgba(38, 48, 36, 0.09);
     }
 
     * {
@@ -45,7 +45,8 @@
     }
 
     button,
-    textarea {
+    textarea,
+    select {
       font: inherit;
       letter-spacing: 0;
     }
@@ -62,8 +63,9 @@
 
     button:focus-visible,
     a:focus-visible,
-    textarea:focus-visible {
-      outline: 3px solid rgba(23, 99, 79, 0.28);
+    textarea:focus-visible,
+    select:focus-visible {
+      outline: 3px solid rgba(23, 99, 79, 0.25);
       outline-offset: 3px;
     }
 
@@ -85,7 +87,7 @@
       min-height: 62px;
       border-bottom: 1px solid var(--line);
       padding: 0 28px;
-      background: rgba(245, 246, 242, 0.94);
+      background: rgba(246, 247, 243, 0.94);
       backdrop-filter: blur(14px);
     }
 
@@ -126,11 +128,11 @@
 
     main {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
-      gap: 24px;
-      width: min(1060px, calc(100vw - 48px));
+      grid-template-columns: minmax(0, 1fr) minmax(290px, 360px);
+      gap: 20px;
+      width: min(1040px, calc(100vw - 48px));
       margin: 0 auto;
-      padding: 38px 0;
+      padding: 34px 0;
     }
 
     .checker,
@@ -146,56 +148,73 @@
     .checker {
       display: grid;
       gap: 20px;
-      padding: 28px;
+      padding: 26px;
     }
 
     .page-head {
       display: grid;
-      gap: 12px;
+      gap: 10px;
       max-width: 640px;
     }
 
     .page-kicker {
       color: var(--accent);
       font-size: 13px;
-      font-weight: 780;
+      font-weight: 800;
     }
 
     h1 {
-      font-size: clamp(36px, 4.8vw, 64px);
+      font-size: clamp(34px, 4.4vw, 58px);
       line-height: 1.04;
-      font-weight: 810;
+      font-weight: 820;
     }
 
     .summary {
       color: var(--muted);
       font-size: 15px;
-      line-height: 1.72;
+      line-height: 1.7;
       overflow-wrap: anywhere;
     }
 
-    .input-block {
+    .form-grid {
       display: grid;
-      gap: 10px;
+      gap: 14px;
     }
 
-    label {
+    .field {
+      display: grid;
+      gap: 8px;
+    }
+
+    label,
+    .field-label {
       color: var(--ink);
       font-size: 14px;
       font-weight: 760;
     }
 
-    textarea {
+    textarea,
+    select {
       width: 100%;
-      min-height: 168px;
-      resize: vertical;
       border: 1px solid var(--line-strong);
       border-radius: var(--radius);
       background: #fbfcf9;
       color: var(--ink);
+    }
+
+    textarea {
+      min-height: 168px;
+      resize: vertical;
       padding: 14px;
       font-size: 15px;
       line-height: 1.7;
+    }
+
+    select {
+      min-height: 44px;
+      padding: 0 12px;
+      font-size: 14px;
+      font-weight: 720;
     }
 
     textarea::placeholder {
@@ -248,15 +267,39 @@
     .result {
       display: grid;
       gap: 12px;
-      min-height: 168px;
+      min-height: 178px;
       border: 1px solid var(--line);
       border-radius: var(--radius);
       background: #fbfcf9;
       padding: 16px;
       color: var(--ink);
       font-size: 15px;
-      line-height: 1.65;
+      line-height: 1.62;
       overflow-wrap: anywhere;
+    }
+
+    .decision-row {
+      display: grid;
+      gap: 6px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 12px;
+    }
+
+    .decision-row:last-child {
+      border-bottom: 0;
+      padding-bottom: 0;
+    }
+
+    .decision-row span {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 760;
+    }
+
+    .decision-row strong {
+      font-size: 18px;
+      line-height: 1.35;
+      font-weight: 820;
     }
 
     .status {
@@ -282,41 +325,17 @@
       color: var(--bad);
     }
 
-    .rewrite {
-      display: grid;
-      gap: 6px;
-    }
-
-    .rewrite strong {
-      font-size: 14px;
-    }
-
-    .rewrite p {
-      border-left: 3px solid var(--accent);
-      background: var(--accent-soft);
-      color: var(--accent-ink);
-      padding: 10px 12px;
-      font-weight: 700;
-    }
-
-    .hit-list {
-      display: grid;
-      gap: 6px;
-      color: var(--muted);
-      font-size: 14px;
-    }
-
     .guide {
       align-self: start;
       display: grid;
       gap: 16px;
-      padding: 22px;
+      padding: 20px;
     }
 
     h2 {
-      font-size: 22px;
+      font-size: 21px;
       line-height: 1.25;
-      font-weight: 790;
+      font-weight: 800;
     }
 
     .rule-list {
@@ -327,20 +346,24 @@
     .rule {
       display: grid;
       gap: 6px;
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
-      background: #fbfcf9;
-      padding: 12px;
+      border-top: 1px solid var(--line);
+      padding-top: 10px;
+    }
+
+    .rule:first-child {
+      border-top: 0;
+      padding-top: 0;
     }
 
     .rule strong {
       font-size: 15px;
     }
 
-    .rule span {
+    .rule span,
+    .note {
       color: var(--muted);
       font-size: 13px;
-      line-height: 1.55;
+      line-height: 1.58;
       overflow-wrap: anywhere;
     }
 
@@ -349,8 +372,6 @@
       background: var(--warn-soft);
       color: var(--warn);
       padding: 12px;
-      font-size: 13px;
-      line-height: 1.58;
     }
 
     @media (max-width: 900px) {
@@ -395,30 +416,55 @@
     <main>
       <section class="checker" aria-labelledby="brandCheckTitle">
         <div class="page-head">
-          <div class="page-kicker">这句话能不能发？</div>
-          <h1 id="brandCheckTitle">先看会不会说过头</h1>
-          <p class="summary">把准备发出去的话贴进来。系统只做前置提醒，帮你避开医疗、保证和夸大表达。</p>
+          <div class="page-kicker">动作前预检</div>
+          <h1 id="brandCheckTitle">这句话能不能发？</h1>
+          <p class="summary">先预检，不直接发布。把准备使用的话贴进来，只看它能不能进入下一步。</p>
         </div>
 
-        <div class="input-block">
-          <label for="brandTextInput">把准备发出去的话贴进来</label>
-          <textarea id="brandTextInput" placeholder="比如：泡一次就能治好失眠，保证一周见效。"></textarea>
+        <div class="form-grid">
+          <div class="field">
+            <label for="brandPurposeSelect">用途</label>
+            <select id="brandPurposeSelect" aria-label="用途">
+              <option value="content_publish">发出去</option>
+              <option value="staff_script">给员工说</option>
+              <option value="project_menu">放进项目菜单</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="brandTextInput">把准备使用的话贴进来</label>
+            <textarea id="brandTextInput" placeholder="比如：泡一次就能治好失眠，保证一周见效。"></textarea>
+          </div>
         </div>
 
         <div class="actions">
-          <button class="primary-button" type="button" onclick="runBrandCheck()">立即检查</button>
+          <button class="primary-button" type="button" onclick="runBrandPreflight()">立即预检</button>
           <button class="sample-button" type="button" onclick="loadBrandSample('price')">价格说明样例</button>
           <button class="sample-button" type="button" onclick="loadBrandSample('effect')">效果说明样例</button>
         </div>
 
         <div id="brandCheckResult" class="result" aria-live="polite">
-          <span class="status warn">建议改</span>
-          <p>先贴入一句准备对外使用的话。检查后会给出“可以发 / 建议改 / 不要发”。</p>
+          <div class="decision-row">
+            <span>能不能继续</span>
+            <strong>先预检</strong>
+          </div>
+          <div class="decision-row">
+            <span>为什么</span>
+            <p>系统会判断医疗、保证、夸大这三类风险。</p>
+          </div>
+          <div class="decision-row">
+            <span>怎么改</span>
+            <p>检查后给出更克制、更能直接使用的说法。</p>
+          </div>
+          <div class="decision-row">
+            <span>下一步</span>
+            <p>能继续再给负责人确认，不能继续就先改。</p>
+          </div>
         </div>
       </section>
 
       <aside class="guide" aria-labelledby="ruleTitle">
-        <h2 id="ruleTitle">禁用词先看这三类</h2>
+        <h2 id="ruleTitle">只看三条红线</h2>
         <div class="rule-list">
           <div class="rule">
             <strong>医疗</strong>
@@ -433,17 +479,40 @@
             <span>不要说最好、第一、唯一。说清楚服务特点，比喊口号更稳。</span>
           </div>
         </div>
-        <div class="note">这页只帮你做前置检查。门头、广告物料和正式对外材料，还要负责人确认。</div>
+        <div class="note">这页只做动作前判断。正式物料还要负责人确认，核心知识不会被这次检查改掉。</div>
       </aside>
     </main>
   </div>
 
   <script>
     const brandTextInput = document.getElementById("brandTextInput");
+    const brandPurposeSelect = document.getElementById("brandPurposeSelect");
     const brandCheckResult = document.getElementById("brandCheckResult");
     const defaultApiBase = window.location.origin && window.location.origin !== "null"
       ? window.location.origin
       : "http://127.0.0.1:18081";
+    const apiBaseCandidates = [
+      defaultApiBase,
+      "http://127.0.0.1:18081"
+    ].filter((value, index, values) => value && values.indexOf(value) === index);
+
+    const purposeOptions = {
+      content_publish: {
+        workflow_type: "content_publish",
+        channel: "朋友圈",
+        label: "发出去"
+      },
+      staff_script: {
+        workflow_type: "staff_script",
+        channel: "员工话术",
+        label: "给员工说"
+      },
+      project_menu: {
+        workflow_type: "project_menu",
+        channel: "项目菜单",
+        label: "放进项目菜单"
+      }
+    };
 
     const defaultRiskRules = [
       {
@@ -468,18 +537,26 @@
     let riskRules = defaultRiskRules.map((rule) => ({ ...rule, words: [...rule.words] }));
 
     async function requestJson(path, options = {}) {
-      const response = await fetch(`${defaultApiBase}${path}`, options);
-      if (!response.ok) {
-        throw new Error(`${response.status} ${response.statusText}`);
+      let lastError;
+      for (const apiBase of apiBaseCandidates) {
+        try {
+          const response = await fetch(`${apiBase}${path}`, options);
+          if (!response.ok) {
+            throw new Error(`${response.status} ${response.statusText}`);
+          }
+          return response.json();
+        } catch (error) {
+          lastError = error;
+        }
       }
-      return response.json();
+      throw lastError || new Error("API 请求失败");
     }
 
     function normalizeRiskRules(rules) {
       return rules
         .filter((rule) => rule && Array.isArray(rule.words) && rule.words.length > 0)
         .map((rule) => ({
-          type: rule.type || "禁用词",
+          type: rule.type || "风险词",
           level: rule.level === "bad" ? "bad" : "warn",
           words: [...new Set(rule.words.filter(Boolean).map(String))],
           advice: rule.advice || "这类说法先换成更克制、更具体的表达。"
@@ -504,7 +581,7 @@
     };
 
     function escapeHtml(text) {
-      return text.replace(/[&<>"']/g, (char) => ({
+      return String(text || "").replace(/[&<>"']/g, (char) => ({
         "&": "&amp;",
         "<": "&lt;",
         ">": "&gt;",
@@ -513,7 +590,7 @@
       }[char]));
     }
 
-    const boundaryMarkers = ["不能", "不要", "不得", "禁止", "禁用", "避免", "不做", "不说", "不承诺", "不替代", "不能替代", "不是"];
+    const boundaryMarkers = ["不能", "不要", "不得", "禁止", "避免", "不做", "不说", "不承诺", "不替代", "不能替代", "不是"];
 
     function sentenceWindow(text, word, index) {
       const left = Math.max(
@@ -583,57 +660,155 @@
         .replaceAll("医美级", "体验感更精致");
     }
 
-    function renderBrandResult(status, level, message, hits, rewrite) {
-      const hitHtml = hits.length
-        ? `<div class="hit-list">${hits.map((hit) => `<span>${hit.type}：${hit.words.join("、")}。${hit.advice}</span>`).join("")}</div>`
-        : "";
-
-      brandCheckResult.innerHTML = `
-        <span class="status ${level}">${status}</span>
-        <p>${message}</p>
-        ${hitHtml}
-        <div class="rewrite">
-          <strong>改成这样说</strong>
-          <p>${escapeHtml(rewrite)}</p>
-        </div>
-      `;
+    function buildBrandPreflightPayload(text) {
+      const purpose = purposeOptions[brandPurposeSelect.value] || purposeOptions.content_publish;
+      return {
+        workflow_type: purpose.workflow_type,
+        text,
+        channel: purpose.channel,
+        audience: purpose.workflow_type === "staff_script" ? "staff" : "customer"
+      };
     }
 
-    function runBrandCheck() {
-      const text = brandTextInput.value.trim();
-
-      if (!text) {
-        brandCheckResult.innerHTML = '<span class="status warn">建议改</span><p>先贴入一句准备对外使用的话，再检查。</p>';
-        brandTextInput.focus();
-        return;
-      }
-
-      const hits = riskRules
+    function localHits(text) {
+      return riskRules
         .map((rule) => ({
           ...rule,
           words: rule.words.filter((word) => hasRiskWord(text, word))
         }))
         .filter((rule) => rule.words.length > 0);
+    }
 
+    function buildLocalPreflightResult(text) {
+      const hits = localHits(text);
       const hasBad = hits.some((hit) => hit.level === "bad");
-      const rewrite = softerRewrite(text);
+      const hitTypes = hits.map((hit) => hit.type).join("、");
+      const base = {
+        risk_reason: hits.length
+          ? `命中${hitTypes}风险，需要先改。`
+          : "没有命中当前红线。仍然只代表动作前预检。",
+        rewrite_suggestion: hits.length ? softerRewrite(text) : text,
+        hit_gates: hits.map((hit) => hit.type)
+      };
 
       if (hasBad) {
-        renderBrandResult("不要发", "bad", "这句话命中了高风险禁用词，先改掉再用。", hits, rewrite);
-        return;
+        return {
+          ...base,
+          decision: "block",
+          workflow_status: "blocked",
+          risk_level: "high",
+          next_step: "先改掉风险表达，再交给负责人确认。"
+        };
       }
 
       if (hits.length > 0) {
-        renderBrandResult("建议改", "warn", "这句话可以继续打磨，先去掉绝对化或夸大的部分。", hits, rewrite);
+        return {
+          ...base,
+          decision: "revise",
+          workflow_status: "revise_before_continue",
+          risk_level: "medium",
+          next_step: "按建议改写后再预检一次。"
+        };
+      }
+
+      return {
+        ...base,
+        decision: "allow",
+        workflow_status: "can_continue",
+        risk_level: "low",
+        next_step: "可以进入下一步，但正式物料仍要负责人确认。"
+      };
+    }
+
+    function workflowLabel(payload) {
+      const labels = {
+        can_continue: "可以继续",
+        revise_before_continue: "先改再继续",
+        blocked: "不要继续"
+      };
+      if (payload.workflow_status && labels[payload.workflow_status]) {
+        return labels[payload.workflow_status];
+      }
+      if (payload.decision === "allow") return "可以继续";
+      if (payload.decision === "revise") return "先改再继续";
+      return "不要继续";
+    }
+
+    function statusClass(payload) {
+      const status = payload.workflow_status || "";
+      if (status === "can_continue" || payload.decision === "allow") return "ok";
+      if (status === "revise_before_continue" || payload.decision === "revise") return "warn";
+      return "bad";
+    }
+
+    function readableReason(payload) {
+      if (payload.risk_reason) return payload.risk_reason;
+      const gates = Array.isArray(payload.hit_gates) ? payload.hit_gates.join("、") : "";
+      return gates ? `命中${gates}风险。` : "没有命中当前红线。";
+    }
+
+    function renderBrandPreflightResult(payload) {
+      const label = workflowLabel(payload);
+      const level = statusClass(payload);
+      const reason = readableReason(payload);
+      const rewrite = payload.rewrite_suggestion || "保持具体、克制，不讲医疗结论、保证结果或绝对第一。";
+      const nextStep = payload.next_step || "交给负责人确认后再使用。";
+
+      brandCheckResult.innerHTML = `
+        <span class="status ${level}">${escapeHtml(label)}</span>
+        <div class="decision-row">
+          <span>能不能继续</span>
+          <strong>${escapeHtml(label)}</strong>
+        </div>
+        <div class="decision-row">
+          <span>为什么</span>
+          <p>${escapeHtml(reason)}</p>
+        </div>
+        <div class="decision-row">
+          <span>怎么改</span>
+          <p>${escapeHtml(rewrite)}</p>
+        </div>
+        <div class="decision-row">
+          <span>下一步</span>
+          <p>${escapeHtml(nextStep)}</p>
+        </div>
+      `;
+    }
+
+    async function runBrandPreflight() {
+      const text = brandTextInput.value.trim();
+
+      if (!text) {
+        renderBrandPreflightResult({
+          decision: "revise",
+          workflow_status: "revise_before_continue",
+          risk_reason: "先贴入一句准备使用的话，再做动作前判断。",
+          rewrite_suggestion: "把原句贴进来，不要只写关键词。",
+          next_step: "补充原句后重新预检。"
+        });
+        brandTextInput.focus();
         return;
       }
 
-      renderBrandResult("可以发", "ok", "没有命中当前禁用词。仍建议保持具体、克制、讲人话。", [], text);
+      try {
+        const payload = await requestJson("/api/operating-brain/workflow-gates/compliance/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(buildBrandPreflightPayload(text))
+        });
+        renderBrandPreflightResult(payload);
+      } catch (error) {
+        renderBrandPreflightResult(buildLocalPreflightResult(text));
+      }
+    }
+
+    function runBrandCheck() {
+      return runBrandPreflight();
     }
 
     function loadBrandSample(name) {
       brandTextInput.value = samples[name] || "";
-      runBrandCheck();
+      runBrandPreflight();
     }
 
     loadBrandRiskRules();
