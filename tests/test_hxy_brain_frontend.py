@@ -151,11 +151,19 @@ class HxyBrainFrontendTest(unittest.TestCase):
             "夸大",
             "id=\"brandTextInput\"",
             "id=\"brandPurposeSelect\"",
+            "id=\"brandApiToken\"",
             "id=\"brandCheckResult\"",
+            "系统口令",
+            "连接企业预检",
+            "hxyActionApiToken",
+            "hxyBrainApiToken",
+            "hxyKnowledgeApiToken",
             "runBrandPreflight",
             "renderBrandPreflightResult",
             "buildBrandPreflightPayload",
             "apiBaseCandidates",
+            'headers.set("Authorization", `Bearer ${token}`)',
+            'localStorage.setItem("hxyActionApiToken"',
             "http://127.0.0.1:18081",
             "defaultRiskRules",
             "riskRules",
@@ -198,11 +206,16 @@ class HxyBrainFrontendTest(unittest.TestCase):
                 focus() {{}}
               }},
               brandPurposeSelect: {{ value: "content_publish" }},
+              brandApiToken: {{ value: "" }},
               brandCheckResult: {{ innerHTML: "" }}
             }};
             const context = {{
               console,
               window: {{ location: {{ origin: "null" }} }},
+              localStorage: {{
+                getItem() {{ return ""; }},
+                setItem() {{}}
+              }},
               fetch: async () => {{ throw new Error("offline"); }},
               document: {{
                 getElementById(id) {{ return elements[id]; }}
@@ -243,11 +256,17 @@ class HxyBrainFrontendTest(unittest.TestCase):
                 focus() {{}}
               }},
               brandPurposeSelect: {{ value: "staff_script" }},
+              brandApiToken: {{ value: "front-token" }},
               brandCheckResult: {{ innerHTML: "" }}
             }};
             const context = {{
               console,
+              Headers,
               window: {{ location: {{ origin: "http://127.0.0.1:18084" }} }},
+              localStorage: {{
+                getItem(key) {{ return key === "hxyActionApiToken" ? "front-token" : ""; }},
+                setItem() {{}}
+              }},
               fetch: async (url, options = {{}}) => {{
                 calls.push([url, options]);
                 if (String(url).includes("/brand-risk-rules")) {{
@@ -280,6 +299,7 @@ class HxyBrainFrontendTest(unittest.TestCase):
               process.stdout.write(JSON.stringify({{
                 html: elements.brandCheckResult.innerHTML,
                 workflowCall: calls.find(([url]) => String(url).includes("/workflow-gates/compliance/run")),
+                authorization: calls.find(([url]) => String(url).includes("/workflow-gates/compliance/run"))?.[1]?.headers?.get("Authorization"),
               }}));
             }})().catch((error) => {{
               console.error(error);
@@ -297,10 +317,89 @@ class HxyBrainFrontendTest(unittest.TestCase):
         payload = __import__("json").loads(result.stdout)
         self.assertIn("/api/operating-brain/workflow-gates/compliance/run", payload["workflowCall"][0])
         self.assertIn('"workflow_type":"staff_script"', payload["workflowCall"][1]["body"])
+        self.assertEqual(payload["authorization"], "Bearer front-token")
         self.assertIn("不要继续", payload["html"])
         self.assertIn("涉及治疗和保证效果表达", payload["html"])
         self.assertIn("可以说泡着舒服", payload["html"])
         self.assertIn("先改掉风险表达", payload["html"])
+
+    def test_brand_check_reuses_existing_admin_tokens_for_workflow_gate(self):
+        page = ROOT / "apps" / "admin-web" / "brand-check.html"
+        html = page.read_text(encoding="utf-8")
+        script = html.split("<script>", 1)[1].split("</script>", 1)[0]
+        runner = textwrap.dedent(
+            f"""
+            const vm = require("node:vm");
+            const calls = [];
+            const saved = [];
+            const elements = {{
+              brandTextInput: {{
+                value: "草本现煮，泡着舒服，适合下班后来放松一下。",
+                focus() {{}}
+              }},
+              brandPurposeSelect: {{ value: "content_publish" }},
+              brandApiToken: {{ value: "" }},
+              brandCheckResult: {{ innerHTML: "" }}
+            }};
+            const stored = {{
+              hxyBrainApiToken: "brain-token",
+              hxyKnowledgeApiToken: "knowledge-token"
+            }};
+            const context = {{
+              console,
+              Headers,
+              window: {{ location: {{ origin: "http://127.0.0.1:18084" }} }},
+              localStorage: {{
+                getItem(key) {{ return stored[key] || ""; }},
+                setItem(key, value) {{ saved.push([key, value]); }}
+              }},
+              fetch: async (url, options = {{}}) => {{
+                calls.push([url, options]);
+                if (String(url).includes("/brand-risk-rules")) {{
+                  return {{ ok: true, json: async () => ({{ rules: [] }}) }};
+                }}
+                return {{
+                  ok: true,
+                  json: async () => ({{
+                    decision: "allow",
+                    workflow_status: "can_continue",
+                    risk_reason: "没有命中高风险规则。",
+                    rewrite_suggestion: "草本现煮，泡着舒服，适合下班后来放松一下。",
+                    next_step: "交给负责人确认后再使用。"
+                  }})
+                }};
+              }},
+              document: {{
+                getElementById(id) {{ return elements[id]; }}
+              }}
+            }};
+            vm.createContext(context);
+            vm.runInContext({script!r}, context);
+            (async () => {{
+              await vm.runInContext("runBrandPreflight()", context);
+              process.stdout.write(JSON.stringify({{
+                tokenValue: elements.brandApiToken.value,
+                saved,
+                workflowCall: calls.find(([url]) => String(url).includes("/workflow-gates/compliance/run")),
+                authorization: calls.find(([url]) => String(url).includes("/workflow-gates/compliance/run"))?.[1]?.headers?.get("Authorization"),
+              }}));
+            }})().catch((error) => {{
+              console.error(error);
+              process.exit(1);
+            }});
+            """
+        )
+        result = subprocess.run(
+            ["node", "-e", runner],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        payload = __import__("json").loads(result.stdout)
+        self.assertEqual(payload["tokenValue"], "brain-token")
+        self.assertEqual(payload["authorization"], "Bearer brain-token")
+        self.assertIn(["hxyActionApiToken", "brain-token"], payload["saved"])
 
     def test_knowledge_page_starts_with_front_stage_intake_not_governance_console(self):
         page = ROOT / "apps" / "admin-web" / "knowledge.html"

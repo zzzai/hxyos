@@ -46,6 +46,7 @@
 
     button,
     textarea,
+    input,
     select {
       font: inherit;
       letter-spacing: 0;
@@ -64,6 +65,7 @@
     button:focus-visible,
     a:focus-visible,
     textarea:focus-visible,
+    input:focus-visible,
     select:focus-visible {
       outline: 3px solid rgba(23, 99, 79, 0.25);
       outline-offset: 3px;
@@ -194,6 +196,7 @@
     }
 
     textarea,
+    input,
     select {
       width: 100%;
       border: 1px solid var(--line-strong);
@@ -215,6 +218,12 @@
       padding: 0 12px;
       font-size: 14px;
       font-weight: 720;
+    }
+
+    input {
+      min-height: 42px;
+      padding: 0 12px;
+      font-size: 14px;
     }
 
     textarea::placeholder {
@@ -432,6 +441,11 @@
           </div>
 
           <div class="field">
+            <label for="brandApiToken">系统口令</label>
+            <input id="brandApiToken" type="password" autocomplete="off" placeholder="连接企业预检">
+          </div>
+
+          <div class="field">
             <label for="brandTextInput">把准备使用的话贴进来</label>
             <textarea id="brandTextInput" placeholder="比如：泡一次就能治好失眠，保证一周见效。"></textarea>
           </div>
@@ -487,6 +501,7 @@
   <script>
     const brandTextInput = document.getElementById("brandTextInput");
     const brandPurposeSelect = document.getElementById("brandPurposeSelect");
+    const brandApiToken = document.getElementById("brandApiToken");
     const brandCheckResult = document.getElementById("brandCheckResult");
     const defaultApiBase = window.location.origin && window.location.origin !== "null"
       ? window.location.origin
@@ -536,11 +551,21 @@
     ];
     let riskRules = defaultRiskRules.map((rule) => ({ ...rule, words: [...rule.words] }));
 
+    function initialApiToken() {
+      return localStorage.getItem("hxyActionApiToken")
+        || localStorage.getItem("hxyBrainApiToken")
+        || localStorage.getItem("hxyKnowledgeApiToken")
+        || "";
+    }
+
     async function requestJson(path, options = {}) {
       let lastError;
+      const headers = new Headers(options.headers || {});
+      const token = brandApiToken.value.trim();
+      if (token) headers.set("Authorization", `Bearer ${token}`);
       for (const apiBase of apiBaseCandidates) {
         try {
-          const response = await fetch(`${apiBase}${path}`, options);
+          const response = await fetch(`${apiBase}${path}`, { ...options, headers });
           if (!response.ok) {
             throw new Error(`${response.status} ${response.statusText}`);
           }
@@ -777,6 +802,10 @@
 
     async function runBrandPreflight() {
       const text = brandTextInput.value.trim();
+      const token = brandApiToken.value.trim();
+      if (token) {
+        localStorage.setItem("hxyActionApiToken", token);
+      }
 
       if (!text) {
         renderBrandPreflightResult({
@@ -811,6 +840,7 @@
       runBrandPreflight();
     }
 
+    brandApiToken.value = initialApiToken();
     loadBrandRiskRules();
   </script>
 </body>
