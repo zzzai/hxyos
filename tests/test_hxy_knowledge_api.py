@@ -439,6 +439,70 @@ class HxyKnowledgeApiTest(unittest.TestCase):
         self.assertNotIn("password", serialized)
         self.assertNotIn("bearer", serialized)
 
+    def test_operating_brain_product_contracts_include_enterprise_objects(self):
+        response = self.client.get("/api/operating-brain/product-contracts")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn("knowledge_engine", payload)
+        self.assertIn("retrieval_apps", payload)
+        self.assertIn("intent_planning", payload)
+        self.assertIn("skill_registry", payload)
+        self.assertIn("memory_policies", payload)
+        self.assertIn("automation_tasks", payload)
+        self.assertIn("authority_rules", payload)
+        self.assertFalse(payload["authority_rules"]["chat_can_publish_approved"])
+        self.assertFalse(payload["authority_rules"]["agent_can_publish_approved"])
+        self.assertFalse(payload["authority_rules"]["loop_can_publish_approved"])
+        self.assertFalse(payload["authority_rules"]["memory_can_publish_approved"])
+        self.assertFalse(payload["authority_rules"]["skill_output_is_official"])
+
+    def test_retrieval_apps_are_business_specific_and_do_not_expose_raw_chunks(self):
+        response = self.client.get("/api/operating-brain/retrieval-apps")
+
+        self.assertEqual(response.status_code, 200)
+        serialized = json.dumps(response.json(), ensure_ascii=False)
+        self.assertIn("employee_standard_answer_search", serialized)
+        self.assertIn("brand_language_risk_check", serialized)
+        self.assertIn("founder_decision_evidence_search", serialized)
+        self.assertNotIn("chunk_id", serialized)
+        self.assertNotIn("/root/hxy", serialized)
+        self.assertNotIn("cluster_member_count", serialized)
+
+    def test_intent_definitions_have_scope_exclusions_and_risk_gates(self):
+        response = self.client.get("/api/operating-brain/intent-definitions")
+
+        self.assertEqual(response.status_code, 200)
+        items = response.json()["items"]
+        compliance = next(item for item in items if item["intent_id"] == "intent-compliance-language-check")
+        self.assertIn("positive_scope", compliance)
+        self.assertIn("excluded_scope", compliance)
+        self.assertIn("risk_gates", compliance)
+        self.assertIn("medical_claim", compliance["risk_gates"])
+
+    def test_skill_registry_keeps_skill_output_non_official(self):
+        response = self.client.get("/api/operating-brain/skills")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn("items", payload)
+        self.assertFalse(payload["authority_rules"]["skill_output_is_official"])
+        for item in payload["items"]:
+            self.assertIn("version", item)
+            self.assertIn("status", item)
+            self.assertIn("owner", item)
+            self.assertFalse(item["can_publish_approved"])
+
+    def test_automation_tasks_are_allowlisted_and_cannot_publish_approved(self):
+        response = self.client.get("/api/operating-brain/automation-tasks")
+
+        self.assertEqual(response.status_code, 200)
+        for item in response.json()["items"]:
+            self.assertIn("task_type", item)
+            self.assertIn("stop_condition", item)
+            self.assertFalse(item["can_publish_approved"])
+            self.assertTrue(item["allowed_script"].startswith("scripts/") or item["allowed_script"] == "")
+
     def test_operating_brain_store_daily_metrics_endpoint_returns_actionable_diagnosis(self):
         response = self.client.post(
             "/api/operating-brain/store-daily-metrics",
@@ -869,6 +933,66 @@ used_by:
         self.assertEqual(body["items"][0]["claim_id"], "triage-001")
         self.assertFalse(body["items"][0]["official_use_allowed"])
         self.assertTrue(body["items"][0]["requires_human_review"])
+
+    def test_operating_brain_compiler_review_topics_endpoint_turns_raw_claims_into_business_topics(self):
+        wiki_dir = self.root / "knowledge" / "wiki"
+        wiki_dir.mkdir(parents=True)
+        (wiki_dir / "claim-triage.json").write_text(
+            json.dumps(
+                {
+                    "version": "hxy-claim-triage.v1",
+                    "total_claim_count": 218895,
+                    "cluster_count": 15657,
+                    "items": [
+                        {
+                            "claim_id": "triage-001",
+                            "claim": "高 | 容易被理解成治疗、诊疗、医美或高风险技术 | 不做主门头，必须人工复核",
+                            "review_group": "risk_boundary",
+                            "priority": "high",
+                            "source_class": "risk_compliance",
+                            "cluster_member_count": 42,
+                            "sources": ["/root/hxy/knowledge/raw/inbox/风险与合规/荷小悦项目红线卡.md"],
+                        },
+                        {
+                            "claim_id": "triage-002",
+                            "claim": "员工提醒 | 必须标注外用、禁忌、过敏提醒；不能替代药品",
+                            "review_group": "employee_script",
+                            "priority": "high",
+                            "source_class": "risk_compliance",
+                            "cluster_member_count": 8,
+                            "sources": ["/root/hxy/knowledge/raw/inbox/风险与合规/荷小悦员工功效问题标准话术.md"],
+                        },
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        response = self.client.get("/api/operating-brain/knowledge-compiler/review-topics?limit=10")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-review-topics.v1")
+        self.assertEqual(body["count"], 2)
+        self.assertFalse(body["official_use_allowed"])
+        self.assertTrue(body["requires_human_review"])
+        serialized = json.dumps(body, ensure_ascii=False)
+        self.assertIn("医疗与功效表达边界", serialized)
+        self.assertIn("员工对外话术边界", serialized)
+        self.assertIn("先判断", serialized)
+        self.assertIn("荷小悦项目红线卡.md", serialized)
+        self.assertNotIn("/root/hxy", serialized)
+        self.assertNotIn("cluster_member_count", serialized)
+        self.assertNotIn("sample_claims", serialized)
+        self.assertNotIn("不做主门头", serialized)
+        for item in body["items"]:
+            self.assertEqual(item["version"], "hxy-review-topic.v1")
+            self.assertIn("decision_question", item)
+            self.assertIn("why_it_matters", item)
+            self.assertIn("next_action", item)
+            self.assertFalse(item["official_use_allowed"])
+            self.assertTrue(item["requires_human_review"])
 
     def test_operating_brain_compiler_compliance_review_pack_endpoint_is_read_only(self):
         wiki_dir = self.root / "knowledge" / "wiki"

@@ -229,33 +229,78 @@ class HxyBrainFrontendTest(unittest.TestCase):
         governance_index = html.index("P0 合规闸门")
         self.assertLess(front_index, governance_index)
 
-    def test_knowledge_page_exposes_claim_triage_workbench_before_review_queue(self):
+    def test_knowledge_page_exposes_review_topics_instead_of_raw_claim_queue(self):
         page = ROOT / "apps" / "admin-web" / "knowledge.html"
         html = page.read_text(encoding="utf-8")
 
         for label in [
-            "Claim 去噪工作台",
+            "待判断议题",
+            "原始 claim 不直接展示",
+            "先判断",
+            "为什么重要",
+            "下一步",
+            "id=\"reviewTopics\"",
+            "id=\"reviewTopicsMeta\"",
+            "renderReviewTopics",
+            "refreshReviewTopics",
+            "/api/operating-brain/knowledge-compiler/review-topics?limit=12",
+            "reviewTopicState",
             "不是正式知识",
-            "id=\"claimTriage\"",
-            "id=\"claimTriageMeta\"",
-            "id=\"claimTriageSourceFilter\"",
-            "id=\"claimTriageGroupFilter\"",
-            "id=\"claimTriagePriorityFilter\"",
-            "id=\"claimTriageSearch\"",
-            "renderClaimTriage",
-            "filterClaimTriageItems",
-            "refreshClaimTriage",
-            "/api/operating-brain/knowledge-compiler/claim-triage?limit=200",
-            "claimTriageState",
-            "cluster_member_count",
-            "duplicate_count",
             "requires_human_review",
         ]:
             self.assertIn(label, html)
 
-        triage_index = html.index("Claim 去噪工作台")
-        review_index = html.index("候选 Claim 复核")
-        self.assertLess(triage_index, review_index)
+        governance_index = html.index("P0 合规闸门")
+        topics_index = html.index("待判断议题")
+        self.assertLess(governance_index, topics_index)
+
+        for forbidden in [
+            "候选 Claim 复核",
+            "Claim 去噪工作台",
+            "cluster_member_count",
+            "duplicate_count",
+            "overclaim_risk",
+            "转草稿",
+            "需修改",
+            "驳回",
+        ]:
+            self.assertNotIn(forbidden, html)
+
+    def test_knowledge_page_shows_product_objects_not_raw_artifacts(self):
+        page = ROOT / "apps" / "admin-web" / "knowledge.html"
+        html = page.read_text(encoding="utf-8")
+
+        for label in [
+            "知识引擎",
+            "检索应用",
+            "意图规划",
+            "Skill 中心",
+            "自动化任务",
+            "id=\"productContracts\"",
+            "id=\"retrievalApps\"",
+            "id=\"intentDefinitions\"",
+            "id=\"skillRegistry\"",
+            "id=\"automationTasks\"",
+            "renderProductContracts",
+            "renderRetrievalApps",
+            "renderIntentDefinitions",
+            "renderSkills",
+            "renderAutomationTasks",
+            "/api/operating-brain/product-contracts",
+            "/api/operating-brain/retrieval-apps",
+            "/api/operating-brain/intent-definitions",
+            "/api/operating-brain/skills",
+            "/api/operating-brain/automation-tasks",
+        ]:
+            self.assertIn(label, html)
+
+        for forbidden in [
+            "cluster_member_count",
+            "sample_claims",
+            "chunk_id",
+            "/root/hxy\"",
+        ]:
+            self.assertNotIn(forbidden, html)
 
     def test_startup_stage_product_focuses_on_today_action_not_full_os(self):
         page = ROOT / "apps" / "admin-web" / "startup.html"

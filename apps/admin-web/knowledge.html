@@ -451,6 +451,59 @@
       color: var(--accent-dark);
     }
 
+    .product-object-board {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .product-object {
+      min-height: 186px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      padding: 14px;
+      display: grid;
+      align-content: start;
+      gap: 10px;
+    }
+
+    .product-object h2 {
+      margin: 0;
+      color: var(--ink);
+      font-size: 16px;
+      line-height: 1.3;
+    }
+
+    .product-object p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+      overflow-wrap: anywhere;
+    }
+
+    .product-object-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .product-object-line {
+      border-top: 1px solid var(--line);
+      padding-top: 8px;
+      color: var(--ink-soft);
+      font-size: 12px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+
+    .product-object-line:first-child {
+      border-top: 0;
+      padding-top: 0;
+    }
+
     .gate-board {
       display: grid;
       grid-template-columns: minmax(0, 1.55fr) minmax(360px, 0.85fr);
@@ -664,17 +717,9 @@
       align-items: end;
     }
 
-    .triage-tools {
+    .topic-metrics {
       display: grid;
-      grid-template-columns: repeat(3, minmax(150px, 0.4fr)) minmax(220px, 1fr) auto;
-      gap: 10px;
-      align-items: end;
-      margin-bottom: 14px;
-    }
-
-    .triage-metrics {
-      display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 1px;
       overflow: hidden;
       border: 1px solid var(--line);
@@ -683,20 +728,20 @@
       margin-bottom: 14px;
     }
 
-    .triage-metric {
+    .topic-metric {
       min-height: 66px;
       background: #fbfcfb;
       padding: 10px 12px;
     }
 
-    .triage-metric span {
+    .topic-metric span {
       display: block;
       color: var(--muted);
       font-size: 12px;
       line-height: 1.3;
     }
 
-    .triage-metric strong {
+    .topic-metric strong {
       display: block;
       margin-top: 9px;
       font-family: var(--mono);
@@ -775,7 +820,7 @@
 
     .review-list,
     .correction-list,
-    .claim-triage-list {
+    .review-topic-list {
       display: grid;
       gap: 10px;
       max-height: 520px;
@@ -783,7 +828,7 @@
     }
 
     .review-item,
-    .claim-triage-item {
+    .review-topic-item {
       display: grid;
       grid-template-columns: 150px 1fr auto;
       gap: 12px;
@@ -803,23 +848,42 @@
 
     .review-item:first-child,
     .correction-item:first-child,
-    .claim-triage-item:first-child {
+    .review-topic-item:first-child {
       border-top: 0;
       padding-top: 0;
     }
 
     .review-main,
     .correction-main,
-    .claim-triage-main {
+    .review-topic-main {
       display: grid;
       gap: 6px;
       min-width: 0;
     }
 
     .review-claim,
-    .claim-triage-claim {
+    .review-topic-title {
       line-height: 1.5;
       overflow-wrap: anywhere;
+    }
+
+    .review-topic-title {
+      font-weight: 760;
+      font-size: 15px;
+    }
+
+    .review-topic-section {
+      display: grid;
+      gap: 3px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+      overflow-wrap: anywhere;
+    }
+
+    .review-topic-section strong {
+      color: var(--ink-soft);
+      font-size: 12px;
     }
 
     .correction-question {
@@ -833,6 +897,7 @@
       .workbench-topbar,
       .gate-board,
       .p0-work,
+      .product-object-board,
       .tool-grid {
         grid-template-columns: 1fr;
       }
@@ -857,13 +922,12 @@
       .workbench-topbar,
       .api-control,
       .system-strip,
-      .triage-tools,
-      .triage-metrics,
+      .topic-metrics,
       .search-tools,
       .upload-row,
       .metrics,
       .review-item,
-      .claim-triage-item,
+      .review-topic-item,
       .correction-item {
         grid-template-columns: 1fr;
       }
@@ -881,8 +945,7 @@
 
       .gate-actions label,
       .review-actions button,
-      .gate-actions button,
-      .triage-tools button {
+      .gate-actions button {
         width: 100%;
       }
 
@@ -983,6 +1046,39 @@
         <span>待复核</span>
         <strong id="reviewCount">0</strong>
       </div>
+    </section>
+
+    <section class="product-object-board" aria-label="HXYOS 产品对象层">
+      <article class="product-object">
+        <h2>知识引擎</h2>
+        <div id="productContracts" class="product-object-list">
+          <div class="product-object-line">等待读取产品契约。</div>
+        </div>
+      </article>
+      <article class="product-object">
+        <h2>检索应用</h2>
+        <div id="retrievalApps" class="product-object-list">
+          <div class="product-object-line">等待读取检索应用。</div>
+        </div>
+      </article>
+      <article class="product-object">
+        <h2>意图规划</h2>
+        <div id="intentDefinitions" class="product-object-list">
+          <div class="product-object-line">等待读取意图定义。</div>
+        </div>
+      </article>
+      <article class="product-object">
+        <h2>Skill 中心</h2>
+        <div id="skillRegistry" class="product-object-list">
+          <div class="product-object-line">等待读取 Skill 注册表。</div>
+        </div>
+      </article>
+      <article class="product-object">
+        <h2>自动化任务</h2>
+        <div id="automationTasks" class="product-object-list">
+          <div class="product-object-line">等待读取自动化任务。</div>
+        </div>
+      </article>
     </section>
 
     <section class="gate-board" aria-label="治理闸门">
@@ -1102,57 +1198,18 @@
 
       <div class="panel full">
         <div class="panel-header">
-          <div class="panel-title">Claim 去噪工作台 <small id="claimTriageMeta">不是正式知识 · 等待 triage 产物</small></div>
-          <button class="secondary" id="refreshClaimTriage" type="button">刷新去噪结果</button>
+          <div class="panel-title">待判断议题 <small id="reviewTopicsMeta">原始 claim 不直接展示 · 等待整理结果</small></div>
+          <button class="secondary" id="refreshReviewTopics" type="button">刷新议题</button>
         </div>
         <div class="panel-body">
-          <div class="triage-metrics" aria-label="Claim triage 统计">
-            <div class="triage-metric"><span>原始 claim</span><strong id="claimTriageTotalClaims">0</strong></div>
-            <div class="triage-metric"><span>噪音</span><strong id="claimTriageNoiseClaims">0</strong></div>
-            <div class="triage-metric"><span>重复</span><strong id="claimTriageDuplicateClaims">0</strong></div>
-            <div class="triage-metric"><span>可复核</span><strong id="claimTriageReviewableClaims">0</strong></div>
-            <div class="triage-metric"><span>聚类</span><strong id="claimTriageClusters">0</strong></div>
-            <div class="triage-metric"><span>优先审核</span><strong id="claimTriageSelected">0</strong></div>
+          <div class="topic-metrics" aria-label="待判断议题统计">
+            <div class="topic-metric"><span>原始候选</span><strong id="reviewTopicRawCount">0</strong></div>
+            <div class="topic-metric"><span>聚合议题</span><strong id="reviewTopicCount">0</strong></div>
+            <div class="topic-metric"><span>原始聚类</span><strong id="reviewTopicClusterCount">0</strong></div>
+            <div class="topic-metric"><span>可发布</span><strong>0</strong></div>
           </div>
-          <div class="triage-tools" aria-label="Claim triage 筛选">
-            <label>
-              来源
-              <select id="claimTriageSourceFilter">
-                <option value="">全部</option>
-              </select>
-            </label>
-            <label>
-              分组
-              <select id="claimTriageGroupFilter">
-                <option value="">全部</option>
-              </select>
-            </label>
-            <label>
-              优先级
-              <select id="claimTriagePriorityFilter">
-                <option value="">全部</option>
-              </select>
-            </label>
-            <label>
-              搜索
-              <input id="claimTriageSearch" type="search" placeholder="claim / 来源">
-            </label>
-            <button class="secondary" id="applyClaimTriageFilters" type="button">筛选</button>
-          </div>
-          <div class="result">Triage 只做去噪、聚类和优先级筛选。requires_human_review，不能当作 approved answer card 或正式知识引用。</div>
-          <div id="claimTriage" class="claim-triage-list" aria-label="Claim triage 列表">
-            <div class="result">等待刷新</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="panel full">
-        <div class="panel-header">
-          <div class="panel-title">候选 Claim 复核 <small id="reviewQueueMeta">等待编译产物</small></div>
-          <button class="secondary" id="refreshReviewQueue" type="button">刷新复核队列</button>
-        </div>
-        <div class="panel-body">
-          <div id="reviewQueue" class="review-list">
+          <div class="result">原始 claim 不直接展示。系统先整理成经营、品牌、产品、合规等待判断议题；每条议题都不是正式知识，requires_human_review。</div>
+          <div id="reviewTopics" class="review-topic-list" aria-label="待判断议题列表">
             <div class="result">等待刷新</div>
           </div>
         </div>
@@ -1286,12 +1343,12 @@
     const actionResult = document.querySelector("#actionResult");
     const assetTable = document.querySelector("#assetTable");
     const searchResults = document.querySelector("#searchResults");
-    const claimTriage = document.querySelector("#claimTriage");
-    const claimTriageSourceFilter = document.querySelector("#claimTriageSourceFilter");
-    const claimTriageGroupFilter = document.querySelector("#claimTriageGroupFilter");
-    const claimTriagePriorityFilter = document.querySelector("#claimTriagePriorityFilter");
-    const claimTriageSearch = document.querySelector("#claimTriageSearch");
-    const reviewQueue = document.querySelector("#reviewQueue");
+    const productContracts = document.querySelector("#productContracts");
+    const retrievalApps = document.querySelector("#retrievalApps");
+    const intentDefinitions = document.querySelector("#intentDefinitions");
+    const skillRegistry = document.querySelector("#skillRegistry");
+    const automationTasks = document.querySelector("#automationTasks");
+    const reviewTopics = document.querySelector("#reviewTopics");
     const complianceReviewPack = document.querySelector("#complianceReviewPack");
     const benchmarkCorrections = document.querySelector("#benchmarkCorrections");
     const p0GovernanceStatus = document.querySelector("#p0GovernanceStatus");
@@ -1301,7 +1358,7 @@
     const p0DecisionPreviewResult = document.querySelector("#p0DecisionPreviewResult");
     const ingestLoopStatus = document.querySelector("#ingestLoopStatus");
     const brandDecisionResult = document.querySelector("#brandDecisionResult");
-    const claimTriageState = { items: [] };
+    const reviewTopicState = { items: [] };
 
     function defaultApiBase() {
       if (window.location.origin && window.location.origin !== "null") {
@@ -1356,6 +1413,59 @@
       document.querySelector("#lastSync").textContent = new Date().toLocaleString();
     }
 
+    function renderProductContracts(payload) {
+      const engine = payload.knowledge_engine || {};
+      const memory = payload.memory_policies || {};
+      productContracts.innerHTML = `
+        <div class="product-object-line">${escapeHtml(engine.purpose || "知识先治理，再使用。")}</div>
+        <div class="product-object-line">正式答案：${escapeHtml((engine.official_answer_statuses || []).join("、") || "approved、action_asset")}</div>
+        <div class="product-object-line">过程记忆：${memory.can_be_authority_source ? "可作依据" : "只作上下文提醒"}</div>
+      `;
+    }
+
+    function renderRetrievalApps(payload) {
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      retrievalApps.innerHTML = items.length ? items.slice(0, 3).map((item) => `
+        <div class="product-object-line">
+          <strong>${escapeHtml(item.name || item.retrieval_app_id || "")}</strong><br>
+          ${escapeHtml(item.purpose || "")}<br>
+          <span class="tag">${item.can_publish_approved ? "可发布" : "不能发布 approved"}</span>
+        </div>
+      `).join("") : `<div class="product-object-line">暂无检索应用。</div>`;
+    }
+
+    function renderIntentDefinitions(payload) {
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      intentDefinitions.innerHTML = items.length ? items.slice(0, 4).map((item) => `
+        <div class="product-object-line">
+          <strong>${escapeHtml(item.name || item.intent_id || "")}</strong><br>
+          ${escapeHtml((item.risk_gates || []).slice(0, 3).join("、") || "无风险门")}
+        </div>
+      `).join("") : `<div class="product-object-line">暂无意图定义。</div>`;
+    }
+
+    function renderSkills(payload) {
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      skillRegistry.innerHTML = items.length ? items.slice(0, 4).map((item) => `
+        <div class="product-object-line">
+          <strong>${escapeHtml(item.name || item.skill_id || "")}</strong><br>
+          v${escapeHtml(item.version || "")} · ${escapeHtml(item.status || "")} · ${escapeHtml(item.owner || "")}<br>
+          <span class="tag">${item.can_publish_approved ? "可发布" : "输出不是正式知识"}</span>
+        </div>
+      `).join("") : `<div class="product-object-line">暂无 Skill。</div>`;
+    }
+
+    function renderAutomationTasks(payload) {
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      automationTasks.innerHTML = items.length ? items.slice(0, 3).map((item) => `
+        <div class="product-object-line">
+          <strong>${escapeHtml(item.name || item.task_id || "")}</strong><br>
+          ${escapeHtml(item.stop_condition || "")}<br>
+          <span class="tag">${item.enabled_by_default ? "可手动刷新" : "默认关闭"}</span>
+        </div>
+      `).join("") : `<div class="product-object-line">暂无自动化任务。</div>`;
+    }
+
     function renderAssets(items) {
       document.querySelector("#assetTableCount").textContent = `${items.length} 条`;
       if (!items.length) {
@@ -1382,7 +1492,7 @@
       searchResults.innerHTML = items.map((item) => `
         <article class="chunk">
           <div class="chunk-title">
-            <span>${escapeHtml(item.title || item.chunk_id)}</span>
+            <span>${escapeHtml(item.title || item.asset_id || "知识片段")}</span>
             <span class="tag">${escapeHtml(item.domain || "")} · ${escapeHtml(item.stage || "")}</span>
           </div>
           <div class="chunk-content">${escapeHtml(item.content || "").slice(0, 420)}</div>
@@ -1391,120 +1501,41 @@
       `).join("");
     }
 
-    function setSelectOptions(select, values) {
-      const current = select.value;
-      const options = [`<option value="">全部</option>`].concat(
-        values.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`)
-      );
-      select.innerHTML = options.join("");
-      if (values.includes(current)) select.value = current;
-    }
-
-    function filterClaimTriageItems() {
-      const source = claimTriageSourceFilter.value;
-      const group = claimTriageGroupFilter.value;
-      const priority = claimTriagePriorityFilter.value;
-      const query = claimTriageSearch.value.trim().toLowerCase();
-      return claimTriageState.items.filter((item) => {
-        if (source && item.source_class !== source) return false;
-        if (group && item.review_group !== group) return false;
-        if (priority && item.priority !== priority) return false;
-        if (!query) return true;
-        const haystack = [
-          item.claim,
-          item.claim_id,
-          item.source_class,
-          item.review_group,
-          item.priority,
-          ...(item.sources || []),
-        ].join(" ").toLowerCase();
-        return haystack.includes(query);
-      });
-    }
-
-    function renderClaimTriageRows() {
-      const items = filterClaimTriageItems();
+    function renderReviewTopics(payload) {
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      reviewTopicState.items = items;
+      document.querySelector("#reviewTopicsMeta").textContent = `${payload.count || 0}/${payload.total || 0} 个议题 · 不是正式知识`;
+      document.querySelector("#reviewTopicRawCount").textContent = payload.raw_selected_count ?? 0;
+      document.querySelector("#reviewTopicCount").textContent = payload.total ?? items.length;
+      document.querySelector("#reviewTopicClusterCount").textContent = payload.cluster_count ?? 0;
+      document.querySelector("#reviewCount").textContent = payload.total ?? items.length;
+      document.querySelector("#reviewCountPanel").textContent = payload.total ?? items.length;
       if (!items.length) {
-        claimTriage.innerHTML = `<div class="result">没有匹配的 triage claim。调整筛选条件，或重新运行知识编译器生成 claim-triage.json。</div>`;
+        reviewTopics.innerHTML = `<div class="result">暂无待判断议题。先运行知识编译器，让系统把原始 claim 整理成议题。</div>`;
         return;
       }
-      claimTriage.innerHTML = items.map((item) => {
-        const sources = (item.sources || []).slice(0, 2).join(" · ");
+      reviewTopics.innerHTML = items.map((item) => {
+        const sources = (item.source_samples || []).slice(0, 3).map((source) => `<span class="tag">${escapeHtml(source)}</span>`).join("");
         return `
-          <article class="claim-triage-item">
+          <article class="review-topic-item">
             <div>
               <div class="tag">${escapeHtml(item.priority || "medium")}</div>
               <div style="height:6px"></div>
-              <div class="tag">${escapeHtml(item.source_class || "unknown")}</div>
-              <div style="height:6px"></div>
-              <div class="tag">${escapeHtml(item.review_group || "general")}</div>
+              <div class="tag">${escapeHtml(item.evidence_count || 0)} 条依据</div>
             </div>
-            <div class="claim-triage-main">
-              <div class="claim-triage-claim">${escapeHtml(item.claim || "")}</div>
-              <div class="path">
-                cluster_member_count: ${Number(item.cluster_member_count || 0)} ·
-                duplicate_count: ${Number(item.duplicate_count || 0)} ·
-                requires_human_review: ${String(Boolean(item.requires_human_review))}
-              </div>
-              <div class="path"><code>${escapeHtml(sources || "无来源样本")}</code></div>
+            <div class="review-topic-main">
+              <div class="review-topic-title">${escapeHtml(item.title || "")}</div>
+              <div class="review-topic-section"><strong>先判断</strong><span>${escapeHtml(item.decision_question || "")}</span></div>
+              <div class="review-topic-section"><strong>为什么重要</strong><span>${escapeHtml(item.why_it_matters || "")}</span></div>
+              <div class="review-topic-section"><strong>下一步</strong><span>${escapeHtml(item.next_action || "")}</span></div>
+              ${sources ? `<div class="review-actions" aria-label="来源样本">${sources}</div>` : ""}
             </div>
             <div>
-              <span class="status-pill strong">candidate</span>
+              <span class="status-pill strong">requires_human_review</span>
             </div>
           </article>
         `;
       }).join("");
-    }
-
-    function renderClaimTriage(payload) {
-      const items = Array.isArray(payload.items) ? payload.items : [];
-      claimTriageState.items = items;
-      document.querySelector("#claimTriageMeta").textContent = `${payload.count || 0}/${payload.total || 0} 条 · 不是正式知识`;
-      document.querySelector("#claimTriageTotalClaims").textContent = payload.total_claim_count ?? 0;
-      document.querySelector("#claimTriageNoiseClaims").textContent = payload.noise_claim_count ?? 0;
-      document.querySelector("#claimTriageDuplicateClaims").textContent = payload.duplicate_claim_count ?? 0;
-      document.querySelector("#claimTriageReviewableClaims").textContent = payload.unique_reviewable_claim_count ?? 0;
-      document.querySelector("#claimTriageClusters").textContent = payload.cluster_count ?? 0;
-      document.querySelector("#claimTriageSelected").textContent = payload.selected_count ?? items.length;
-      const sources = [...new Set(items.map((item) => item.source_class).filter(Boolean))].sort();
-      const groups = [...new Set(items.map((item) => item.review_group).filter(Boolean))].sort();
-      const priorities = [...new Set(items.map((item) => item.priority).filter(Boolean))].sort();
-      setSelectOptions(claimTriageSourceFilter, sources);
-      setSelectOptions(claimTriageGroupFilter, groups);
-      setSelectOptions(claimTriagePriorityFilter, priorities);
-      renderClaimTriageRows();
-    }
-
-    function renderReviewQueue(payload) {
-      const items = payload.items || [];
-      document.querySelector("#reviewQueueMeta").textContent = `${payload.count || 0} 条 · 候选不等于批准`;
-      document.querySelector("#reviewCount").textContent = payload.total ?? payload.count ?? 0;
-      document.querySelector("#reviewCountPanel").textContent = payload.total ?? payload.count ?? 0;
-      if (!items.length) {
-        reviewQueue.innerHTML = `<div class="result">暂无候选复核任务。先运行知识编译器生成 review-queue.json。</div>`;
-        return;
-      }
-      reviewQueue.innerHTML = items.map((item) => `
-        <article class="review-item" data-claim-id="${escapeHtml(item.claim_id || "")}">
-          <div>
-            <div class="tag">${escapeHtml(item.priority || "medium")}</div>
-            <div style="height:6px"></div>
-            <div class="tag">${escapeHtml(item.review_group || item.domain || "general")}</div>
-          </div>
-          <div class="review-main">
-            <div class="review-claim">${escapeHtml(item.claim || "")}</div>
-            <div class="path">
-              ${escapeHtml((item.risk_flags || []).join("、") || "无风险标签")} ·
-              <code>${escapeHtml((item.sources || [])[0] || "")}</code>
-            </div>
-          </div>
-          <div class="review-actions">
-            <button class="primary" type="button" data-action="pass_to_draft">转草稿</button>
-            <button class="secondary" type="button" data-action="needs_revision">需修改</button>
-            <button class="danger" type="button" data-action="reject">驳回</button>
-          </div>
-        </article>
-      `).join("");
     }
 
     function renderComplianceReviewPack(payload) {
@@ -1665,11 +1696,29 @@
       try {
         await requestJson("/health");
         setServiceState(true, "已连接");
-        const [summary, assets, triage, queue, compliancePack, corrections, ingestLoop, p0Status, p0Todo] = await Promise.all([
+        const [
+          summary,
+          assets,
+          contracts,
+          retrievalAppCatalog,
+          intentCatalog,
+          skillCatalog,
+          automationCatalog,
+          topics,
+          compliancePack,
+          corrections,
+          ingestLoop,
+          p0Status,
+          p0Todo,
+        ] = await Promise.all([
           requestJson("/api/knowledge/summary"),
           requestJson("/api/knowledge/assets?limit=100"),
-          requestJson("/api/operating-brain/knowledge-compiler/claim-triage?limit=200"),
-          requestJson("/api/operating-brain/knowledge-compiler/review-queue?limit=20"),
+          requestJson("/api/operating-brain/product-contracts"),
+          requestJson("/api/operating-brain/retrieval-apps"),
+          requestJson("/api/operating-brain/intent-definitions"),
+          requestJson("/api/operating-brain/skills"),
+          requestJson("/api/operating-brain/automation-tasks"),
+          requestJson("/api/operating-brain/knowledge-compiler/review-topics?limit=12"),
           requestJson("/api/operating-brain/knowledge-compiler/compliance-review-pack?limit=20"),
           requestJson("/api/operating-brain/benchmark/corrections?limit=20"),
           requestJson("/api/operating-brain/ingest-loop/status"),
@@ -1678,8 +1727,12 @@
         ]);
         renderSummary(summary);
         renderAssets(assets.items || []);
-        renderClaimTriage(triage);
-        renderReviewQueue(queue);
+        renderProductContracts(contracts);
+        renderRetrievalApps(retrievalAppCatalog);
+        renderIntentDefinitions(intentCatalog);
+        renderSkills(skillCatalog);
+        renderAutomationTasks(automationCatalog);
+        renderReviewTopics(topics);
         renderComplianceReviewPack(compliancePack);
         renderBenchmarkCorrections(corrections);
         renderIngestLoopStatus(ingestLoop);
@@ -1739,21 +1792,11 @@
       }
     }
 
-    async function refreshClaimTriage() {
+    async function refreshReviewTopics() {
       try {
-        const triage = await requestJson("/api/operating-brain/knowledge-compiler/claim-triage?limit=200");
-        renderClaimTriage(triage);
-        setResult("Claim 去噪结果已刷新。不是正式知识，仍需人工复核。", "ok");
-      } catch (error) {
-        setResult(error.message, "error");
-      }
-    }
-
-    async function refreshReviewQueue() {
-      try {
-        const queue = await requestJson("/api/operating-brain/knowledge-compiler/review-queue?limit=20");
-        renderReviewQueue(queue);
-        setResult("复核队列已刷新", "ok");
+        const topics = await requestJson("/api/operating-brain/knowledge-compiler/review-topics?limit=12");
+        renderReviewTopics(topics);
+        setResult("待判断议题已刷新。原始 claim 未直接展示。", "ok");
       } catch (error) {
         setResult(error.message, "error");
       }
@@ -1849,8 +1892,7 @@
         setResult("正在运行资料入库 Loop...");
         const payload = await requestJson("/api/operating-brain/ingest-loop/run", { method: "POST" });
         renderIngestLoopStatus(payload);
-        await refreshClaimTriage();
-        await refreshReviewQueue();
+        await refreshReviewTopics();
         await refreshComplianceReviewPack();
         setResult("资料入库 Loop 已停在人工复核。", "ok");
       } catch (error) {
@@ -1882,23 +1924,6 @@
       }
     }
 
-    async function submitReviewDecision(claimId, action) {
-      if (!claimId) return;
-      const note = action === "pass_to_draft" ? "通过为答案卡草稿，未批准。" : "";
-      try {
-        const result = await requestJson(`/api/operating-brain/knowledge-compiler/review-queue/${encodeURIComponent(claimId)}/decision`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action, reviewer: "knowledge-workbench", note }),
-        });
-        const suffix = result.answer_card_draft ? `，已生成草稿：${result.answer_card_draft.question_pattern}` : "";
-        setResult(`已记录复核动作：${action}${suffix}`, "ok");
-        await refreshReviewQueue();
-      } catch (error) {
-        setResult(error.message, "error");
-      }
-    }
-
     function openAdvancedKnowledgeTools() {
       const advancedKnowledgeTools = document.querySelector("#advancedKnowledgeTools");
       advancedKnowledgeTools.open = true;
@@ -1915,13 +1940,7 @@
     document.querySelector("#refreshIngestLoop").addEventListener("click", refreshIngestLoop);
     document.querySelector("#runIngestLoop").addEventListener("click", runIngestLoop);
     document.querySelector("#runBrandDecision").addEventListener("click", runBrandDecision);
-    document.querySelector("#refreshClaimTriage").addEventListener("click", refreshClaimTriage);
-    document.querySelector("#applyClaimTriageFilters").addEventListener("click", renderClaimTriageRows);
-    claimTriageSourceFilter.addEventListener("change", renderClaimTriageRows);
-    claimTriageGroupFilter.addEventListener("change", renderClaimTriageRows);
-    claimTriagePriorityFilter.addEventListener("change", renderClaimTriageRows);
-    claimTriageSearch.addEventListener("input", renderClaimTriageRows);
-    document.querySelector("#refreshReviewQueue").addEventListener("click", refreshReviewQueue);
+    document.querySelector("#refreshReviewTopics").addEventListener("click", refreshReviewTopics);
     document.querySelector("#refreshComplianceReviewPack").addEventListener("click", refreshComplianceReviewPack);
     document.querySelector("#refreshBenchmarkCorrections").addEventListener("click", refreshBenchmarkCorrections);
     document.querySelector("#refreshP0Governance").addEventListener("click", refreshP0Governance);
@@ -1933,13 +1952,6 @@
     document.querySelector("#queryInput").addEventListener("keydown", (event) => {
       if (event.key === "Enter") searchKnowledge();
     });
-    reviewQueue.addEventListener("click", (event) => {
-      const button = event.target.closest("button[data-action]");
-      if (!button) return;
-      const item = button.closest(".review-item");
-      submitReviewDecision(item?.dataset.claimId || "", button.dataset.action || "");
-    });
-
     refreshAll();
   </script>
 </body>

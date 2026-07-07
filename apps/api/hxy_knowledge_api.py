@@ -2303,6 +2303,426 @@ def _compiler_claim_triage_from_payload(payload: dict[str, Any] | None, *, limit
     }
 
 
+REVIEW_TOPIC_DEFINITIONS: dict[str, dict[str, str]] = {
+    "risk_boundary": {
+        "title": "医疗与功效表达边界",
+        "decision_question": "先判断：哪些表达必须禁用，哪些只能作为内部提醒，哪些可以转成员工标准话术？",
+        "why_it_matters": "这会直接影响门头、海报、团购页、员工推荐和顾客投诉风险。",
+        "next_action": "先复核禁用表达和标准话术，再决定是否进入正式答案卡。",
+    },
+    "employee_script": {
+        "title": "员工对外话术边界",
+        "decision_question": "先判断：员工面对功效、价格、项目选择问题时，能说到什么程度？",
+        "why_it_matters": "员工说错一句，比后台知识库写错一页更危险。",
+        "next_action": "把可说、慎说、不能说拆成训练题和前台标准回答。",
+    },
+    "brand_positioning": {
+        "title": "品牌定位与主推表达",
+        "decision_question": "先判断：这些说法能不能代表荷小悦，而不是普通足疗、理疗或高端 SPA？",
+        "why_it_matters": "定位口径会进入门头、菜单、开业内容和员工介绍。",
+        "next_action": "只保留能被顾客复述、员工讲清、合规使用的表达。",
+    },
+    "product_system": {
+        "title": "产品体系与服务项目边界",
+        "decision_question": "先判断：哪些项目是主推服务，哪些只是组合、复购或参考项？",
+        "why_it_matters": "项目边界会影响菜单、价格、交付 SOP 和员工推荐路径。",
+        "next_action": "先确认主服务、组合服务和禁用功效，再进入产品答案卡。",
+    },
+    "store_model": {
+        "title": "首店模型与复制前提",
+        "decision_question": "先判断：这些门店模型假设有没有真实数据或首店验证支撑？",
+        "why_it_matters": "未经验证的门店模型不能变成扩店、融资或对外承诺。",
+        "next_action": "把假设转成待验证指标，开店后用经营数据复盘。",
+    },
+    "unit_economics": {
+        "title": "经营数据与财务口径",
+        "decision_question": "先判断：这些收入、成本、回本和估值口径是否有来源、版本和负责人？",
+        "why_it_matters": "财务口径不一致会影响股东沟通、融资材料和内部决策。",
+        "next_action": "先补来源和版本，再决定能否进入融资或经营材料。",
+    },
+    "general": {
+        "title": "未归类资料清理",
+        "decision_question": "先判断：这批内容到底属于品牌、产品、运营、合规还是外部参考？",
+        "why_it_matters": "不归类的资料会污染搜索结果，让系统把参考材料误当企业结论。",
+        "next_action": "先分流到正确知识域；没有业务价值的内容直接归档。",
+    },
+}
+
+
+def _review_topic_key(item: dict[str, Any]) -> str:
+    group = str(item.get("review_group") or "general")
+    source_class = str(item.get("source_class") or "")
+    if group in REVIEW_TOPIC_DEFINITIONS and group != "general":
+        return group
+    if source_class == "risk_compliance":
+        return "risk_boundary"
+    if group in REVIEW_TOPIC_DEFINITIONS:
+        return group
+    return "general"
+
+
+def _source_label(source: Any) -> str:
+    value = str(source or "").strip()
+    if not value:
+        return ""
+    return Path(value).name or value
+
+
+def _priority_rank(priority: str) -> int:
+    return {"high": 0, "medium": 1, "low": 2}.get(priority, 3)
+
+
+HXYOS_AUTHORITY_RULES: dict[str, bool] = {
+    "chat_can_publish_approved": False,
+    "agent_can_publish_approved": False,
+    "loop_can_publish_approved": False,
+    "memory_can_publish_approved": False,
+    "skill_output_is_official": False,
+}
+
+
+RETRIEVAL_APP_CATALOG: list[dict[str, Any]] = [
+    {
+        "retrieval_app_id": "employee_standard_answer_search",
+        "name": "员工标准答案检索",
+        "purpose": "帮助前台和员工只检索已核定话术、禁用表达和高频问答。",
+        "primary_users": ["frontdesk", "store_staff", "trainer"],
+        "allowed_statuses": ["approved", "action_asset"],
+        "blocked_statuses": ["raw", "reference", "candidate", "needs_review"],
+        "output_contract": ["standard_answer", "do_not_say", "source_title", "review_status"],
+        "official_use_allowed": True,
+        "can_publish_approved": False,
+        "requires_human_review_for_updates": True,
+        "status": "draft",
+    },
+    {
+        "retrieval_app_id": "brand_language_risk_check",
+        "name": "对外话语风险检查",
+        "purpose": "检查朋友圈、团购页、海报和员工表达是否触碰医疗化、保证疗效或夸大宣传。",
+        "primary_users": ["founder", "operator", "store_manager"],
+        "allowed_statuses": ["approved", "action_asset"],
+        "blocked_statuses": ["raw", "reference", "candidate", "needs_review"],
+        "output_contract": ["risk_level", "risk_reason", "rewrite_suggestion", "forbidden_terms"],
+        "official_use_allowed": False,
+        "can_publish_approved": False,
+        "requires_human_review_for_updates": True,
+        "status": "draft",
+    },
+    {
+        "retrieval_app_id": "founder_decision_evidence_search",
+        "name": "创始人决策证据检索",
+        "purpose": "把战略、开业、产品和融资相关判断拆成依据、缺口和下一步验证动作。",
+        "primary_users": ["founder", "operator"],
+        "allowed_statuses": ["approved", "action_asset", "current_candidate"],
+        "blocked_statuses": ["raw"],
+        "output_contract": ["decision_question", "known_evidence", "evidence_gap", "next_validation"],
+        "official_use_allowed": False,
+        "can_publish_approved": False,
+        "requires_human_review_for_updates": True,
+        "status": "draft",
+    },
+]
+
+
+INTENT_DEFINITION_CATALOG: list[dict[str, Any]] = [
+    {
+        "intent_id": "intent-approved-answer",
+        "name": "已核定答案调用",
+        "positive_scope": ["员工标准问答", "前台速查", "品牌标准口径"],
+        "excluded_scope": ["生成新结论", "修改正式知识", "批准候选资料"],
+        "risk_gates": ["status_must_be_approved", "source_required"],
+        "default_retrieval_app": "employee_standard_answer_search",
+    },
+    {
+        "intent_id": "intent-material-ingest",
+        "name": "资料入库整理",
+        "positive_scope": ["新文件解析", "外部参考整理", "候选知识提取"],
+        "excluded_scope": ["自动发布", "替代人工复核", "改写已核定口径"],
+        "risk_gates": ["raw_material_is_not_official", "human_review_required"],
+        "default_retrieval_app": "",
+    },
+    {
+        "intent_id": "intent-compliance-language-check",
+        "name": "合规表达检查",
+        "positive_scope": ["医疗化表达", "疗效保证", "夸大宣传", "对外文案风险"],
+        "excluded_scope": ["医疗建议", "诊断结论", "功效承诺", "自动放行对外发布"],
+        "risk_gates": ["medical_claim", "guaranteed_effect", "overstatement", "external_publish_review"],
+        "default_retrieval_app": "brand_language_risk_check",
+    },
+    {
+        "intent_id": "intent-brand-expression-review",
+        "name": "品牌表达评审",
+        "positive_scope": ["门头文字", "开业文案", "品牌一句话", "员工介绍"],
+        "excluded_scope": ["VI/SI 设计定稿", "未审核资料发布", "招商承诺"],
+        "risk_gates": ["brand_consistency", "customer_comprehension", "forbidden_terms"],
+        "default_retrieval_app": "brand_language_risk_check",
+    },
+    {
+        "intent_id": "intent-opening-store-workflow",
+        "name": "首店开业动作规划",
+        "positive_scope": ["开业前任务", "首店验证", "员工训练", "资料缺口"],
+        "excluded_scope": ["多店经营看板", "正式扩店承诺", "加盟主线"],
+        "risk_gates": ["stage_match", "resource_match", "evidence_gap"],
+        "default_retrieval_app": "founder_decision_evidence_search",
+    },
+    {
+        "intent_id": "intent-loop-execution",
+        "name": "开发与知识 Loop 执行",
+        "positive_scope": ["测试驱动修复", "benchmark 改进", "入库任务推进"],
+        "excluded_scope": ["越权写入 approved", "跳过测试", "修改 htops"],
+        "risk_gates": ["stop_condition_required", "hxy_boundary_required", "verification_required"],
+        "default_retrieval_app": "",
+    },
+    {
+        "intent_id": "intent-correction-feedback",
+        "name": "纠错与复盘反馈",
+        "positive_scope": ["AI 答错纠正", "员工说错纠正", "资料冲突记录"],
+        "excluded_scope": ["私自覆盖正式知识", "删除历史版本", "直接对外发布"],
+        "risk_gates": ["versioning_required", "review_required", "source_required"],
+        "default_retrieval_app": "founder_decision_evidence_search",
+    },
+]
+
+
+SKILL_REGISTRY_CATALOG: list[dict[str, Any]] = [
+    {
+        "skill_id": "hxy-compliance-language-check",
+        "name": "合规话语检查",
+        "version": "0.1.0",
+        "status": "draft",
+        "owner": "HXYOS",
+        "input_contract": ["text", "channel", "audience"],
+        "output_contract": ["risk_level", "risk_reason", "rewrite_suggestion"],
+        "can_publish_approved": False,
+    },
+    {
+        "skill_id": "hxy-brand-expression-review",
+        "name": "品牌表达评审",
+        "version": "0.1.0",
+        "status": "draft",
+        "owner": "HXYOS",
+        "input_contract": ["artifact", "scenario", "target_user"],
+        "output_contract": ["scorecard", "reject_reasons", "recommended_version"],
+        "can_publish_approved": False,
+    },
+    {
+        "skill_id": "hxy-employee-answer-coach",
+        "name": "员工标准回答教练",
+        "version": "0.1.0",
+        "status": "draft",
+        "owner": "HXYOS",
+        "input_contract": ["customer_question", "employee_answer"],
+        "output_contract": ["standard_answer", "correction_points", "practice_task"],
+        "can_publish_approved": False,
+    },
+    {
+        "skill_id": "hxy-ingest-material-compiler",
+        "name": "资料入库编译",
+        "version": "0.1.0",
+        "status": "draft",
+        "owner": "HXYOS",
+        "input_contract": ["material_id", "source_type", "content"],
+        "output_contract": ["summary", "candidate_cards", "risk_flags"],
+        "can_publish_approved": False,
+    },
+    {
+        "skill_id": "hxy-opening-store-checklist",
+        "name": "首店开业清单",
+        "version": "0.1.0",
+        "status": "draft",
+        "owner": "HXYOS",
+        "input_contract": ["stage", "evidence", "blockers"],
+        "output_contract": ["today_action", "evidence_gap", "stop_condition"],
+        "can_publish_approved": False,
+    },
+    {
+        "skill_id": "hxy-benchmark-correction-pack",
+        "name": "Benchmark 修正包",
+        "version": "0.1.0",
+        "status": "draft",
+        "owner": "HXYOS",
+        "input_contract": ["benchmark_result", "failed_cases"],
+        "output_contract": ["fix_plan", "affected_cards", "verification_commands"],
+        "can_publish_approved": False,
+    },
+    {
+        "skill_id": "hxy-decision-evidence-pack",
+        "name": "决策证据包",
+        "version": "0.1.0",
+        "status": "draft",
+        "owner": "HXYOS",
+        "input_contract": ["decision_question", "available_evidence"],
+        "output_contract": ["known_evidence", "missing_evidence", "next_validation"],
+        "can_publish_approved": False,
+    },
+    {
+        "skill_id": "hxy-review-topic-generator",
+        "name": "待判断议题生成",
+        "version": "0.1.0",
+        "status": "draft",
+        "owner": "HXYOS",
+        "input_contract": ["candidate_claims", "triage_report"],
+        "output_contract": ["review_topics", "priority", "next_action"],
+        "can_publish_approved": False,
+    },
+]
+
+
+AUTOMATION_TASK_CATALOG: list[dict[str, Any]] = [
+    {
+        "task_id": "automation_ingest_loop_manual",
+        "task_type": "material_ingest_loop",
+        "name": "资料入库 Loop",
+        "trigger": "manual_or_inbox_scan",
+        "allowed_script": "scripts/run-hxy-ingest-loop.py",
+        "stop_condition": "生成待审核产物后停止，不能进入 approved。",
+        "can_publish_approved": False,
+        "enabled_by_default": False,
+        "requires_human_review": True,
+    },
+    {
+        "task_id": "automation_benchmark_loop_manual",
+        "task_type": "benchmark_improvement_loop",
+        "name": "Benchmark 改进 Loop",
+        "trigger": "manual",
+        "allowed_script": "scripts/run-hxy-brain-benchmark.py",
+        "stop_condition": "达到目标 pass_rate 或命中轮次上限后停止。",
+        "can_publish_approved": False,
+        "enabled_by_default": False,
+        "requires_human_review": True,
+    },
+    {
+        "task_id": "automation_review_topic_refresh",
+        "task_type": "review_topic_refresh",
+        "name": "待判断议题刷新",
+        "trigger": "manual_or_after_ingest",
+        "allowed_script": "",
+        "stop_condition": "只刷新只读议题视图，不写入正式知识。",
+        "can_publish_approved": False,
+        "enabled_by_default": True,
+        "requires_human_review": True,
+    },
+]
+
+
+def _product_contracts() -> dict[str, Any]:
+    return {
+        "version": "hxyos-product-contracts.v1",
+        "knowledge_engine": {
+            "name": "企业知识引擎",
+            "purpose": "把资料加工成可追溯、可复核、可引用、可执行的企业知识资产。",
+            "canonical_statuses": ["raw", "reference", "candidate", "needs_review", "approved", "action_asset", "superseded"],
+            "official_answer_statuses": ["approved", "action_asset"],
+            "raw_material_can_answer_directly": False,
+        },
+        "retrieval_apps": {
+            "name": "检索应用层",
+            "count": len(RETRIEVAL_APP_CATALOG),
+            "contract": ["retrieval_app_id", "allowed_statuses", "output_contract", "authority_boundary"],
+        },
+        "intent_planning": {
+            "name": "意图规划引擎",
+            "count": len(INTENT_DEFINITION_CATALOG),
+            "contract": ["intent_id", "positive_scope", "excluded_scope", "risk_gates"],
+        },
+        "skill_registry": {
+            "name": "Skill 中心",
+            "count": len(SKILL_REGISTRY_CATALOG),
+            "contract": ["skill_id", "version", "status", "owner", "can_publish_approved"],
+        },
+        "memory_policies": {
+            "name": "受治理的长期记忆",
+            "process_memory_types": ["preference", "negative_list", "historical_decision", "hypothesis", "retrospective_fragment"],
+            "can_be_authority_source": False,
+            "allowed_use": "context_reminder_only",
+            "promotion_required": True,
+        },
+        "automation_tasks": {
+            "name": "自动化任务层",
+            "count": len(AUTOMATION_TASK_CATALOG),
+            "contract": ["task_id", "task_type", "allowed_script", "stop_condition", "can_publish_approved"],
+        },
+        "authority_rules": HXYOS_AUTHORITY_RULES,
+    }
+
+
+def _compiler_review_topics_from_payload(payload: dict[str, Any] | None, *, limit: int) -> dict[str, Any]:
+    if not payload:
+        return {
+            "version": "hxy-review-topics.v1",
+            "status": "missing",
+            "count": 0,
+            "total": 0,
+            "items": [],
+            "raw_claims_hidden": True,
+            "official_use_allowed": False,
+            "requires_human_review": True,
+            "next_actions": ["运行知识编译器生成 claim-triage.json，再由系统聚合成待判断议题。"],
+            "authority_rule": "review_topics_summarize_raw_claims_without_approving_knowledge",
+        }
+    topics: dict[str, dict[str, Any]] = {}
+    for item in payload.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        key = _review_topic_key(item)
+        definition = REVIEW_TOPIC_DEFINITIONS[key]
+        topic = topics.setdefault(
+            key,
+            {
+                "version": "hxy-review-topic.v1",
+                "topic_id": f"hxy-review-topic:{key}",
+                "topic_key": key,
+                "title": definition["title"],
+                "decision_question": definition["decision_question"],
+                "why_it_matters": definition["why_it_matters"],
+                "next_action": definition["next_action"],
+                "priority": "low",
+                "evidence_count": 0,
+                "_sort_weight": 0,
+                "source_samples": [],
+                "source_classes": [],
+                "official_use_allowed": False,
+                "requires_human_review": True,
+            },
+        )
+        priority = str(item.get("priority") or "low")
+        if _priority_rank(priority) < _priority_rank(str(topic["priority"])):
+            topic["priority"] = priority
+        topic["evidence_count"] += 1
+        topic["_sort_weight"] += int(item.get("cluster_member_count") or 0)
+        source_class = str(item.get("source_class") or "")
+        if source_class and source_class not in topic["source_classes"]:
+            topic["source_classes"].append(source_class)
+        for source in item.get("sources") or []:
+            label = _source_label(source)
+            if label and label not in topic["source_samples"] and len(topic["source_samples"]) < 4:
+                topic["source_samples"].append(label)
+
+    items = sorted(
+        topics.values(),
+        key=lambda topic: (_priority_rank(str(topic.get("priority") or "")), -int(topic.get("_sort_weight") or 0), topic["title"]),
+    )
+    public_items = []
+    for item in items[:limit]:
+        public = dict(item)
+        public.pop("_sort_weight", None)
+        public_items.append(public)
+    return {
+        "version": "hxy-review-topics.v1",
+        "status": payload.get("status") or ("ready" if items else "empty"),
+        "count": len(public_items),
+        "total": len(items),
+        "raw_selected_count": len(payload.get("items") or []),
+        "total_claim_count": int(payload.get("total_claim_count") or 0),
+        "cluster_count": int(payload.get("cluster_count") or 0),
+        "items": public_items,
+        "raw_claims_hidden": True,
+        "official_use_allowed": False,
+        "requires_human_review": True,
+        "authority_rule": "review_topics_summarize_raw_claims_without_approving_knowledge",
+    }
+
+
 def _compiler_compliance_review_pack_from_payload(payload: dict[str, Any] | None, *, limit: int) -> dict[str, Any]:
     if not payload:
         return {
@@ -2642,6 +3062,50 @@ def create_app(
     async def operating_brain_model_router_endpoint() -> dict[str, Any]:
         return model_router.status()
 
+    @app.get("/api/operating-brain/product-contracts")
+    async def operating_brain_product_contracts_endpoint() -> dict[str, Any]:
+        return _product_contracts()
+
+    @app.get("/api/operating-brain/retrieval-apps")
+    async def operating_brain_retrieval_apps_endpoint() -> dict[str, Any]:
+        return {
+            "version": "hxyos-retrieval-app-catalog.v1",
+            "items": RETRIEVAL_APP_CATALOG,
+            "count": len(RETRIEVAL_APP_CATALOG),
+            "authority_rules": HXYOS_AUTHORITY_RULES,
+            "authority_rule": "retrieval_apps_can_surface_evidence_but_cannot_publish_approved_knowledge",
+        }
+
+    @app.get("/api/operating-brain/intent-definitions")
+    async def operating_brain_intent_definitions_endpoint() -> dict[str, Any]:
+        return {
+            "version": "hxyos-intent-definition-catalog.v1",
+            "items": INTENT_DEFINITION_CATALOG,
+            "count": len(INTENT_DEFINITION_CATALOG),
+            "authority_rules": HXYOS_AUTHORITY_RULES,
+            "authority_rule": "intent_planning_routes_work_but_does_not_override_knowledge_governance",
+        }
+
+    @app.get("/api/operating-brain/skills")
+    async def operating_brain_skills_endpoint() -> dict[str, Any]:
+        return {
+            "version": "hxyos-skill-registry.v1",
+            "items": SKILL_REGISTRY_CATALOG,
+            "count": len(SKILL_REGISTRY_CATALOG),
+            "authority_rules": HXYOS_AUTHORITY_RULES,
+            "authority_rule": "skill_outputs_are_drafts_until_human_review_promotes_them",
+        }
+
+    @app.get("/api/operating-brain/automation-tasks")
+    async def operating_brain_automation_tasks_endpoint() -> dict[str, Any]:
+        return {
+            "version": "hxyos-automation-task-catalog.v1",
+            "items": AUTOMATION_TASK_CATALOG,
+            "count": len(AUTOMATION_TASK_CATALOG),
+            "authority_rules": HXYOS_AUTHORITY_RULES,
+            "authority_rule": "automation_tasks_must_stop_before_approved_publication",
+        }
+
     @app.get("/api/operating-brain/evals/golden")
     async def operating_brain_golden_eval_endpoint() -> dict[str, Any]:
         return run_golden_evals(
@@ -2839,6 +3303,13 @@ def create_app(
     ) -> dict[str, Any]:
         payload = _read_json_file(resolved_root / "knowledge" / "wiki" / "claim-triage.json")
         return _compiler_claim_triage_from_payload(payload, limit=limit)
+
+    @app.get("/api/operating-brain/knowledge-compiler/review-topics")
+    async def operating_brain_knowledge_compiler_review_topics_endpoint(
+        limit: int = Query(default=12, ge=1, le=50),
+    ) -> dict[str, Any]:
+        payload = _read_json_file(resolved_root / "knowledge" / "wiki" / "claim-triage.json")
+        return _compiler_review_topics_from_payload(payload, limit=limit)
 
     @app.get("/api/operating-brain/knowledge-compiler/compliance-review-pack")
     async def operating_brain_knowledge_compiler_compliance_review_pack_endpoint(
