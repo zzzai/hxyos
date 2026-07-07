@@ -2591,6 +2591,11 @@ def _compliance_language_check_result(
     *,
     root_dir: Path,
 ) -> dict[str, Any]:
+    rule_payload = load_brand_risk_rules(root_dir=root_dir)
+    source_labels = [_source_label_for_rule(source) for source in rule_payload.get("source_paths") or []]
+    if not source_labels:
+        source_labels = ["默认风险规则"]
+
     raw_result = check_brand_risk_text(request.text, root_dir=root_dir)
     hits = raw_result.get("hits") or []
     hit_gates: list[str] = []
@@ -2626,11 +2631,13 @@ def _compliance_language_check_result(
         if review_required
         else "当前表达相对克制。正式发布前仍建议按渠道负责人要求复核。"
     )
-
-    rule_payload = load_brand_risk_rules(root_dir=root_dir)
-    source_labels = [_source_label_for_rule(source) for source in rule_payload.get("source_paths") or []]
-    if not source_labels:
-        source_labels = ["默认风险规则"]
+    risk_reason = (
+        "未命中禁用表达。"
+        if not hits
+        else "；".join(
+            f"命中{hit.get('type') or '表达'}风险：{hit.get('advice') or '需要负责人复核。'}" for hit in hits
+        )
+    )
     for item in evidence:
         item["source"] = source_labels[0]
 
@@ -2645,6 +2652,7 @@ def _compliance_language_check_result(
         "can_publish": False,
         "official_use_allowed": False,
         "review_required": review_required,
+        "risk_reason": risk_reason,
         "rewrite_suggestion": rewrite_suggestion,
         "evidence": evidence,
         "authority_rule": "skill_output_is_not_official_and_cannot_publish_approved_knowledge",
@@ -3179,7 +3187,10 @@ def create_app(
             "authority_rule": "skill_outputs_are_drafts_until_human_review_promotes_them",
         }
 
-    @app.post("/api/operating-brain/skills/hxy-compliance-language-check/run")
+    @app.post(
+        "/api/operating-brain/skills/hxy-compliance-language-check/run",
+        dependencies=[Depends(require_api_token)],
+    )
     async def operating_brain_compliance_language_check_run_endpoint(
         request: ComplianceLanguageCheckRequest,
     ) -> dict[str, Any]:

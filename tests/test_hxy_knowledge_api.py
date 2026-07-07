@@ -513,7 +513,17 @@ class HxyKnowledgeApiTest(unittest.TestCase):
         self.assertFalse(body["official_use_allowed"])
         self.assertTrue(body["review_required"])
         self.assertIn("rewrite_suggestion", body)
+        self.assertIn("risk_reason", body)
         self.assertNotIn("/root/hxy", json.dumps(body, ensure_ascii=False))
+
+    def test_compliance_language_check_requires_api_token(self):
+        response = self.client.post(
+            "/api/operating-brain/skills/hxy-compliance-language-check/run",
+            headers={"Authorization": ""},
+            json={"text": "草本现煮，泡着舒服。"},
+        )
+
+        self.assertEqual(response.status_code, 401)
 
     def test_compliance_language_check_blocks_guaranteed_effect(self):
         response = self.client.post(
@@ -546,6 +556,7 @@ class HxyKnowledgeApiTest(unittest.TestCase):
         body = response.json()
         self.assertEqual(body["decision"], "allow")
         self.assertEqual(body["risk_level"], "none")
+        self.assertEqual(body["risk_reason"], "未命中禁用表达。")
         self.assertEqual(body["hit_gates"], [])
         self.assertFalse(body["can_publish"])
         self.assertFalse(body["official_use_allowed"])
