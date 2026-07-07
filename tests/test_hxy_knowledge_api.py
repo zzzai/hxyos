@@ -594,6 +594,96 @@ class HxyKnowledgeApiTest(unittest.TestCase):
         self.assertFalse(body["official_use_allowed"])
         self.assertFalse(body["review_required"])
 
+    def test_compliance_workflow_gate_blocks_content_publish_medical_claim(self):
+        response = self.client.post(
+            "/api/operating-brain/workflow-gates/compliance/run",
+            json={
+                "workflow_type": "content_publish",
+                "text": "泡脚能治疗失眠，睡不好来做一次就能好。",
+                "channel": "朋友圈",
+                "audience": "customer",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-compliance-workflow-gate-result.v1")
+        self.assertEqual(body["workflow_type"], "content_publish")
+        self.assertEqual(body["workflow_status"], "blocked")
+        self.assertFalse(body["can_continue"])
+        self.assertFalse(body["can_publish"])
+        self.assertFalse(body["official_use_allowed"])
+        self.assertIn("停止发布", body["next_step"])
+        self.assertEqual(body["human_owner"], "内容/运营负责人")
+
+    def test_compliance_workflow_gate_blocks_staff_script_training_risk(self):
+        response = self.client.post(
+            "/api/operating-brain/workflow-gates/compliance/run",
+            json={
+                "workflow_type": "staff_script",
+                "text": "你这是湿气重，要调理几个疗程。",
+                "channel": "员工话术",
+                "audience": "staff",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["workflow_status"], "blocked")
+        self.assertFalse(body["can_continue"])
+        self.assertIn("禁止进入员工培训", body["next_step"])
+        self.assertEqual(body["human_owner"], "店长/运营培训负责人")
+
+    def test_compliance_workflow_gate_blocks_project_menu_medicalized_copy(self):
+        response = self.client.post(
+            "/api/operating-brain/workflow-gates/compliance/run",
+            json={
+                "workflow_type": "project_menu",
+                "text": "艾灸调理体质，改善慢病。",
+                "channel": "项目菜单",
+                "audience": "customer",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["workflow_status"], "blocked")
+        self.assertFalse(body["can_continue"])
+        self.assertIn("停止上架", body["next_step"])
+        self.assertEqual(body["human_owner"], "产品/菜单负责人")
+
+    def test_compliance_workflow_gate_allows_safe_copy_to_continue_without_publishing(self):
+        response = self.client.post(
+            "/api/operating-brain/workflow-gates/compliance/run",
+            json={
+                "workflow_type": "content_publish",
+                "text": "草本现煮，泡着舒服，适合下班后来放松一下。",
+                "channel": "海报",
+                "audience": "customer",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["workflow_status"], "can_continue")
+        self.assertTrue(body["can_continue"])
+        self.assertFalse(body["can_publish"])
+        self.assertFalse(body["official_use_allowed"])
+        self.assertIn("人工确认", body["next_step"])
+
+    def test_compliance_workflow_gate_rejects_unknown_workflow_type(self):
+        response = self.client.post(
+            "/api/operating-brain/workflow-gates/compliance/run",
+            json={
+                "workflow_type": "unknown",
+                "text": "草本现煮，泡着舒服。",
+                "channel": "海报",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("workflow_type", response.json()["detail"])
+
     def test_automation_tasks_are_allowlisted_and_cannot_publish_approved(self):
         response = self.client.get("/api/operating-brain/automation-tasks")
 

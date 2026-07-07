@@ -188,6 +188,13 @@ class ComplianceLanguageCheckRequest(BaseModel):
     audience: str = "customer"
 
 
+class ComplianceWorkflowGateRequest(BaseModel):
+    workflow_type: str = "content_publish"
+    text: str = ""
+    channel: str = "unknown"
+    audience: str = "customer"
+
+
 class SourceBriefRequest(BaseModel):
     question: str = ""
     scenario: str = "经营问答"
@@ -2581,6 +2588,31 @@ RISK_GATE_BY_RULE_TYPE = {
 }
 
 
+COMPLIANCE_WORKFLOW_GATES: dict[str, dict[str, str]] = {
+    "content_publish": {
+        "label": "内容发布",
+        "safe_next_step": "进入发布前人工确认。",
+        "revise_next_step": "先按建议改写，再复检。",
+        "blocked_next_step": "停止发布，重写表达。",
+        "human_owner": "内容/运营负责人",
+    },
+    "staff_script": {
+        "label": "员工话术",
+        "safe_next_step": "进入店长/运营复核。",
+        "revise_next_step": "改成标准话术后复训。",
+        "blocked_next_step": "禁止进入员工培训。",
+        "human_owner": "店长/运营培训负责人",
+    },
+    "project_menu": {
+        "label": "项目菜单",
+        "safe_next_step": "进入菜单负责人复核。",
+        "revise_next_step": "改项目名或项目介绍后复检。",
+        "blocked_next_step": "停止上架该表达。",
+        "human_owner": "产品/菜单负责人",
+    },
+}
+
+
 def _source_label_for_rule(source: Any) -> str:
     value = str(source or "").strip()
     return Path(value).name if value else "默认风险规则"
@@ -2668,6 +2700,57 @@ def _compliance_language_check_result(
         "rewrite_suggestion": rewrite_suggestion,
         "evidence": evidence,
         "authority_rule": "skill_output_is_not_official_and_cannot_publish_approved_knowledge",
+    }
+
+
+def _compliance_workflow_gate_result(
+    request: ComplianceWorkflowGateRequest,
+    *,
+    root_dir: Path,
+) -> dict[str, Any]:
+    workflow_type = request.workflow_type.strip()
+    config = COMPLIANCE_WORKFLOW_GATES.get(workflow_type)
+    if config is None:
+        allowed = "、".join(COMPLIANCE_WORKFLOW_GATES)
+        raise HTTPException(status_code=400, detail=f"workflow_type must be one of: {allowed}")
+
+    check_result = _compliance_language_check_result(
+        ComplianceLanguageCheckRequest(text=request.text, channel=request.channel, audience=request.audience),
+        root_dir=root_dir,
+    )
+    decision = str(check_result.get("decision") or "revise")
+    workflow_status_by_decision = {
+        "allow": "can_continue",
+        "revise": "revise_before_continue",
+        "block": "blocked",
+    }
+    next_step_key_by_decision = {
+        "allow": "safe_next_step",
+        "revise": "revise_next_step",
+        "block": "blocked_next_step",
+    }
+    workflow_status = workflow_status_by_decision.get(decision, "revise_before_continue")
+    next_step = config[next_step_key_by_decision.get(decision, "revise_next_step")]
+    can_continue = workflow_status == "can_continue"
+
+    return {
+        "version": "hxy-compliance-workflow-gate-result.v1",
+        "workflow_type": workflow_type,
+        "workflow_label": config["label"],
+        "workflow_status": workflow_status,
+        "decision": decision,
+        "risk_level": check_result.get("risk_level") or "unknown",
+        "hit_gates": check_result.get("hit_gates") or [],
+        "risk_reason": check_result.get("risk_reason") or "",
+        "rewrite_suggestion": check_result.get("rewrite_suggestion") or "",
+        "next_step": next_step,
+        "human_owner": config["human_owner"],
+        "can_continue": can_continue,
+        "can_publish": False,
+        "official_use_allowed": False,
+        "review_required": True,
+        "evidence": check_result.get("evidence") or [],
+        "authority_rule": "workflow_gate_does_not_publish_or_approve_business_knowledge",
     }
 
 
@@ -3211,6 +3294,19 @@ def create_app(
         if not request.text.strip():
             raise HTTPException(status_code=400, detail="text is required")
         return _compliance_language_check_result(request, root_dir=resolved_root)
+
+    @app.post(
+        "/api/operating-brain/workflow-gates/compliance/run",
+        dependencies=[Depends(require_api_token)],
+    )
+    async def operating_brain_compliance_workflow_gate_run_endpoint(
+        request: ComplianceWorkflowGateRequest,
+    ) -> dict[str, Any]:
+        if not settings.api_token:
+            raise HTTPException(status_code=503, detail="HXY_API_TOKEN is required for compliance workflow gate")
+        if not request.text.strip():
+            raise HTTPException(status_code=400, detail="text is required")
+        return _compliance_workflow_gate_result(request, root_dir=resolved_root)
 
     @app.get("/api/operating-brain/automation-tasks")
     async def operating_brain_automation_tasks_endpoint() -> dict[str, Any]:
