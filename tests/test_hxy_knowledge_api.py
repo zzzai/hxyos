@@ -493,6 +493,64 @@ class HxyKnowledgeApiTest(unittest.TestCase):
             self.assertIn("owner", item)
             self.assertFalse(item["can_publish_approved"])
 
+    def test_compliance_language_check_blocks_medical_claims(self):
+        response = self.client.post(
+            "/api/operating-brain/skills/hxy-compliance-language-check/run",
+            json={
+                "text": "泡脚能治疗失眠，睡不好来做一次就能好。",
+                "channel": "朋友圈",
+                "audience": "customer",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-compliance-language-check-result.v1")
+        self.assertEqual(body["skill_id"], "hxy-compliance-language-check")
+        self.assertEqual(body["decision"], "block")
+        self.assertIn("medical_claim", body["hit_gates"])
+        self.assertFalse(body["can_publish"])
+        self.assertFalse(body["official_use_allowed"])
+        self.assertTrue(body["review_required"])
+        self.assertIn("rewrite_suggestion", body)
+        self.assertNotIn("/root/hxy", json.dumps(body, ensure_ascii=False))
+
+    def test_compliance_language_check_blocks_guaranteed_effect(self):
+        response = self.client.post(
+            "/api/operating-brain/skills/hxy-compliance-language-check/run",
+            json={
+                "text": "这个项目一周保证见效，调理一次就有疗效。",
+                "channel": "团购页",
+                "audience": "customer",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["decision"], "block")
+        self.assertIn("guaranteed_effect", body["hit_gates"])
+        self.assertFalse(body["can_publish"])
+        self.assertFalse(body["official_use_allowed"])
+
+    def test_compliance_language_check_allows_low_risk_copy(self):
+        response = self.client.post(
+            "/api/operating-brain/skills/hxy-compliance-language-check/run",
+            json={
+                "text": "草本现煮，泡着舒服，适合下班后来放松一下。",
+                "channel": "海报",
+                "audience": "customer",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["decision"], "allow")
+        self.assertEqual(body["risk_level"], "none")
+        self.assertEqual(body["hit_gates"], [])
+        self.assertFalse(body["can_publish"])
+        self.assertFalse(body["official_use_allowed"])
+        self.assertFalse(body["review_required"])
+
     def test_automation_tasks_are_allowlisted_and_cannot_publish_approved(self):
         response = self.client.get("/api/operating-brain/automation-tasks")
 

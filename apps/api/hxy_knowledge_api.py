@@ -29,7 +29,7 @@ from hxy_knowledge.answer_engine import (
 )
 from hxy_knowledge.answer_engine import classify_intent
 from hxy_knowledge.config import get_settings
-from hxy_knowledge.compliance_rules import load_brand_risk_rules
+from hxy_knowledge.compliance_rules import check_brand_risk_text, load_brand_risk_rules
 from hxy_knowledge.eval_runner import run_golden_evals
 from hxy_knowledge.enterprise_governance import (
     build_enterprise_governance_report,
@@ -180,6 +180,12 @@ class BrandDecisionRequest(BaseModel):
     artifact_type: str = "opening_content"
     stage: str = "first_store_opening"
     text: str = ""
+
+
+class ComplianceLanguageCheckRequest(BaseModel):
+    text: str = ""
+    channel: str = "unknown"
+    audience: str = "customer"
 
 
 class SourceBriefRequest(BaseModel):
@@ -2568,6 +2574,83 @@ SKILL_REGISTRY_CATALOG: list[dict[str, Any]] = [
 ]
 
 
+RISK_GATE_BY_RULE_TYPE = {
+    "医疗": "medical_claim",
+    "保证": "guaranteed_effect",
+    "夸大": "overstatement",
+}
+
+
+def _source_label_for_rule(source: Any) -> str:
+    value = str(source or "").strip()
+    return Path(value).name if value else "默认风险规则"
+
+
+def _compliance_language_check_result(
+    request: ComplianceLanguageCheckRequest,
+    *,
+    root_dir: Path,
+) -> dict[str, Any]:
+    raw_result = check_brand_risk_text(request.text, root_dir=root_dir)
+    hits = raw_result.get("hits") or []
+    hit_gates: list[str] = []
+    evidence: list[dict[str, Any]] = []
+    for hit in hits:
+        gate = RISK_GATE_BY_RULE_TYPE.get(str(hit.get("type") or ""), "language_risk")
+        if gate not in hit_gates:
+            hit_gates.append(gate)
+        evidence.append(
+            {
+                "rule_name": f"{hit.get('type') or '表达'}风险规则",
+                "level": hit.get("level") or "warn",
+                "matched_terms": hit.get("words") or [],
+                "advice": hit.get("advice") or "",
+            }
+        )
+
+    has_bad = any(str(hit.get("level") or "") == "bad" for hit in hits)
+    has_medical = "medical_claim" in hit_gates
+    if has_medical:
+        risk_level = "p0"
+    elif has_bad:
+        risk_level = "high"
+    elif hits:
+        risk_level = "medium"
+    else:
+        risk_level = "none"
+
+    decision = "block" if has_bad else "revise" if hits else "allow"
+    review_required = decision != "allow"
+    rewrite_suggestion = (
+        "可以改成：草本现煮，泡着舒服，适合下班后放松。不要承诺治疗、见效或保证结果。"
+        if review_required
+        else "当前表达相对克制。正式发布前仍建议按渠道负责人要求复核。"
+    )
+
+    rule_payload = load_brand_risk_rules(root_dir=root_dir)
+    source_labels = [_source_label_for_rule(source) for source in rule_payload.get("source_paths") or []]
+    if not source_labels:
+        source_labels = ["默认风险规则"]
+    for item in evidence:
+        item["source"] = source_labels[0]
+
+    return {
+        "version": "hxy-compliance-language-check-result.v1",
+        "skill_id": "hxy-compliance-language-check",
+        "channel": request.channel,
+        "audience": request.audience,
+        "decision": decision,
+        "risk_level": risk_level,
+        "hit_gates": hit_gates,
+        "can_publish": False,
+        "official_use_allowed": False,
+        "review_required": review_required,
+        "rewrite_suggestion": rewrite_suggestion,
+        "evidence": evidence,
+        "authority_rule": "skill_output_is_not_official_and_cannot_publish_approved_knowledge",
+    }
+
+
 AUTOMATION_TASK_CATALOG: list[dict[str, Any]] = [
     {
         "task_id": "automation_ingest_loop_manual",
@@ -3095,6 +3178,14 @@ def create_app(
             "authority_rules": HXYOS_AUTHORITY_RULES,
             "authority_rule": "skill_outputs_are_drafts_until_human_review_promotes_them",
         }
+
+    @app.post("/api/operating-brain/skills/hxy-compliance-language-check/run")
+    async def operating_brain_compliance_language_check_run_endpoint(
+        request: ComplianceLanguageCheckRequest,
+    ) -> dict[str, Any]:
+        if not request.text.strip():
+            raise HTTPException(status_code=400, detail="text is required")
+        return _compliance_language_check_result(request, root_dir=resolved_root)
 
     @app.get("/api/operating-brain/automation-tasks")
     async def operating_brain_automation_tasks_endpoint() -> dict[str, Any]:
