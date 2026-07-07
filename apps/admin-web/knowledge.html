@@ -1195,6 +1195,14 @@
           </label>
           <div class="upload-row">
             <label>
+              用途
+              <select id="complianceWorkflowTypeSelect">
+                <option value="content_publish">内容发布</option>
+                <option value="staff_script">员工话术</option>
+                <option value="project_menu">项目菜单</option>
+              </select>
+            </label>
+            <label>
               场景
               <select id="complianceChannelSelect">
                 <option value="朋友圈">朋友圈</option>
@@ -1535,18 +1543,26 @@
         revise: "建议改",
         block: "不要发",
       };
+      const workflowLabels = {
+        can_continue: "可以继续",
+        revise_before_continue: "先改再继续",
+        blocked: "不要继续",
+      };
       const decision = payload.decision || "revise";
+      const workflowStatus = payload.workflow_status || (decision === "allow" ? "can_continue" : "blocked");
       const hitGates = Array.isArray(payload.hit_gates) ? payload.hit_gates : [];
       const evidence = Array.isArray(payload.evidence) ? payload.evidence : [];
       const evidenceTags = evidence.slice(0, 6).map((item) => `
         <span class="tag">${escapeHtml(item.rule_name || "规则")} · ${escapeHtml(item.source || "规则来源")}</span>
       `).join("");
-      complianceLanguageCheckResult.className = `result ${decision === "allow" ? "ok" : "error"}`;
+      complianceLanguageCheckResult.className = `result ${workflowStatus === "can_continue" ? "ok" : "error"}`;
       complianceLanguageCheckResult.innerHTML = `
-        <strong>${escapeHtml(decisionLabels[decision] || "建议改")}</strong>
+        <strong>${escapeHtml(decisionLabels[decision] || "建议改")} · 能不能继续：${escapeHtml(workflowLabels[workflowStatus] || "先确认")}</strong>
         <div>风险等级：${escapeHtml(payload.risk_level || "unknown")} · 命中规则：${escapeHtml(hitGates.join("、") || "无")}</div>
         <div>原因：${escapeHtml(payload.risk_reason || "未命中高风险规则。")}</div>
         <div>建议改法：${escapeHtml(payload.rewrite_suggestion || "保持克制表达，正式发布前按负责人要求复核。")}</div>
+        <div>下一步：${escapeHtml(payload.next_step || "进入负责人复核。")}</div>
+        <div>负责人：${escapeHtml(payload.human_owner || "运营负责人")}</div>
         <div>不可发布为正式知识 · 不能自动入库</div>
         <div>这里只做风险检查，不代表正式发布许可。</div>
         ${evidenceTags ? `<div class="review-actions" aria-label="规则来源">${evidenceTags}</div>` : ""}
@@ -1949,17 +1965,18 @@
         return;
       }
       try {
-        const payload = await requestJson("/api/operating-brain/skills/hxy-compliance-language-check/run", {
+        const payload = await requestJson("/api/operating-brain/workflow-gates/compliance/run", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            workflow_type: document.querySelector("#complianceWorkflowTypeSelect").value,
             text,
             channel: document.querySelector("#complianceChannelSelect").value,
             audience: "customer",
           }),
         });
         renderComplianceLanguageCheckResult(payload);
-        setResult("对外话语检查完成。结果不是正式知识，不能自动发布。", "ok");
+        setResult("合规工作流闸门已检查。结果不是正式知识，不能自动发布。", "ok");
       } catch (error) {
         complianceLanguageCheckResult.className = "result error";
         complianceLanguageCheckResult.textContent = error.message;
