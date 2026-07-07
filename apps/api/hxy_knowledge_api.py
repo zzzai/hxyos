@@ -2586,6 +2586,15 @@ def _source_label_for_rule(source: Any) -> str:
     return Path(value).name if value else "默认风险规则"
 
 
+def _safe_replacement_for_text(text: str, replacements: list[dict[str, Any]]) -> str:
+    for replacement in replacements:
+        unsafe = str(replacement.get("unsafe") or "").strip()
+        safe = str(replacement.get("safe") or "").strip()
+        if unsafe and safe and unsafe in text:
+            return safe
+    return ""
+
+
 def _compliance_language_check_result(
     request: ComplianceLanguageCheckRequest,
     *,
@@ -2626,8 +2635,11 @@ def _compliance_language_check_result(
 
     decision = "block" if has_bad else "revise" if hits else "allow"
     review_required = decision != "allow"
+    safe_replacement = _safe_replacement_for_text(request.text, list(rule_payload.get("safe_replacements") or []))
     rewrite_suggestion = (
-        "可以改成：草本现煮，泡着舒服，适合下班后放松。不要承诺治疗、见效或保证结果。"
+        f"可以改成：{safe_replacement}。不要承诺治疗、见效或保证结果。"
+        if review_required and safe_replacement
+        else "可以改成：草本现煮，泡着舒服，适合下班后放松。不要承诺治疗、见效或保证结果。"
         if review_required
         else "当前表达相对克制。正式发布前仍建议按渠道负责人要求复核。"
     )

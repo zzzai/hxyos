@@ -516,6 +516,23 @@ class HxyKnowledgeApiTest(unittest.TestCase):
         self.assertIn("risk_reason", body)
         self.assertNotIn("/root/hxy", json.dumps(body, ensure_ascii=False))
 
+    def test_compliance_language_check_suggests_source_replacement(self):
+        response = self.client.post(
+            "/api/operating-brain/skills/hxy-compliance-language-check/run",
+            json={
+                "text": "荷小悦可以治疗颈椎病。",
+                "channel": "团购页",
+                "audience": "customer",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["decision"], "block")
+        self.assertIn("久坐肩颈紧，按一按松一点", body["rewrite_suggestion"])
+        self.assertFalse(body["can_publish"])
+        self.assertFalse(body["official_use_allowed"])
+
     def test_compliance_language_check_requires_api_token(self):
         response = self.client.post(
             "/api/operating-brain/skills/hxy-compliance-language-check/run",
