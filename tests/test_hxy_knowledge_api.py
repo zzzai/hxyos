@@ -525,6 +525,21 @@ class HxyKnowledgeApiTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 401)
 
+    def test_compliance_language_check_fails_closed_when_api_token_missing(self):
+        os.environ.pop("HXY_API_TOKEN", None)
+        module = importlib.import_module("apps.api.hxy_knowledge_api")
+        app = module.create_app(root_dir=self.root, repository_factory=lambda: self.repo)
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/operating-brain/skills/hxy-compliance-language-check/run",
+            headers={"Authorization": ""},
+            json={"text": "草本现煮，泡着舒服。"},
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("HXY_API_TOKEN", response.json()["detail"])
+
     def test_compliance_language_check_blocks_guaranteed_effect(self):
         response = self.client.post(
             "/api/operating-brain/skills/hxy-compliance-language-check/run",

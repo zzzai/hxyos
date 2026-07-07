@@ -3194,6 +3194,8 @@ def create_app(
     async def operating_brain_compliance_language_check_run_endpoint(
         request: ComplianceLanguageCheckRequest,
     ) -> dict[str, Any]:
+        if not settings.api_token:
+            raise HTTPException(status_code=503, detail="HXY_API_TOKEN is required for compliance language check")
         if not request.text.strip():
             raise HTTPException(status_code=400, detail="text is required")
         return _compliance_language_check_result(request, root_dir=resolved_root)
