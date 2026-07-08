@@ -122,6 +122,81 @@ class HxyBrainFrontendTest(unittest.TestCase):
         ]:
             self.assertNotIn(label, html)
 
+    def test_admin_entry_is_dataagent_style_three_layer_console(self):
+        page = ROOT / "apps" / "admin-web" / "index.html"
+        self.assertTrue(page.exists(), "admin default entry should exist")
+        html = page.read_text(encoding="utf-8")
+
+        for marker in [
+            'data-layer="frontstage"',
+            'data-layer="middle-platform"',
+            'data-layer="backstage"',
+            "前台",
+            "一个问答框 + 场景工作流",
+            "场景工作流",
+            "前台接待",
+            "对外发布",
+            "首店开业",
+            "资料入库",
+            "员工训练",
+            "经营复盘",
+            "中台",
+            "知识引擎",
+            "检索应用",
+            "Skill",
+            "Agent",
+            "记忆",
+            "后台",
+            "审核",
+            "权限",
+            "版本",
+            "运行记录",
+            "评测",
+            "监控",
+        ]:
+            self.assertIn(marker, html)
+
+        self.assertEqual(html.count('id="homeQuestionInput"'), 1)
+        self.assertIn("frontdesk.html", html)
+        self.assertIn("brand-check.html", html)
+        self.assertIn("startup.html", html)
+        self.assertIn("knowledge.html", html)
+        self.assertIn("../employee-web/training.html", html)
+        self.assertIn("brain.html", html)
+
+    def test_home_frontstage_does_not_leak_backstage_governance_terms(self):
+        html = (ROOT / "apps" / "admin-web" / "index.html").read_text(encoding="utf-8")
+        front_start = html.index('data-layer="frontstage"')
+        front_end = html.index('data-layer="middle-platform"', front_start)
+        front_html = html[front_start:front_end]
+
+        for label in [
+            "一个问答框 + 场景工作流",
+            "前台接待",
+            "对外发布",
+            "首店开业",
+            "资料入库",
+            "员工训练",
+            "经营复盘",
+        ]:
+            self.assertIn(label, front_html)
+
+        for forbidden in [
+            "审核",
+            "权限",
+            "版本",
+            "运行记录",
+            "评测",
+            "监控",
+            "claim",
+            "chunk_id",
+            "review queue",
+            "needs_review",
+            "P0 合规",
+            "合规审核包",
+        ]:
+            self.assertNotIn(forbidden, front_html)
+
     def test_brand_check_is_front_stage_expression_checker_not_review_console(self):
         page = ROOT / "apps" / "admin-web" / "brand-check.html"
         self.assertTrue(page.exists(), "brand expression checker should exist")
