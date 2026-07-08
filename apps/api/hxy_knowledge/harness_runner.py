@@ -118,3 +118,41 @@ def run_harness_round(
     }
     _write_json(root / "knowledge" / "runs" / run_id / f"round-{round_number}.json", report)
     return report
+
+
+def build_harness_state(
+    *,
+    spec: dict[str, Any],
+    run_id: str,
+    round_reports: list[dict[str, Any]],
+    champion_commit: str,
+) -> dict[str, Any]:
+    max_rounds = int(spec.get("max_rounds") or 1)
+    status = "running"
+    stop_reason = ""
+    if round_reports and round_reports[-1].get("status") == "passed":
+        status = "succeeded"
+        stop_reason = "verification_passed"
+    if len(round_reports) >= max_rounds and status != "succeeded":
+        status = "blocked"
+        stop_reason = "max_rounds_reached"
+
+    signatures = [str(report.get("failure_signature") or "") for report in round_reports[-3:]]
+    if len(signatures) == 3 and signatures[0] and len(set(signatures)) == 1 and status != "succeeded":
+        status = "blocked"
+        stop_reason = "repeated_failure_requires_root_cause_analysis"
+
+    return {
+        "version": "hxy-harness-state.v1",
+        "run_id": run_id,
+        "run_name": spec.get("run_name") or "",
+        "status": status,
+        "current_round": len(round_reports),
+        "max_rounds": max_rounds,
+        "champion_commit": champion_commit,
+        "rounds": round_reports,
+        "stop_reason": stop_reason,
+        "write_to_database": False,
+        "official_use_allowed": False,
+        "requires_human_review": True,
+    }

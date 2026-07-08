@@ -81,3 +81,41 @@ def test_run_harness_round_executes_allowlisted_commands_and_writes_report(tmp_p
     assert result["command_results"][0]["returncode"] == 0
     assert result["write_to_database"] is False
     assert (root / "knowledge" / "runs" / "harness-unit" / "round-1.json").exists()
+
+
+def test_build_harness_state_stops_after_max_rounds(tmp_path):
+    from hxy_knowledge.harness_runner import build_harness_state
+
+    state = build_harness_state(
+        spec={"version": "hxy-harness-spec.v1", "run_name": "unit", "max_rounds": 2},
+        run_id="harness-unit",
+        round_reports=[
+            {"status": "failed", "failure_signature": "benchmark_failed"},
+            {"status": "failed", "failure_signature": "benchmark_failed"},
+        ],
+        champion_commit="abc123",
+    )
+
+    assert state["version"] == "hxy-harness-state.v1"
+    assert state["status"] == "blocked"
+    assert state["stop_reason"] == "max_rounds_reached"
+    assert state["champion_commit"] == "abc123"
+    assert state["write_to_database"] is False
+
+
+def test_build_harness_state_stops_on_repeated_failure_signature(tmp_path):
+    from hxy_knowledge.harness_runner import build_harness_state
+
+    state = build_harness_state(
+        spec={"version": "hxy-harness-spec.v1", "run_name": "unit", "max_rounds": 5},
+        run_id="harness-unit",
+        round_reports=[
+            {"status": "failed", "failure_signature": "same_error"},
+            {"status": "failed", "failure_signature": "same_error"},
+            {"status": "failed", "failure_signature": "same_error"},
+        ],
+        champion_commit="abc123",
+    )
+
+    assert state["status"] == "blocked"
+    assert state["stop_reason"] == "repeated_failure_requires_root_cause_analysis"
