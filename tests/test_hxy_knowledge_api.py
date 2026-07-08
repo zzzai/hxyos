@@ -1639,6 +1639,124 @@ used_by:
         self.assertFalse(body["write_to_database"])
         self.assertNotIn("approved_knowledge", json.dumps(body, ensure_ascii=False))
 
+    def test_operating_brain_compiler_topic_publication_dry_run_is_read_only(self):
+        wiki_dir = self.root / "knowledge" / "wiki"
+        wiki_dir.mkdir(parents=True)
+        (wiki_dir / "topic-review-packets.json").write_text(
+            json.dumps(
+                {
+                    "version": "hxy-topic-review-packets.v1",
+                    "items": [
+                        {
+                            "packet_id": "hxy-topic-review-packet:risk_boundary",
+                            "asset_id": "hxy-topic-draft:risk_boundary",
+                            "topic_key": "risk_boundary",
+                            "asset_type": "risk_card",
+                            "title": "合规与功效表达边界",
+                            "decision_options": [
+                                "needs_more_evidence",
+                                "revise_draft",
+                                "ready_for_manual_approval",
+                                "reject",
+                            ],
+                            "promotion_target": "approved_risk_boundary_card",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        (wiki_dir / "topic-review-decisions.json").write_text(
+            json.dumps(
+                {
+                    "version": "hxy-topic-review-decisions.v1",
+                    "official_use_allowed": False,
+                    "publish_allowed": False,
+                    "write_to_database": False,
+                    "items": [
+                        {
+                            "packet_id": "hxy-topic-review-packet:risk_boundary",
+                            "decision": "ready_for_manual_approval",
+                            "reviewer": "合规负责人",
+                            "rationale": "禁用表达已确认。",
+                            "publication_metadata": {
+                                "approver": "创始人",
+                                "approved_at": "2026-07-08",
+                                "knowledge_version": "hxy-topic-risk-boundary-20260708",
+                                "effective_scope": "首店对外表达",
+                                "source_evidence_summary": "风险与合规资料。",
+                            },
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        response = self.client.get("/api/operating-brain/knowledge-compiler/topic-publication-dry-run")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-topic-publication-dry-run.v1")
+        self.assertTrue(body["valid"])
+        self.assertEqual(body["payload_count"], 1)
+        self.assertEqual(body["would_write_count"], 0)
+        self.assertFalse(body["official_use_allowed"])
+        self.assertFalse(body["publish_allowed"])
+        self.assertFalse(body["write_to_formal_store"])
+        self.assertFalse((wiki_dir / "topic-reviewed-assets.json").exists())
+
+    def test_operating_brain_compiler_topic_reviewed_assets_import_gate_is_read_only(self):
+        wiki_dir = self.root / "knowledge" / "wiki"
+        wiki_dir.mkdir(parents=True)
+        (wiki_dir / "topic-reviewed-assets.json").write_text(
+            json.dumps(
+                {
+                    "version": "hxy-topic-reviewed-assets-publication.v1",
+                    "published": True,
+                    "reviewed_topic_assets": [
+                        {
+                            "asset_id": "hxy-topic-draft:employee_script",
+                            "topic_key": "employee_script",
+                            "asset_type": "script_card",
+                            "title": "员工可执行话术与训练",
+                            "promotion_target": "approved_script_card",
+                            "status": "reviewed_pending_import",
+                            "target_status_after_import": "approved",
+                            "review_status_after_import": "approved_v1",
+                            "publication_metadata": {
+                                "approver": "创始人",
+                                "approved_at": "2026-07-08",
+                                "knowledge_version": "hxy-topic-employee-script-20260708",
+                                "effective_scope": "首店员工训练",
+                                "source_evidence_summary": "员工演练记录。",
+                            },
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        (wiki_dir / "topic-approved-assets.json").write_text(
+            json.dumps({"version": "hxy-topic-approved-assets.v1", "items": []}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        response = self.client.get("/api/operating-brain/knowledge-compiler/topic-reviewed-assets-import-gate")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-topic-reviewed-assets-import-gate.v1")
+        self.assertTrue(body["valid"])
+        self.assertEqual(body["importable_count"], 1)
+        self.assertEqual(body["would_import_count"], 0)
+        self.assertFalse(body["write_to_database"])
+        self.assertTrue(body["requires_import_confirmation"])
+        self.assertNotIn("imported_topic_assets", json.dumps(body, ensure_ascii=False))
+
     def test_operating_brain_compiler_compliance_review_pack_endpoint_is_read_only(self):
         wiki_dir = self.root / "knowledge" / "wiki"
         wiki_dir.mkdir(parents=True)

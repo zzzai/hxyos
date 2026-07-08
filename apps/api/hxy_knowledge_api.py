@@ -46,6 +46,8 @@ from hxy_knowledge.knowledge_compiler import (
     build_topic_publication_preflight,
     build_topic_review_decisions_sample,
     build_topic_review_decisions_stub,
+    dry_run_topic_publication_package,
+    validate_topic_reviewed_assets_import_gate,
     validate_topic_review_decisions,
 )
 from hxy_knowledge.loop_engine import build_p0_governance_status, validate_p0_review_decisions
@@ -3889,6 +3891,29 @@ def create_app(
         decisions_payload = _read_json_file(wiki_root / "topic-review-decisions.json")
         preflight = build_topic_publication_preflight(packet_payload, decisions_payload)
         return build_topic_publication_package(preflight)
+
+    @app.get("/api/operating-brain/knowledge-compiler/topic-publication-dry-run")
+    async def operating_brain_knowledge_compiler_topic_publication_dry_run_endpoint() -> dict[str, Any]:
+        wiki_root = resolved_root / "knowledge" / "wiki"
+        packet_payload = _read_json_file(wiki_root / "topic-review-packets.json") or {
+            "version": "hxy-topic-review-packets.v1",
+            "items": [],
+        }
+        decisions_payload = _read_json_file(wiki_root / "topic-review-decisions.json")
+        preflight = build_topic_publication_preflight(packet_payload, decisions_payload)
+        publication_package = build_topic_publication_package(preflight)
+        return dry_run_topic_publication_package(publication_package)
+
+    @app.get("/api/operating-brain/knowledge-compiler/topic-reviewed-assets-import-gate")
+    async def operating_brain_knowledge_compiler_topic_reviewed_assets_import_gate_endpoint() -> dict[str, Any]:
+        wiki_root = resolved_root / "knowledge" / "wiki"
+        reviewed_file = _read_json_file(wiki_root / "topic-reviewed-assets.json") or {
+            "version": "hxy-topic-reviewed-assets-publication.v1",
+            "reviewed_topic_assets": [],
+        }
+        existing_payload = _read_json_file(wiki_root / "topic-approved-assets.json") or {"items": []}
+        existing_assets = existing_payload.get("items") if isinstance(existing_payload.get("items"), list) else []
+        return validate_topic_reviewed_assets_import_gate(reviewed_file, existing_assets)
 
     @app.get("/api/operating-brain/knowledge-compiler/compliance-review-pack")
     async def operating_brain_knowledge_compiler_compliance_review_pack_endpoint(

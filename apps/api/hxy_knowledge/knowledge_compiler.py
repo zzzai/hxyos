@@ -149,6 +149,11 @@ def _stable_id(prefix: str, *parts: str) -> str:
     return f"{prefix}:{digest[:16]}"
 
 
+def _json_fingerprint(payload: Any) -> dict[str, str]:
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return {"algorithm": "sha256", "digest": hashlib.sha256(canonical.encode("utf-8")).hexdigest()}
+
+
 def _domain_for(text: str) -> str:
     if any(term in text for term in ["定位", "品牌", "核爆点", "足疗"]):
         return "brand_positioning"
@@ -1004,6 +1009,291 @@ def build_topic_publication_package(publication_preflight: dict[str, Any]) -> di
         "write_to_database": False,
         "requires_human_review": True,
         "authority_rule": "topic_publication_package_does_not_publish_official_knowledge",
+    }
+
+
+TOPIC_DRY_RUN_REQUIRED_FIELDS = ["packet_id", "topic_key", "asset_type", "title", "promotion_target"]
+TOPIC_REVIEWED_ASSET_REQUIRED_FIELDS = ["asset_id", "topic_key", "asset_type", "title", "promotion_target"]
+
+
+def _missing_topic_asset_fields(asset: dict[str, Any]) -> list[str]:
+    missing: list[str] = []
+    for field in TOPIC_DRY_RUN_REQUIRED_FIELDS:
+        value = asset.get(field)
+        if value is None or str(value).strip() == "":
+            missing.append(field)
+    return missing
+
+
+def _missing_reviewed_topic_asset_fields(asset: dict[str, Any]) -> list[str]:
+    missing: list[str] = []
+    for field in TOPIC_REVIEWED_ASSET_REQUIRED_FIELDS:
+        value = asset.get(field)
+        if value is None or str(value).strip() == "":
+            missing.append(field)
+    return missing
+
+
+def _draft_topic_asset_payload_from_publication_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "packet_id": candidate.get("packet_id") or "",
+        "asset_id": candidate.get("asset_id") or "",
+        "topic_key": candidate.get("topic_key") or "",
+        "asset_type": candidate.get("asset_type") or "evidence_task",
+        "title": candidate.get("title") or "",
+        "promotion_target": candidate.get("promotion_target") or "evidence_backlog",
+        "status": "draft",
+        "target_status_after_manual_import": "approved",
+        "review_status_after_manual_import": "approved_v1",
+        "publication_metadata": candidate.get("publication_metadata") if isinstance(candidate.get("publication_metadata"), dict) else {},
+        "source": "topic_publication_dry_run",
+        "official_use_allowed": False,
+        "publish_allowed": False,
+        "write_to_formal_store": False,
+    }
+
+
+def dry_run_topic_publication_package(publication_package: dict[str, Any]) -> dict[str, Any]:
+    candidates = (
+        publication_package.get("publication_candidates")
+        if isinstance(publication_package.get("publication_candidates"), list)
+        else []
+    )
+    errors: list[dict[str, Any]] = []
+    payloads: list[dict[str, Any]] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        packet_id = str(candidate.get("packet_id") or "")
+        missing_fields = _missing_topic_asset_fields(candidate)
+        if missing_fields:
+            errors.append(
+                {
+                    "code": "missing_topic_asset_fields",
+                    "packet_id": packet_id,
+                    "missing_fields": missing_fields,
+                    "message": "Publication candidate cannot become a topic asset payload because required fields are missing.",
+                }
+            )
+        metadata = candidate.get("publication_metadata") if isinstance(candidate.get("publication_metadata"), dict) else {}
+        missing_metadata = _missing_topic_publication_metadata_fields(metadata)
+        if missing_metadata:
+            errors.append(
+                {
+                    "code": "missing_publication_metadata",
+                    "packet_id": packet_id,
+                    "missing_fields": missing_metadata,
+                    "message": "Publication candidate is missing required publication metadata.",
+                }
+            )
+        if not missing_fields and not missing_metadata:
+            payloads.append(_draft_topic_asset_payload_from_publication_candidate(candidate))
+    return {
+        "version": "hxy-topic-publication-dry-run.v1",
+        "publication_package_fingerprint": _json_fingerprint(publication_package),
+        "valid": len(errors) == 0,
+        "candidate_count": len(candidates),
+        "payload_count": len(payloads),
+        "would_write_count": 0,
+        "error_count": len(errors),
+        "errors": errors,
+        "draft_topic_asset_payloads": payloads,
+        "official_use_allowed": False,
+        "publish_allowed": False,
+        "write_to_formal_store": False,
+        "requires_human_review": True,
+        "authority_rule": "topic_publication_dry_run_does_not_publish_official_knowledge",
+    }
+
+
+def _reviewed_topic_asset_from_draft_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "packet_id": payload.get("packet_id") or "",
+        "asset_id": payload.get("asset_id") or "",
+        "topic_key": payload.get("topic_key") or "",
+        "asset_type": payload.get("asset_type") or "evidence_task",
+        "title": payload.get("title") or "",
+        "promotion_target": payload.get("promotion_target") or "evidence_backlog",
+        "status": "reviewed_pending_import",
+        "target_status_after_import": payload.get("target_status_after_manual_import") or "approved",
+        "review_status_after_import": payload.get("review_status_after_manual_import") or "approved_v1",
+        "source": "topic_reviewed_file_publication",
+        "publication_metadata": payload.get("publication_metadata") if isinstance(payload.get("publication_metadata"), dict) else {},
+    }
+
+
+def publish_topic_dry_run_assets_to_reviewed_file(
+    dry_run: dict[str, Any],
+    *,
+    confirm_manual_publication: bool,
+) -> dict[str, Any]:
+    if confirm_manual_publication is not True:
+        return {
+            "version": "hxy-topic-reviewed-assets-publication.v1",
+            "dry_run_fingerprint": _json_fingerprint(dry_run),
+            "published": False,
+            "published_count": 0,
+            "error_count": 1,
+            "errors": [
+                {
+                    "code": "missing_manual_publication_confirmation",
+                    "message": "Explicit manual confirmation is required before writing reviewed topic assets.",
+                }
+            ],
+            "reviewed_topic_assets": [],
+            "write_to_database": False,
+            "requires_import_step": True,
+            "official_use_allowed": False,
+            "authority_rule": "topic_reviewed_file_requires_separate_import_to_formal_store",
+        }
+    if dry_run.get("valid") is False:
+        return {
+            "version": "hxy-topic-reviewed-assets-publication.v1",
+            "dry_run_fingerprint": _json_fingerprint(dry_run),
+            "published": False,
+            "published_count": 0,
+            "error_count": 1,
+            "errors": [{"code": "invalid_dry_run", "message": "Cannot review topic assets from an invalid dry-run."}],
+            "reviewed_topic_assets": [],
+            "write_to_database": False,
+            "requires_import_step": True,
+            "official_use_allowed": False,
+            "authority_rule": "topic_reviewed_file_requires_separate_import_to_formal_store",
+        }
+    payloads = dry_run.get("draft_topic_asset_payloads") if isinstance(dry_run.get("draft_topic_asset_payloads"), list) else []
+    reviewed_assets = [
+        _reviewed_topic_asset_from_draft_payload(payload)
+        for payload in payloads
+        if isinstance(payload, dict)
+    ]
+    return {
+        "version": "hxy-topic-reviewed-assets-publication.v1",
+        "dry_run_fingerprint": _json_fingerprint(dry_run),
+        "published": True,
+        "published_count": len(reviewed_assets),
+        "error_count": 0,
+        "errors": [],
+        "reviewed_topic_assets": reviewed_assets,
+        "write_to_database": False,
+        "requires_import_step": True,
+        "official_use_allowed": False,
+        "authority_rule": "topic_reviewed_file_requires_separate_import_to_formal_store",
+    }
+
+
+def _normalise_topic_import_key(value: str) -> str:
+    return "".join(str(value or "").strip().lower().split())
+
+
+def _reviewed_topic_asset_errors(asset: dict[str, Any]) -> list[dict[str, Any]]:
+    errors: list[dict[str, Any]] = []
+    missing_fields = _missing_reviewed_topic_asset_fields(asset)
+    if missing_fields:
+        errors.append({"code": "missing_topic_asset_fields", "missing_fields": missing_fields, "topic_key": asset.get("topic_key") or ""})
+    if asset.get("status") != "reviewed_pending_import":
+        errors.append(
+            {
+                "code": "invalid_reviewed_topic_status",
+                "topic_key": asset.get("topic_key") or "",
+                "status": asset.get("status") or "",
+            }
+        )
+    metadata = asset.get("publication_metadata") if isinstance(asset.get("publication_metadata"), dict) else {}
+    missing_metadata = _missing_topic_publication_metadata_fields(metadata)
+    if missing_metadata:
+        errors.append(
+            {
+                "code": "missing_publication_metadata",
+                "topic_key": asset.get("topic_key") or "",
+                "missing_fields": missing_metadata,
+            }
+        )
+    return errors
+
+
+def validate_topic_reviewed_assets_import_gate(
+    reviewed_file: dict[str, Any],
+    existing_assets: list[dict[str, Any]],
+) -> dict[str, Any]:
+    reviewed_assets = (
+        reviewed_file.get("reviewed_topic_assets")
+        if isinstance(reviewed_file.get("reviewed_topic_assets"), list)
+        else []
+    )
+    existing_topic_targets = {
+        (
+            _normalise_topic_import_key(str(asset.get("topic_key") or "")),
+            _normalise_topic_import_key(str(asset.get("promotion_target") or "")),
+        )
+        for asset in existing_assets
+        if isinstance(asset, dict) and str(asset.get("status") or "") == "approved"
+    }
+    existing_versions = {
+        _normalise_topic_import_key(str((asset.get("publication_metadata") or {}).get("knowledge_version") or ""))
+        for asset in existing_assets
+        if isinstance(asset, dict) and isinstance(asset.get("publication_metadata"), dict)
+    }
+    seen_topic_targets: set[tuple[str, str]] = set()
+    seen_versions: set[str] = set()
+    errors: list[dict[str, Any]] = []
+    conflicts: list[dict[str, Any]] = []
+    importable_assets: list[dict[str, Any]] = []
+    for asset in reviewed_assets:
+        if not isinstance(asset, dict):
+            continue
+        asset_errors = _reviewed_topic_asset_errors(asset)
+        if asset_errors:
+            errors.extend(asset_errors)
+            continue
+        topic_target = (
+            _normalise_topic_import_key(str(asset.get("topic_key") or "")),
+            _normalise_topic_import_key(str(asset.get("promotion_target") or "")),
+        )
+        metadata = asset.get("publication_metadata") if isinstance(asset.get("publication_metadata"), dict) else {}
+        knowledge_version = _normalise_topic_import_key(str(metadata.get("knowledge_version") or ""))
+        asset_conflicts: list[dict[str, Any]] = []
+        if topic_target in existing_topic_targets or topic_target in seen_topic_targets:
+            asset_conflicts.append(
+                {
+                    "code": "duplicate_topic_target",
+                    "topic_key": asset.get("topic_key") or "",
+                    "promotion_target": asset.get("promotion_target") or "",
+                    "message": "Reviewed topic asset conflicts with an existing or same-batch approved topic target.",
+                }
+            )
+        if knowledge_version and (knowledge_version in existing_versions or knowledge_version in seen_versions):
+            asset_conflicts.append(
+                {
+                    "code": "duplicate_knowledge_version",
+                    "topic_key": asset.get("topic_key") or "",
+                    "knowledge_version": metadata.get("knowledge_version") or "",
+                    "message": "Reviewed topic asset conflicts with an existing or same-batch knowledge_version.",
+                }
+            )
+        if asset_conflicts:
+            conflicts.extend(asset_conflicts)
+            continue
+        seen_topic_targets.add(topic_target)
+        if knowledge_version:
+            seen_versions.add(knowledge_version)
+        importable_assets.append(asset)
+    valid = not errors and not conflicts
+    return {
+        "version": "hxy-topic-reviewed-assets-import-gate.v1",
+        "reviewed_file_fingerprint": _json_fingerprint(reviewed_file),
+        "existing_topic_assets_fingerprint": _json_fingerprint({"items": existing_assets}),
+        "valid": valid,
+        "reviewed_asset_count": len(reviewed_assets),
+        "importable_count": len(importable_assets),
+        "conflict_count": len(conflicts),
+        "error_count": len(errors),
+        "would_import_count": 0,
+        "errors": errors,
+        "conflicts": conflicts,
+        "importable_topic_assets": importable_assets,
+        "write_to_database": False,
+        "requires_import_confirmation": True,
+        "authority_rule": "topic_import_gate_checks_only_and_does_not_write_database",
     }
 
 

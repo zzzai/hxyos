@@ -647,6 +647,29 @@ class HxyBrainFrontendTest(unittest.TestCase):
         for forbidden in ["一键发布", "批准发布", "写入正式知识", "写入 approved", "confirm_manual_publication"]:
             self.assertNotIn(forbidden, panel_html)
 
+    def test_knowledge_workbench_renders_topic_publication_dry_run_and_import_gate(self):
+        html = (ROOT / "apps" / "admin-web" / "knowledge.html").read_text(encoding="utf-8")
+
+        for label in [
+            "发布 dry-run 与导入闸门",
+            "只读演练",
+            "reviewed_pending_import",
+            "导入前检查",
+            "id=\"topicPublicationDryRunGate\"",
+            "id=\"refreshTopicPublicationDryRunGateButton\"",
+            "renderTopicPublicationDryRunGate",
+            "loadTopicPublicationDryRunGate",
+            "/api/operating-brain/knowledge-compiler/topic-publication-dry-run",
+            "/api/operating-brain/knowledge-compiler/topic-reviewed-assets-import-gate",
+        ]:
+            self.assertIn(label, html)
+
+        panel_start = html.index("发布 dry-run 与导入闸门")
+        panel_end = html.index("合规审核包", panel_start)
+        panel_html = html[panel_start:panel_end]
+        for forbidden in ["一键导入", "写入数据库", "导入正式知识", "confirm_manual_publication", "import_confirmed"]:
+            self.assertNotIn(forbidden, panel_html)
+
     def test_knowledge_page_exposes_compliance_language_check_execution_panel(self):
         html = (ROOT / "apps" / "admin-web" / "knowledge.html").read_text(encoding="utf-8")
 

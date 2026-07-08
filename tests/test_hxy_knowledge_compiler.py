@@ -995,6 +995,186 @@ def test_build_topic_publication_preflight_marks_complete_metadata_ready_without
     assert "approved_knowledge" not in json.dumps(package, ensure_ascii=False)
 
 
+def test_dry_run_topic_publication_package_builds_reviewed_asset_payloads_without_writing():
+    from apps.api.hxy_knowledge.knowledge_compiler import dry_run_topic_publication_package
+
+    publication_package = {
+        "version": "hxy-topic-publication-package.v1",
+        "publication_candidates": [
+            {
+                "version": "hxy-topic-publication-candidate.v1",
+                "packet_id": "hxy-topic-review-packet:employee_script",
+                "asset_id": "hxy-topic-draft:employee_script",
+                "topic_key": "employee_script",
+                "asset_type": "script_card",
+                "title": "员工可执行话术与训练",
+                "promotion_target": "approved_script_card",
+                "status": "pending_manual_publication",
+                "publication_metadata": {
+                    "approver": "创始人",
+                    "approved_at": "2026-07-08",
+                    "knowledge_version": "hxy-topic-employee-script-20260708",
+                    "effective_scope": "首店员工训练",
+                    "source_evidence_summary": "员工演练记录。",
+                },
+            }
+        ],
+    }
+
+    dry_run = dry_run_topic_publication_package(publication_package)
+
+    assert dry_run["version"] == "hxy-topic-publication-dry-run.v1"
+    assert dry_run["valid"] is True
+    assert dry_run["candidate_count"] == 1
+    assert dry_run["payload_count"] == 1
+    assert dry_run["would_write_count"] == 0
+    assert dry_run["official_use_allowed"] is False
+    assert dry_run["publish_allowed"] is False
+    assert dry_run["write_to_formal_store"] is False
+    payload = dry_run["draft_topic_asset_payloads"][0]
+    assert payload["status"] == "draft"
+    assert payload["target_status_after_manual_import"] == "approved"
+    assert payload["review_status_after_manual_import"] == "approved_v1"
+    assert payload["publication_metadata"]["knowledge_version"] == "hxy-topic-employee-script-20260708"
+
+
+def test_publish_topic_publication_dry_run_requires_explicit_confirmation():
+    from apps.api.hxy_knowledge.knowledge_compiler import publish_topic_dry_run_assets_to_reviewed_file
+
+    dry_run = {
+        "version": "hxy-topic-publication-dry-run.v1",
+        "valid": True,
+        "draft_topic_asset_payloads": [
+            {
+                "packet_id": "hxy-topic-review-packet:employee_script",
+                "asset_id": "hxy-topic-draft:employee_script",
+                "topic_key": "employee_script",
+                "asset_type": "script_card",
+                "title": "员工可执行话术与训练",
+                "promotion_target": "approved_script_card",
+                "status": "draft",
+                "publication_metadata": {
+                    "approver": "创始人",
+                    "approved_at": "2026-07-08",
+                    "knowledge_version": "hxy-topic-employee-script-20260708",
+                    "effective_scope": "首店员工训练",
+                    "source_evidence_summary": "员工演练记录。",
+                },
+            }
+        ],
+    }
+
+    result = publish_topic_dry_run_assets_to_reviewed_file(dry_run, confirm_manual_publication=False)
+
+    assert result["version"] == "hxy-topic-reviewed-assets-publication.v1"
+    assert result["published"] is False
+    assert result["published_count"] == 0
+    assert result["error_count"] == 1
+    assert result["errors"][0]["code"] == "missing_manual_publication_confirmation"
+    assert result["reviewed_topic_assets"] == []
+    assert result["write_to_database"] is False
+    assert result["requires_import_step"] is True
+
+    confirmed = publish_topic_dry_run_assets_to_reviewed_file(dry_run, confirm_manual_publication=True)
+    assert confirmed["published"] is True
+    assert confirmed["published_count"] == 1
+    assert confirmed["write_to_database"] is False
+    assert confirmed["requires_import_step"] is True
+    reviewed = confirmed["reviewed_topic_assets"][0]
+    assert reviewed["status"] == "reviewed_pending_import"
+    assert reviewed["target_status_after_import"] == "approved"
+    assert reviewed["source"] == "topic_reviewed_file_publication"
+
+
+def test_validate_topic_reviewed_assets_import_gate_detects_conflicts_without_writing():
+    from apps.api.hxy_knowledge.knowledge_compiler import validate_topic_reviewed_assets_import_gate
+
+    reviewed_file = {
+        "version": "hxy-topic-reviewed-assets-publication.v1",
+        "published": True,
+        "reviewed_topic_assets": [
+            {
+                "asset_id": "hxy-topic-draft:employee_script",
+                "topic_key": "employee_script",
+                "asset_type": "script_card",
+                "title": "员工可执行话术与训练",
+                "promotion_target": "approved_script_card",
+                "status": "reviewed_pending_import",
+                "target_status_after_import": "approved",
+                "review_status_after_import": "approved_v1",
+                "publication_metadata": {
+                    "approver": "创始人",
+                    "approved_at": "2026-07-08",
+                    "knowledge_version": "hxy-topic-employee-script-20260708",
+                    "effective_scope": "首店员工训练",
+                    "source_evidence_summary": "员工演练记录。",
+                },
+            }
+        ],
+    }
+    existing_assets = [
+        {
+            "topic_key": "employee_script",
+            "promotion_target": "approved_script_card",
+            "status": "approved",
+            "publication_metadata": {"knowledge_version": "old-version"},
+        }
+    ]
+
+    gate = validate_topic_reviewed_assets_import_gate(reviewed_file, existing_assets)
+
+    assert gate["version"] == "hxy-topic-reviewed-assets-import-gate.v1"
+    assert gate["valid"] is False
+    assert gate["reviewed_asset_count"] == 1
+    assert gate["importable_count"] == 0
+    assert gate["conflict_count"] == 1
+    assert gate["would_import_count"] == 0
+    assert gate["write_to_database"] is False
+    assert gate["requires_import_confirmation"] is True
+    assert gate["conflicts"][0]["code"] == "duplicate_topic_target"
+    assert "imported_topic_assets" not in gate
+
+
+def test_validate_topic_reviewed_assets_import_gate_marks_clean_assets_importable_without_writing():
+    from apps.api.hxy_knowledge.knowledge_compiler import validate_topic_reviewed_assets_import_gate
+
+    reviewed_file = {
+        "version": "hxy-topic-reviewed-assets-publication.v1",
+        "published": True,
+        "reviewed_topic_assets": [
+            {
+                "asset_id": "hxy-topic-draft:risk_boundary",
+                "topic_key": "risk_boundary",
+                "asset_type": "risk_card",
+                "title": "合规与功效表达边界",
+                "promotion_target": "approved_risk_boundary_card",
+                "status": "reviewed_pending_import",
+                "target_status_after_import": "approved",
+                "review_status_after_import": "approved_v1",
+                "publication_metadata": {
+                    "approver": "创始人",
+                    "approved_at": "2026-07-08",
+                    "knowledge_version": "hxy-topic-risk-boundary-20260708",
+                    "effective_scope": "首店对外表达",
+                    "source_evidence_summary": "风险与合规资料。",
+                },
+            }
+        ],
+    }
+
+    gate = validate_topic_reviewed_assets_import_gate(reviewed_file, existing_assets=[])
+
+    assert gate["valid"] is True
+    assert gate["reviewed_asset_count"] == 1
+    assert gate["importable_count"] == 1
+    assert gate["conflict_count"] == 0
+    assert gate["error_count"] == 0
+    assert gate["would_import_count"] == 0
+    assert gate["write_to_database"] is False
+    assert gate["importable_topic_assets"][0]["status"] == "reviewed_pending_import"
+    assert gate["authority_rule"] == "topic_import_gate_checks_only_and_does_not_write_database"
+
+
 def test_compile_directory_writes_core_decision_topics_before_claim_review_queue(tmp_path: Path):
     from apps.api.hxy_knowledge.knowledge_compiler import compile_directory
 

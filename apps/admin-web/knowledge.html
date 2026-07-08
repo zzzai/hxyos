@@ -1318,6 +1318,19 @@
 
       <div class="panel full">
         <div class="panel-header">
+          <div class="panel-title">发布 dry-run 与导入闸门 <small>只读演练 · 导入前检查</small></div>
+          <button class="secondary" id="refreshTopicPublicationDryRunGateButton" type="button">刷新 dry-run</button>
+        </div>
+        <div class="panel-body">
+          <div class="result">dry-run 只生成草稿 payload；reviewed_pending_import 文件还必须经过导入前检查，当前面板不落库。</div>
+          <div id="topicPublicationDryRunGate" class="review-topic-list" aria-label="发布 dry-run 与导入闸门">
+            <div class="result">等待刷新</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel full">
+        <div class="panel-header">
           <div class="panel-title">合规审核包 <small id="complianceReviewPackMeta">只读审核包 · 等待编译产物</small></div>
           <button class="secondary" id="refreshComplianceReviewPack" type="button">刷新审核包</button>
         </div>
@@ -1458,6 +1471,8 @@
     const refreshTopicReviewDecisionsButton = document.querySelector("#refreshTopicReviewDecisionsButton");
     const topicPublicationGate = document.querySelector("#topicPublicationGate");
     const refreshTopicPublicationGateButton = document.querySelector("#refreshTopicPublicationGateButton");
+    const topicPublicationDryRunGate = document.querySelector("#topicPublicationDryRunGate");
+    const refreshTopicPublicationDryRunGateButton = document.querySelector("#refreshTopicPublicationDryRunGateButton");
     const complianceReviewPack = document.querySelector("#complianceReviewPack");
     const benchmarkCorrections = document.querySelector("#benchmarkCorrections");
     const p0GovernanceStatus = document.querySelector("#p0GovernanceStatus");
@@ -1826,6 +1841,30 @@
       }).join("");
     }
 
+    function renderTopicPublicationDryRunGate(dryRun, importGate) {
+      if (!topicPublicationDryRunGate) return;
+      const importable = Array.isArray(importGate.importable_topic_assets) ? importGate.importable_topic_assets : [];
+      topicPublicationDryRunGate.innerHTML = `
+        <article class="review-topic-item">
+          <div>
+            <div class="tag">dry-run</div>
+            <div style="height:6px"></div>
+            <div class="tag">${escapeHtml(String(dryRun.payload_count || 0))} payload</div>
+          </div>
+          <div class="review-topic-main">
+            <div class="review-topic-title">topic-publication-dry-run</div>
+            <div class="review-topic-section"><strong>只读演练</strong><span>candidate：${escapeHtml(String(dryRun.candidate_count || 0))} · payload：${escapeHtml(String(dryRun.payload_count || 0))} · would_write：${escapeHtml(String(dryRun.would_write_count || 0))}</span></div>
+            <div class="review-topic-section"><strong>reviewed 状态</strong><span>reviewed_pending_import 仍需导入前检查。</span></div>
+            <div class="review-topic-section"><strong>导入前检查</strong><span>valid：${escapeHtml(String(Boolean(importGate.valid)))} · importable：${escapeHtml(String(importGate.importable_count || importable.length))} · conflict：${escapeHtml(String(importGate.conflict_count || 0))}</span></div>
+            <div class="review-topic-section"><strong>边界</strong><span>${escapeHtml(importGate.authority_rule || "topic_import_gate_checks_only_and_does_not_write_database")}</span></div>
+          </div>
+          <div>
+            <span class="status-pill strong">${escapeHtml(importGate.valid ? "ready" : "check")}</span>
+          </div>
+        </article>
+      `;
+    }
+
     function renderComplianceReviewPack(payload) {
       const items = payload.items || [];
       document.querySelector("#complianceReviewPackMeta").textContent = `${payload.count || 0} 条 · 只读审核包 · 不能自动发布`;
@@ -1998,6 +2037,8 @@
           topicReviewDecisions,
           topicPublicationPreflight,
           topicPublicationPackage,
+          topicPublicationDryRun,
+          topicReviewedAssetsImportGate,
           compliancePack,
           corrections,
           ingestLoop,
@@ -2017,6 +2058,8 @@
           requestJson("/api/operating-brain/knowledge-compiler/topic-review-decisions"),
           requestJson("/api/operating-brain/knowledge-compiler/topic-publication-preflight"),
           requestJson("/api/operating-brain/knowledge-compiler/topic-publication-package"),
+          requestJson("/api/operating-brain/knowledge-compiler/topic-publication-dry-run"),
+          requestJson("/api/operating-brain/knowledge-compiler/topic-reviewed-assets-import-gate"),
           requestJson("/api/operating-brain/knowledge-compiler/compliance-review-pack?limit=20"),
           requestJson("/api/operating-brain/benchmark/corrections?limit=20"),
           requestJson("/api/operating-brain/ingest-loop/status"),
@@ -2035,6 +2078,7 @@
         renderTopicReviewPackets(topicReviewPackets);
         renderTopicReviewDecisions(topicReviewDecisions);
         renderTopicPublicationGate(topicPublicationPreflight, topicPublicationPackage);
+        renderTopicPublicationDryRunGate(topicPublicationDryRun, topicReviewedAssetsImportGate);
         renderComplianceReviewPack(compliancePack);
         renderBenchmarkCorrections(corrections);
         renderIngestLoopStatus(ingestLoop);
@@ -2142,6 +2186,19 @@
         ]);
         renderTopicPublicationGate(preflight, publicationPackage);
         setResult("正式知识发布闸门已刷新。这里只做批准前检查。", "ok");
+      } catch (error) {
+        setResult(error.message, "error");
+      }
+    }
+
+    async function loadTopicPublicationDryRunGate() {
+      try {
+        const [dryRun, importGate] = await Promise.all([
+          requestJson("/api/operating-brain/knowledge-compiler/topic-publication-dry-run"),
+          requestJson("/api/operating-brain/knowledge-compiler/topic-reviewed-assets-import-gate"),
+        ]);
+        renderTopicPublicationDryRunGate(dryRun, importGate);
+        setResult("发布 dry-run 与导入闸门已刷新。只读演练，不写库。", "ok");
       } catch (error) {
         setResult(error.message, "error");
       }
@@ -2271,6 +2328,7 @@
         await loadTopicReviewPackets();
         await loadTopicReviewDecisions();
         await loadTopicPublicationGate();
+        await loadTopicPublicationDryRunGate();
         await refreshComplianceReviewPack();
         setResult("资料入库 Loop 已停在人工复核。", "ok");
       } catch (error) {
@@ -2324,6 +2382,7 @@
     refreshTopicReviewPacketsButton?.addEventListener("click", loadTopicReviewPackets);
     refreshTopicReviewDecisionsButton?.addEventListener("click", loadTopicReviewDecisions);
     refreshTopicPublicationGateButton?.addEventListener("click", loadTopicPublicationGate);
+    refreshTopicPublicationDryRunGateButton?.addEventListener("click", loadTopicPublicationDryRunGate);
     document.querySelector("#refreshComplianceReviewPack").addEventListener("click", refreshComplianceReviewPack);
     document.querySelector("#refreshBenchmarkCorrections").addEventListener("click", refreshBenchmarkCorrections);
     document.querySelector("#refreshP0Governance").addEventListener("click", refreshP0Governance);
