@@ -512,6 +512,73 @@ def test_compile_directory_writes_claim_triage_and_reports_reduction(tmp_path: P
     assert review_queue["items"][0]["claim_id"] != review_queue["items"][1]["claim_id"]
 
 
+def test_build_core_decision_topics_prioritizes_hxy_0_to_1_operating_questions():
+    from apps.api.hxy_knowledge.knowledge_compiler import build_core_decision_topics
+
+    claims = [
+        {
+            "claim_id": "brand-positioning",
+            "claim": "荷小悦核爆点定位要围绕社区高疲劳人群、草本泡脚按摩和轻恢复表达。",
+            "domain": "brand_positioning",
+            "sources": ["knowledge/raw/inbox/荷小悦资料/00_项目总览.md"],
+            "risk_flags": [],
+        },
+        {
+            "claim_id": "customer-evidence",
+            "claim": "首店开业前需要补齐用户原话、复述测试、付费理由和替代方案。",
+            "domain": "brand_positioning",
+            "sources": ["knowledge/raw/inbox/荷小悦资料/00_项目总览.md"],
+            "risk_flags": [],
+        },
+        {
+            "claim_id": "external-fragment",
+            "claim": "某外部书籍认为企业需要高效管理组织。",
+            "domain": "management",
+            "sources": ["knowledge/raw/inbox/营销类书籍/book.reference.txt"],
+            "risk_flags": [],
+        },
+    ]
+
+    topics = build_core_decision_topics(claims, limit=8)
+
+    assert topics["version"] == "hxy-core-decision-topics.v1"
+    assert topics["raw_claims_hidden"] is True
+    assert topics["official_use_allowed"] is False
+    assert topics["requires_human_review"] is True
+    assert topics["core_topic_count"] >= 2
+    serialized = json.dumps(topics, ensure_ascii=False)
+    assert "品牌战略与核爆点定位" in serialized
+    assert "顾客证据与首店验证" in serialized
+    assert "这个判断现在能不能作为首店开业和对外口径的依据？" in serialized
+    assert "某外部书籍认为企业需要高效管理组织" not in serialized
+    assert "claim_id" not in topics["items"][0]
+    assert "sample_claims" not in topics["items"][0]
+
+
+def test_compile_directory_writes_core_decision_topics_before_claim_review_queue(tmp_path: Path):
+    from apps.api.hxy_knowledge.knowledge_compiler import compile_directory
+
+    raw_dir = tmp_path / "raw"
+    wiki_dir = tmp_path / "wiki"
+    raw_dir.mkdir(parents=True)
+    (raw_dir / "brand.md").write_text(
+        "荷小悦核爆点定位要围绕社区高疲劳人群、草本泡脚按摩和轻恢复表达。"
+        "首店开业前需要补齐用户原话、复述测试、付费理由和替代方案。"
+        "员工不能承诺泡脚可以治疗失眠。",
+        encoding="utf-8",
+    )
+
+    report = compile_directory(raw_dir, wiki_dir)
+
+    assert (wiki_dir / "core-decision-topics.json").is_file()
+    core_topics = json.loads((wiki_dir / "core-decision-topics.json").read_text(encoding="utf-8"))
+    assert report["core_decision_topic_count"] >= 2
+    assert report["human_review_object"] == "core_decision_topics"
+    assert core_topics["version"] == "hxy-core-decision-topics.v1"
+    assert core_topics["raw_claims_hidden"] is True
+    assert "claim_triage_is_machine_intermediate" in core_topics["authority_rule"]
+
+
 def test_build_knowledge_graph_links_claims_sources_domains_and_risks():
     from apps.api.hxy_knowledge.knowledge_compiler import build_knowledge_graph
 

@@ -64,6 +64,56 @@ REVIEW_DOMAIN_HINTS = {
     "risk_boundary": ["治疗", "治愈", "保证", "一定有效", "稳赚", "医学", "禁用", "不能承诺"],
     "brand_positioning": ["定位", "品牌", "核爆点", "足疗", "轻养生"],
 }
+CORE_DECISION_TOPIC_DEFINITIONS = {
+    "brand_positioning": {
+        "title": "品牌战略与核爆点定位",
+        "decision_question": "这个判断现在能不能作为首店开业和对外口径的依据？",
+        "why_it_matters": "定位没定清楚，前台话术、门头、内容和员工训练都会漂。",
+        "next_action": "补齐用户原话、复述测试、付费理由和替代方案。",
+        "review_owner": "创始人",
+        "triggers": ["定位", "品牌", "核爆点", "轻恢复", "轻养生", "足疗", "目标客群"],
+    },
+    "customer_evidence": {
+        "title": "顾客证据与首店验证",
+        "decision_question": "这些判断有没有真实顾客原话、复述、付费理由和替代方案支撑？",
+        "why_it_matters": "初创阶段最怕自我感觉正确，首店开业前必须先验证顾客是否听得懂、愿意来、愿意付费。",
+        "next_action": "把资料转成访谈问题和证据缺口，优先补 8-12 条目标用户原话。",
+        "review_owner": "创始人/运营负责人",
+        "triggers": ["用户原话", "顾客原话", "访谈", "复述", "付费理由", "替代方案", "首店", "验证"],
+    },
+    "product_system": {
+        "title": "产品服务体系与清泡调补养",
+        "decision_question": "清泡调补养、泡脚按摩组合和项目菜单，现在能不能被员工讲清、被顾客理解？",
+        "why_it_matters": "产品说不清，菜单、价格、推荐路径和复购都会乱。",
+        "next_action": "先确认主服务、组合服务、禁用功效和员工推荐标准话术。",
+        "review_owner": "产品/运营负责人",
+        "triggers": ["清泡调补养", "清泡", "调泡", "补泡", "养泡", "产品", "项目", "菜单", "泡脚", "按摩"],
+    },
+    "employee_script": {
+        "title": "员工可执行话术与训练",
+        "decision_question": "员工是否能不用创始人解释，就把这件事说清楚且不说过头？",
+        "why_it_matters": "门店交付靠员工现场表达，话术不稳定会直接造成转化、投诉和合规风险。",
+        "next_action": "把可说、慎说、不能说拆成训练题、标准回答和复训任务。",
+        "review_owner": "店长/运营培训负责人",
+        "triggers": ["员工", "话术", "技师", "接待", "推荐", "培训", "复训", "标准说法"],
+    },
+    "risk_boundary": {
+        "title": "合规与功效表达边界",
+        "decision_question": "哪些表达必须禁用，哪些只能作为内部提醒，哪些可以改成安全话术？",
+        "why_it_matters": "医疗化、疗效保证和夸大宣传是当前对外传播与员工话术的最高风险。",
+        "next_action": "先生成禁用表达、替代表达和发布前预检规则，再进入人工复核。",
+        "review_owner": "运营/合规负责人",
+        "triggers": ["治疗", "治愈", "疗效", "保证", "见效", "医疗", "诊疗", "药品", "禁用", "不能承诺"],
+    },
+    "first_store_operations": {
+        "title": "首店开业动作与SOP",
+        "decision_question": "这些内容能不能转成首店今天要做的动作、SOP 或复盘指标？",
+        "why_it_matters": "HXY 当前阶段不是抽象学习资料，而是要服务第一家店开业、训练、验证和复盘。",
+        "next_action": "把可执行内容转成今日动作、SOP 草稿、训练任务或开业检查项。",
+        "review_owner": "运营负责人",
+        "triggers": ["开业", "首店", "SOP", "流程", "接待", "复盘", "今日动作", "门店"],
+    },
+}
 
 
 def _stable_id(prefix: str, *parts: str) -> str:
@@ -357,6 +407,113 @@ def build_review_queue(claims: list[dict[str, Any]], limit: int = 20) -> dict[st
         "selected_count": len(items),
         "group_counts": grouped,
         "items": items[: max(0, limit)],
+    }
+
+
+def _core_topic_key_for_item(item: dict[str, Any]) -> str:
+    text = str(item.get("claim") or "")
+    group = str(item.get("review_group") or "")
+    domain = str(item.get("domain") or "")
+    source_class = str(item.get("source_class") or "")
+    haystack = f"{group}\n{domain}\n{text}"
+    if item.get("risk_flags") or group == "risk_boundary" or source_class == "risk_compliance":
+        return "risk_boundary"
+    for key, definition in CORE_DECISION_TOPIC_DEFINITIONS.items():
+        if key == "risk_boundary":
+            continue
+        if any(term in haystack for term in definition["triggers"]):
+            return key
+    if group == "brand_positioning":
+        return "brand_positioning"
+    if group == "product_system":
+        return "product_system"
+    if group == "employee_script":
+        return "employee_script"
+    if group == "store_model":
+        return "first_store_operations"
+    return ""
+
+
+def build_core_decision_topics(claims: list[dict[str, Any]], limit: int = 12) -> dict[str, Any]:
+    topics: dict[str, dict[str, Any]] = {}
+    evidence_count = 0
+    for claim in claims:
+        item = _review_item_for_claim(claim)
+        if item is None:
+            continue
+        source_class = str(item.get("source_class") or "general")
+        text = str(item.get("claim") or "")
+        has_hxy_context = _has_project_context(text, source_class)
+        topic_key = _core_topic_key_for_item(item)
+        if not topic_key:
+            continue
+        if source_class == "external_reference" and not has_hxy_context:
+            continue
+        definition = CORE_DECISION_TOPIC_DEFINITIONS[topic_key]
+        topic = topics.setdefault(
+            topic_key,
+            {
+                "version": "hxy-core-decision-topic.v1",
+                "topic_id": f"hxy-core-topic:{topic_key}",
+                "topic_key": topic_key,
+                "title": definition["title"],
+                "decision_question": definition["decision_question"],
+                "why_it_matters": definition["why_it_matters"],
+                "next_action": definition["next_action"],
+                "review_owner": definition["review_owner"],
+                "priority": "P1",
+                "evidence_count": 0,
+                "source_samples": [],
+                "source_classes": [],
+                "_sort_weight": 0.0,
+                "official_use_allowed": False,
+                "requires_human_review": True,
+            },
+        )
+        evidence_count += 1
+        topic["evidence_count"] += 1
+        topic["_sort_weight"] += float(item.get("score") or 0)
+        if item.get("risk_flags"):
+            topic["priority"] = "P0"
+        elif topic["priority"] != "P0" and topic_key in {"brand_positioning", "customer_evidence", "product_system"}:
+            topic["priority"] = "P0"
+        if source_class and source_class not in topic["source_classes"]:
+            topic["source_classes"].append(source_class)
+        for source in item.get("sources") or []:
+            label = Path(str(source)).name
+            if label and label not in topic["source_samples"] and len(topic["source_samples"]) < 4:
+                topic["source_samples"].append(label)
+
+    priority_order = {"P0": 0, "P1": 1, "P2": 2}
+    items = sorted(
+        topics.values(),
+        key=lambda topic: (
+            priority_order.get(str(topic.get("priority") or "P2"), 3),
+            -int(topic.get("evidence_count") or 0),
+            -float(topic.get("_sort_weight") or 0),
+            str(topic.get("title") or ""),
+        ),
+    )
+    public_items: list[dict[str, Any]] = []
+    for item in items[: max(0, limit)]:
+        public = dict(item)
+        public.pop("_sort_weight", None)
+        public_items.append(public)
+    return {
+        "version": "hxy-core-decision-topics.v1",
+        "status": "ready" if public_items else "empty",
+        "core_topic_count": len(public_items),
+        "total_core_topic_count": len(items),
+        "evidence_count": evidence_count,
+        "items": public_items,
+        "raw_claims_hidden": True,
+        "official_use_allowed": False,
+        "requires_human_review": True,
+        "authority_rule": "core_decision_topics_are_review_objects_claim_triage_is_machine_intermediate",
+        "next_actions": [
+            "先围绕 P0 核心议题补证据，不人工逐条审核海量 candidate claim。",
+            "通过人工复核后，核心议题才能转成定位卡、话术卡、SOP 或风险边界卡。",
+        ],
     }
 
 
@@ -664,12 +821,17 @@ def compile_directory(
         claims.extend(extract_candidate_claims(extract))
 
     graph = build_knowledge_graph(extracts=extracts, claims=claims)
+    core_decision_topics = build_core_decision_topics(claims, limit=12)
     claim_triage = build_claim_triage(claims, limit=200)
     review_queue = build_review_queue(claims, limit=20)
     answer_card_drafts = build_answer_card_drafts(review_queue["items"], limit=10)
     compliance_review_pack = build_compliance_review_pack(claim_triage["items"], limit=20)
     (wiki_root / "graph.json").write_text(json.dumps(graph, ensure_ascii=False, indent=2), encoding="utf-8")
     (wiki_root / "index.md").write_text(_render_index(extracts, claims), encoding="utf-8")
+    (wiki_root / "core-decision-topics.json").write_text(
+        json.dumps(core_decision_topics, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     (wiki_root / "claim-triage.json").write_text(json.dumps(claim_triage, ensure_ascii=False, indent=2), encoding="utf-8")
     (wiki_root / "review-queue.json").write_text(json.dumps(review_queue, ensure_ascii=False, indent=2), encoding="utf-8")
     (wiki_root / "answer-card-drafts.json").write_text(json.dumps(answer_card_drafts, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -681,6 +843,8 @@ def compile_directory(
         "claim_count": len(claims),
         "approved_count": 0,
         "review_queue_count": len(review_queue["items"]),
+        "core_decision_topic_count": core_decision_topics["core_topic_count"],
+        "human_review_object": "core_decision_topics",
         "reviewable_claim_count": review_queue["reviewable_claim_count"],
         "noise_claim_count": review_queue["noise_claim_count"],
         "duplicate_claim_count": claim_triage["duplicate_claim_count"],
@@ -695,6 +859,7 @@ def compile_directory(
         "artifacts": {
             "extracts": extracts,
             "claims": claims,
+            "core_decision_topics": core_decision_topics,
             "claim_triage": claim_triage,
             "graph": graph,
             "review_queue": review_queue,
@@ -794,6 +959,7 @@ def write_harness_run(
         "07_answer_card_drafts.json": artifacts.get("answer_card_drafts") or {"version": "hxy-answer-card-drafts.v1", "items": []},
         "08_compliance_review_pack.json": artifacts.get("compliance_review_pack") or {"version": "hxy-compliance-review-pack.v1", "items": []},
         "09_claim_triage.json": artifacts.get("claim_triage") or {"version": "hxy-claim-triage.v1", "items": []},
+        "10_core_decision_topics.json": artifacts.get("core_decision_topics") or {"version": "hxy-core-decision-topics.v1", "items": []},
     }
     phase_paths: dict[str, str] = {}
     for file_name, payload in phase_payloads.items():

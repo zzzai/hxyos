@@ -1233,18 +1233,18 @@
 
       <div class="panel full">
         <div class="panel-header">
-          <div class="panel-title">待判断议题 <small id="reviewTopicsMeta">原始 claim 不直接展示 · 等待整理结果</small></div>
+          <div class="panel-title">核心经营议题 <small id="reviewTopicsMeta">品牌战略、定位、产品、话术、首店验证优先</small></div>
           <button class="secondary" id="refreshReviewTopics" type="button">刷新议题</button>
         </div>
         <div class="panel-body">
-          <div class="topic-metrics" aria-label="待判断议题统计">
-            <div class="topic-metric"><span>原始候选</span><strong id="reviewTopicRawCount">0</strong></div>
-            <div class="topic-metric"><span>聚合议题</span><strong id="reviewTopicCount">0</strong></div>
-            <div class="topic-metric"><span>原始聚类</span><strong id="reviewTopicClusterCount">0</strong></div>
+          <div class="topic-metrics" aria-label="核心经营议题统计">
+            <div class="topic-metric"><span>资料证据</span><strong id="reviewTopicRawCount">0</strong></div>
+            <div class="topic-metric"><span>核心议题</span><strong id="reviewTopicCount">0</strong></div>
+            <div class="topic-metric"><span>机器聚合</span><strong id="reviewTopicClusterCount">0</strong></div>
             <div class="topic-metric"><span>可发布</span><strong>0</strong></div>
           </div>
-          <div class="result">原始 claim 不直接展示。系统先整理成经营、品牌、产品、合规等待判断议题；每条议题都不是正式知识，requires_human_review。</div>
-          <div id="reviewTopics" class="review-topic-list" aria-label="待判断议题列表">
+          <div class="result">机器摘录不直接展示。系统先聚合为品牌战略、定位验证、产品体系、员工话术、合规边界和首店动作；每条议题都不是正式知识，requires_human_review。</div>
+          <div id="reviewTopics" class="review-topic-list" aria-label="核心经营议题列表">
             <div class="result">等待刷新</div>
           </div>
         </div>
@@ -1572,14 +1572,15 @@
     function renderReviewTopics(payload) {
       const items = Array.isArray(payload.items) ? payload.items : [];
       reviewTopicState.items = items;
-      document.querySelector("#reviewTopicsMeta").textContent = `${payload.count || 0}/${payload.total || 0} 个议题 · 不是正式知识`;
-      document.querySelector("#reviewTopicRawCount").textContent = payload.raw_selected_count ?? 0;
+      const sourceLabel = payload.source === "core_decision_topics" ? "核心议题" : "聚合议题";
+      document.querySelector("#reviewTopicsMeta").textContent = `${payload.count || 0}/${payload.total || 0} 个${sourceLabel} · 不是正式知识`;
+      document.querySelector("#reviewTopicRawCount").textContent = payload.evidence_count ?? payload.raw_selected_count ?? 0;
       document.querySelector("#reviewTopicCount").textContent = payload.total ?? items.length;
-      document.querySelector("#reviewTopicClusterCount").textContent = payload.cluster_count ?? 0;
+      document.querySelector("#reviewTopicClusterCount").textContent = payload.core_topic_count ?? payload.cluster_count ?? 0;
       document.querySelector("#reviewCount").textContent = payload.total ?? items.length;
       document.querySelector("#reviewCountPanel").textContent = payload.total ?? items.length;
       if (!items.length) {
-        reviewTopics.innerHTML = `<div class="result">暂无待判断议题。先运行知识编译器，让系统把原始 claim 整理成议题。</div>`;
+        reviewTopics.innerHTML = `<div class="result">暂无核心经营议题。先运行知识编译器，让系统把资料证据整理成品牌、定位、产品、话术、合规和首店动作。</div>`;
         return;
       }
       reviewTopics.innerHTML = items.map((item) => {

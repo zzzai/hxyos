@@ -504,8 +504,15 @@ class HxyBrainFrontendTest(unittest.TestCase):
         html = page.read_text(encoding="utf-8")
 
         for label in [
-            "待判断议题",
-            "原始 claim 不直接展示",
+            "核心经营议题",
+            "品牌战略、定位、产品、话术、首店验证优先",
+            "机器摘录不直接展示",
+            "品牌战略",
+            "定位验证",
+            "产品体系",
+            "员工话术",
+            "合规边界",
+            "首店动作",
             "先判断",
             "为什么重要",
             "下一步",
@@ -521,12 +528,14 @@ class HxyBrainFrontendTest(unittest.TestCase):
             self.assertIn(label, html)
 
         governance_index = html.index("P0 合规闸门")
-        topics_index = html.index("待判断议题")
+        topics_index = html.index("核心经营议题")
         self.assertLess(governance_index, topics_index)
 
         for forbidden in [
             "候选 Claim 复核",
             "Claim 去噪工作台",
+            "原始 claim 不直接展示",
+            "让系统把原始 claim 整理成议题",
             "cluster_member_count",
             "duplicate_count",
             "overclaim_risk",

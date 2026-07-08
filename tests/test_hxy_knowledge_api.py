@@ -1211,6 +1211,74 @@ used_by:
             self.assertFalse(item["official_use_allowed"])
             self.assertTrue(item["requires_human_review"])
 
+    def test_operating_brain_compiler_review_topics_prefers_core_decision_topics(self):
+        wiki_dir = self.root / "knowledge" / "wiki"
+        wiki_dir.mkdir(parents=True)
+        (wiki_dir / "claim-triage.json").write_text(
+            json.dumps(
+                {
+                    "version": "hxy-claim-triage.v1",
+                    "total_claim_count": 218895,
+                    "cluster_count": 15657,
+                    "items": [
+                        {
+                            "claim_id": "raw-claim",
+                            "claim": "某一条机器候选 claim 不应该成为前台审核对象。",
+                            "review_group": "general",
+                            "priority": "high",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        (wiki_dir / "core-decision-topics.json").write_text(
+            json.dumps(
+                {
+                    "version": "hxy-core-decision-topics.v1",
+                    "status": "ready",
+                    "core_topic_count": 1,
+                    "raw_claims_hidden": True,
+                    "items": [
+                        {
+                            "version": "hxy-core-decision-topic.v1",
+                            "topic_id": "hxy-core-topic:brand-positioning",
+                            "topic_key": "brand_positioning",
+                            "title": "品牌战略与核爆点定位",
+                            "decision_question": "这个判断现在能不能作为首店开业和对外口径的依据？",
+                            "why_it_matters": "定位没定清楚，前台话术、门头、内容和员工训练都会漂。",
+                            "next_action": "补齐用户原话、复述测试、付费理由和替代方案。",
+                            "priority": "P0",
+                            "evidence_count": 3,
+                            "source_samples": ["00_项目总览.md"],
+                            "official_use_allowed": False,
+                            "requires_human_review": True,
+                        }
+                    ],
+                    "official_use_allowed": False,
+                    "requires_human_review": True,
+                    "authority_rule": "core_decision_topics_are_review_objects_claim_triage_is_machine_intermediate",
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        response = self.client.get("/api/operating-brain/knowledge-compiler/review-topics?limit=10")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-review-topics.v1")
+        self.assertEqual(body["source"], "core_decision_topics")
+        self.assertEqual(body["count"], 1)
+        self.assertTrue(body["raw_claims_hidden"])
+        serialized = json.dumps(body, ensure_ascii=False)
+        self.assertIn("品牌战略与核爆点定位", serialized)
+        self.assertIn("首店开业", serialized)
+        self.assertNotIn("某一条机器候选 claim", serialized)
+        self.assertNotIn("claim_id", serialized)
+
     def test_operating_brain_compiler_compliance_review_pack_endpoint_is_read_only(self):
         wiki_dir = self.root / "knowledge" / "wiki"
         wiki_dir.mkdir(parents=True)

@@ -2322,6 +2322,48 @@ def _compiler_claim_triage_from_payload(payload: dict[str, Any] | None, *, limit
     }
 
 
+def _compiler_core_decision_topics_from_payload(payload: dict[str, Any] | None, *, limit: int) -> dict[str, Any] | None:
+    if not payload:
+        return None
+    items = []
+    for item in payload.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        public = {
+            "version": item.get("version") or "hxy-core-decision-topic.v1",
+            "topic_id": item.get("topic_id") or "",
+            "topic_key": item.get("topic_key") or "",
+            "title": item.get("title") or "",
+            "decision_question": item.get("decision_question") or "",
+            "why_it_matters": item.get("why_it_matters") or "",
+            "next_action": item.get("next_action") or "",
+            "review_owner": item.get("review_owner") or "",
+            "priority": item.get("priority") or "P1",
+            "evidence_count": int(item.get("evidence_count") or 0),
+            "source_samples": [_source_label(source) for source in (item.get("source_samples") or [])],
+            "source_classes": list(item.get("source_classes") or []),
+            "official_use_allowed": False,
+            "requires_human_review": True,
+        }
+        items.append(public)
+    public_items = items[:limit]
+    return {
+        "version": "hxy-review-topics.v1",
+        "source": "core_decision_topics",
+        "status": payload.get("status") or ("ready" if items else "empty"),
+        "count": len(public_items),
+        "total": int(payload.get("total_core_topic_count") or len(items)),
+        "core_topic_count": int(payload.get("core_topic_count") or len(items)),
+        "evidence_count": int(payload.get("evidence_count") or 0),
+        "items": public_items,
+        "raw_claims_hidden": True,
+        "official_use_allowed": False,
+        "requires_human_review": True,
+        "authority_rule": payload.get("authority_rule")
+        or "core_decision_topics_are_review_objects_claim_triage_is_machine_intermediate",
+    }
+
+
 REVIEW_TOPIC_DEFINITIONS: dict[str, dict[str, str]] = {
     "risk_boundary": {
         "title": "医疗与功效表达边界",
@@ -2982,6 +3024,7 @@ def _compiler_review_topics_from_payload(payload: dict[str, Any] | None, *, limi
         public_items.append(public)
     return {
         "version": "hxy-review-topics.v1",
+        "source": "claim_triage",
         "status": payload.get("status") or ("ready" if items else "empty"),
         "count": len(public_items),
         "total": len(items),
@@ -3607,6 +3650,10 @@ def create_app(
     async def operating_brain_knowledge_compiler_review_topics_endpoint(
         limit: int = Query(default=12, ge=1, le=50),
     ) -> dict[str, Any]:
+        core_payload = _read_json_file(resolved_root / "knowledge" / "wiki" / "core-decision-topics.json")
+        core_topics = _compiler_core_decision_topics_from_payload(core_payload, limit=limit)
+        if core_topics is not None:
+            return core_topics
         payload = _read_json_file(resolved_root / "knowledge" / "wiki" / "claim-triage.json")
         return _compiler_review_topics_from_payload(payload, limit=limit)
 
