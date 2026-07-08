@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+import subprocess
+import sys
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
 
 def test_validate_harness_spec_accepts_safe_verification_only_spec(tmp_path):
     from hxy_knowledge.harness_runner import validate_harness_spec
@@ -119,3 +127,47 @@ def test_build_harness_state_stops_on_repeated_failure_signature(tmp_path):
 
     assert state["status"] == "blocked"
     assert state["stop_reason"] == "repeated_failure_requires_root_cause_analysis"
+
+
+def test_run_hxy_harness_cli_validates_spec(tmp_path):
+    root = tmp_path / "hxy"
+    spec_path = root / "knowledge" / "harness" / "specs" / "unit.json"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text(
+        json.dumps(
+            {
+                "version": "hxy-harness-spec.v1",
+                "run_name": "unit",
+                "target": "prove cli",
+                "scope": [],
+                "max_rounds": 1,
+                "verification_commands": ["npm test"],
+                "forbidden_paths": ["/root/htops"],
+                "forbidden_actions": [],
+                "success_thresholds": {"npm_test": "pass"},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/run-hxy-harness.py",
+            "validate",
+            "--spec",
+            str(spec_path),
+            "--root-dir",
+            str(root),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    body = json.loads(result.stdout)
+    assert body["version"] == "hxy-harness-spec-validation.v1"
+    assert body["valid"] is True
