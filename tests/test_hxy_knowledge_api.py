@@ -1279,6 +1279,63 @@ used_by:
         self.assertNotIn("某一条机器候选 claim", serialized)
         self.assertNotIn("claim_id", serialized)
 
+    def test_operating_brain_compiler_topic_draft_assets_returns_unapproved_assets(self):
+        wiki_dir = self.root / "knowledge" / "wiki"
+        wiki_dir.mkdir(parents=True)
+        (wiki_dir / "topic-draft-assets.json").write_text(
+            json.dumps(
+                {
+                    "version": "hxy-topic-draft-assets.v1",
+                    "status": "ready",
+                    "count": 1,
+                    "total": 1,
+                    "items": [
+                        {
+                            "version": "hxy-topic-draft-asset.v1",
+                            "asset_id": "hxy-topic-draft:brand_positioning",
+                            "topic_id": "hxy-core-topic:brand_positioning",
+                            "topic_key": "brand_positioning",
+                            "asset_type": "positioning_card",
+                            "title": "品牌战略与核爆点定位",
+                            "status": "needs_review",
+                            "priority": "P0",
+                            "review_owner": "创始人",
+                            "decision_question": "这个判断现在能不能作为首店开业和对外口径的依据？",
+                            "draft": {
+                                "summary": "先做内部复核。",
+                                "recommended_use": "内部草稿，供人工复核和改写。",
+                                "evidence_gaps": ["补齐目标用户原话"],
+                                "next_actions": ["完成访谈"],
+                            },
+                            "source_samples": ["brand.md"],
+                            "official_use_allowed": False,
+                            "requires_human_review": True,
+                            "authority_rule": "draft_assets_are_not_approved_knowledge",
+                        }
+                    ],
+                    "official_use_allowed": False,
+                    "requires_human_review": True,
+                    "authority_rule": "draft_assets_are_not_approved_knowledge",
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        response = self.client.get("/api/operating-brain/knowledge-compiler/topic-draft-assets?limit=5")
+        body = response.json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(body["version"], "hxy-topic-draft-assets.v1")
+        self.assertEqual(body["count"], 1)
+        self.assertEqual(body["items"][0]["asset_type"], "positioning_card")
+        self.assertEqual(body["items"][0]["status"], "needs_review")
+        self.assertEqual(body["items"][0]["source_samples"], ["brand.md"])
+        self.assertFalse(body["official_use_allowed"])
+        self.assertTrue(body["requires_human_review"])
+        self.assertFalse(body["items"][0]["official_use_allowed"])
+        self.assertTrue(body["items"][0]["requires_human_review"])
+
     def test_operating_brain_compiler_compliance_review_pack_endpoint_is_read_only(self):
         wiki_dir = self.root / "knowledge" / "wiki"
         wiki_dir.mkdir(parents=True)
