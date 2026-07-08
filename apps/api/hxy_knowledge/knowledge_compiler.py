@@ -114,6 +114,14 @@ CORE_DECISION_TOPIC_DEFINITIONS = {
         "triggers": ["开业", "首店", "SOP", "流程", "接待", "复盘", "今日动作", "门店"],
     },
 }
+TOPIC_DRAFT_ASSET_TYPES = {
+    "brand_positioning": "positioning_card",
+    "customer_evidence": "evidence_task",
+    "product_system": "script_card",
+    "employee_script": "script_card",
+    "risk_boundary": "risk_card",
+    "first_store_operations": "sop_card",
+}
 
 
 def _stable_id(prefix: str, *parts: str) -> str:
@@ -517,6 +525,104 @@ def build_core_decision_topics(claims: list[dict[str, Any]], limit: int = 12) ->
     }
 
 
+def _topic_draft_asset_type(topic: dict[str, Any]) -> str:
+    topic_key = str(topic.get("topic_key") or "")
+    if topic_key == "risk_boundary":
+        return "risk_card"
+    evidence_count = int(topic.get("evidence_count") or 0)
+    if evidence_count < 2:
+        return "evidence_task"
+    return TOPIC_DRAFT_ASSET_TYPES.get(topic_key, "evidence_task")
+
+
+def _topic_draft_payload(topic: dict[str, Any], asset_type: str) -> dict[str, Any]:
+    title = str(topic.get("title") or "核心经营议题")
+    next_action = str(topic.get("next_action") or "补齐证据后再复核。")
+    if asset_type == "risk_card":
+        return {
+            "summary": f"{title}必须先拆成禁用表达、替代表达和发布前预检规则。",
+            "recommended_use": "仅供内部合规复核，不可作为对外正式口径。",
+            "evidence_gaps": ["确认禁用表达来源", "补充安全替代表达", "确认适用渠道"],
+            "next_actions": ["整理禁用表达", "生成替代表达", "进入人工合规复核"],
+        }
+    if asset_type == "evidence_task":
+        return {
+            "summary": f"{title}当前证据不足，应先补证据，不要急着定稿。",
+            "recommended_use": "补证据任务，不可作为正式知识引用。",
+            "evidence_gaps": ["补齐真实顾客原话", "补齐员工复述结果", "补齐付费理由或替代方案"],
+            "next_actions": [next_action],
+        }
+    if asset_type == "positioning_card":
+        return {
+            "summary": f"{title}可以先形成定位卡草稿，但必须用顾客证据和员工复述测试校准。",
+            "recommended_use": "内部定位草稿，供创始人复核，不可作为对外正式口径。",
+            "evidence_gaps": ["补齐目标用户原话", "完成顾客复述测试", "确认替代方案和付费理由"],
+            "next_actions": [next_action],
+        }
+    if asset_type == "script_card":
+        return {
+            "summary": f"{title}可以先形成话术卡草稿，但必须确认员工能讲清且不说过头。",
+            "recommended_use": "内部话术草稿，供训练和复核，不可直接对外发布。",
+            "evidence_gaps": ["确认员工是否能 30 秒讲清", "确认顾客是否能复述", "确认禁用功效表达"],
+            "next_actions": [next_action],
+        }
+    if asset_type == "sop_card":
+        return {
+            "summary": f"{title}可以先形成 SOP 草稿，但必须经过首店执行验证。",
+            "recommended_use": "内部 SOP 草稿，供首店试运行，不可作为正式制度。",
+            "evidence_gaps": ["确认适用门店场景", "补齐执行负责人", "补齐复盘指标"],
+            "next_actions": [next_action],
+        }
+    return {
+        "summary": f"{title}可以先生成草稿资产，但必须人工复核后才能进入正式知识库。",
+        "recommended_use": "内部草稿，供人工复核和改写。",
+        "evidence_gaps": ["确认来源是否足够", "确认是否可执行", "确认是否存在合规风险"],
+        "next_actions": [next_action],
+    }
+
+
+def build_topic_draft_assets(core_decision_topics: dict[str, Any], limit: int = 12) -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
+    for topic in core_decision_topics.get("items") or []:
+        if not isinstance(topic, dict):
+            continue
+        topic_key = str(topic.get("topic_key") or "")
+        fallback_key = _stable_id("topic", str(topic.get("title") or ""))
+        asset_type = _topic_draft_asset_type(topic)
+        priority = "P0" if topic_key == "risk_boundary" else str(topic.get("priority") or "P1")
+        items.append(
+            {
+                "version": "hxy-topic-draft-asset.v1",
+                "asset_id": f"hxy-topic-draft:{topic_key or fallback_key}",
+                "topic_id": topic.get("topic_id") or "",
+                "topic_key": topic_key,
+                "asset_type": asset_type,
+                "title": topic.get("title") or "",
+                "status": "needs_review",
+                "priority": priority,
+                "review_owner": topic.get("review_owner") or "",
+                "decision_question": topic.get("decision_question") or "",
+                "draft": _topic_draft_payload(topic, asset_type),
+                "source_samples": list(topic.get("source_samples") or []),
+                "source_classes": list(topic.get("source_classes") or []),
+                "official_use_allowed": False,
+                "requires_human_review": True,
+                "authority_rule": "draft_assets_are_not_approved_knowledge",
+            }
+        )
+    public_items = items[: max(0, limit)]
+    return {
+        "version": "hxy-topic-draft-assets.v1",
+        "status": "ready" if public_items else "empty",
+        "count": len(public_items),
+        "total": len(items),
+        "items": public_items,
+        "official_use_allowed": False,
+        "requires_human_review": True,
+        "authority_rule": "draft_assets_are_not_approved_knowledge",
+    }
+
+
 def build_claim_triage(claims: list[dict[str, Any]], limit: int = 80) -> dict[str, Any]:
     noise_count = 0
     duplicate_count = 0
@@ -822,6 +928,7 @@ def compile_directory(
 
     graph = build_knowledge_graph(extracts=extracts, claims=claims)
     core_decision_topics = build_core_decision_topics(claims, limit=12)
+    topic_draft_assets = build_topic_draft_assets(core_decision_topics, limit=12)
     claim_triage = build_claim_triage(claims, limit=200)
     review_queue = build_review_queue(claims, limit=20)
     answer_card_drafts = build_answer_card_drafts(review_queue["items"], limit=10)
@@ -830,6 +937,10 @@ def compile_directory(
     (wiki_root / "index.md").write_text(_render_index(extracts, claims), encoding="utf-8")
     (wiki_root / "core-decision-topics.json").write_text(
         json.dumps(core_decision_topics, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (wiki_root / "topic-draft-assets.json").write_text(
+        json.dumps(topic_draft_assets, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     (wiki_root / "claim-triage.json").write_text(json.dumps(claim_triage, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -844,6 +955,7 @@ def compile_directory(
         "approved_count": 0,
         "review_queue_count": len(review_queue["items"]),
         "core_decision_topic_count": core_decision_topics["core_topic_count"],
+        "topic_draft_asset_count": topic_draft_assets["count"],
         "human_review_object": "core_decision_topics",
         "reviewable_claim_count": review_queue["reviewable_claim_count"],
         "noise_claim_count": review_queue["noise_claim_count"],
@@ -860,6 +972,7 @@ def compile_directory(
             "extracts": extracts,
             "claims": claims,
             "core_decision_topics": core_decision_topics,
+            "topic_draft_assets": topic_draft_assets,
             "claim_triage": claim_triage,
             "graph": graph,
             "review_queue": review_queue,
@@ -960,6 +1073,7 @@ def write_harness_run(
         "08_compliance_review_pack.json": artifacts.get("compliance_review_pack") or {"version": "hxy-compliance-review-pack.v1", "items": []},
         "09_claim_triage.json": artifacts.get("claim_triage") or {"version": "hxy-claim-triage.v1", "items": []},
         "10_core_decision_topics.json": artifacts.get("core_decision_topics") or {"version": "hxy-core-decision-topics.v1", "items": []},
+        "11_topic_draft_assets.json": artifacts.get("topic_draft_assets") or {"version": "hxy-topic-draft-assets.v1", "items": []},
     }
     phase_paths: dict[str, str] = {}
     for file_name, payload in phase_payloads.items():

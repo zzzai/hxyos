@@ -555,6 +555,105 @@ def test_build_core_decision_topics_prioritizes_hxy_0_to_1_operating_questions()
     assert "sample_claims" not in topics["items"][0]
 
 
+def test_build_topic_draft_assets_turns_core_topics_into_review_assets():
+    from apps.api.hxy_knowledge.knowledge_compiler import build_topic_draft_assets
+
+    topics = {
+        "version": "hxy-core-decision-topics.v1",
+        "items": [
+            {
+                "version": "hxy-core-decision-topic.v1",
+                "topic_id": "hxy-core-topic:brand_positioning",
+                "topic_key": "brand_positioning",
+                "title": "品牌战略与核爆点定位",
+                "decision_question": "这个判断现在能不能作为首店开业和对外口径的依据？",
+                "why_it_matters": "定位没定清楚，前台话术、门头、内容和员工训练都会漂。",
+                "next_action": "补齐用户原话、复述测试、付费理由和替代方案。",
+                "review_owner": "创始人",
+                "priority": "P0",
+                "evidence_count": 4,
+                "source_samples": ["brand.md"],
+                "source_classes": ["hxy_project"],
+                "official_use_allowed": False,
+                "requires_human_review": True,
+            }
+        ],
+    }
+
+    result = build_topic_draft_assets(topics)
+
+    assert result["version"] == "hxy-topic-draft-assets.v1"
+    assert result["status"] == "ready"
+    assert result["count"] == 1
+    asset = result["items"][0]
+    assert asset["asset_type"] == "positioning_card"
+    assert asset["status"] == "needs_review"
+    assert asset["official_use_allowed"] is False
+    assert asset["requires_human_review"] is True
+    assert asset["authority_rule"] == "draft_assets_are_not_approved_knowledge"
+    assert "用户原话" in " ".join(asset["draft"]["evidence_gaps"])
+
+
+def test_build_topic_draft_assets_keeps_risk_boundary_p0_and_unapproved():
+    from apps.api.hxy_knowledge.knowledge_compiler import build_topic_draft_assets
+
+    topics = {
+        "version": "hxy-core-decision-topics.v1",
+        "items": [
+            {
+                "topic_id": "hxy-core-topic:risk_boundary",
+                "topic_key": "risk_boundary",
+                "title": "合规与功效表达边界",
+                "decision_question": "哪些表达必须禁用？",
+                "why_it_matters": "医疗化、疗效保证和夸大宣传是最高风险。",
+                "next_action": "生成禁用表达、替代表达和发布前预检规则。",
+                "review_owner": "运营/合规负责人",
+                "priority": "P1",
+                "evidence_count": 1,
+                "source_samples": ["risk.md"],
+                "source_classes": ["risk_compliance"],
+            }
+        ],
+    }
+
+    asset = build_topic_draft_assets(topics)["items"][0]
+
+    assert asset["asset_type"] == "risk_card"
+    assert asset["priority"] == "P0"
+    assert asset["status"] == "needs_review"
+    assert asset["official_use_allowed"] is False
+    assert "禁用" in " ".join(asset["draft"]["next_actions"])
+
+
+def test_build_topic_draft_assets_prefers_evidence_task_for_low_evidence_non_risk_topic():
+    from apps.api.hxy_knowledge.knowledge_compiler import build_topic_draft_assets
+
+    topics = {
+        "version": "hxy-core-decision-topics.v1",
+        "items": [
+            {
+                "topic_id": "hxy-core-topic:product_system",
+                "topic_key": "product_system",
+                "title": "产品服务体系与清泡调补养",
+                "decision_question": "员工能不能讲清？",
+                "why_it_matters": "产品说不清，菜单、价格、推荐路径和复购都会乱。",
+                "next_action": "先确认主服务、组合服务、禁用功效和员工推荐标准话术。",
+                "review_owner": "产品/运营负责人",
+                "priority": "P0",
+                "evidence_count": 1,
+                "source_samples": ["product.md"],
+                "source_classes": ["hxy_project"],
+            }
+        ],
+    }
+
+    asset = build_topic_draft_assets(topics)["items"][0]
+
+    assert asset["asset_type"] == "evidence_task"
+    assert asset["status"] == "needs_review"
+    assert "补证据" in asset["draft"]["recommended_use"]
+
+
 def test_compile_directory_writes_core_decision_topics_before_claim_review_queue(tmp_path: Path):
     from apps.api.hxy_knowledge.knowledge_compiler import compile_directory
 
@@ -571,10 +670,16 @@ def test_compile_directory_writes_core_decision_topics_before_claim_review_queue
     report = compile_directory(raw_dir, wiki_dir)
 
     assert (wiki_dir / "core-decision-topics.json").is_file()
+    assert (wiki_dir / "topic-draft-assets.json").is_file()
     core_topics = json.loads((wiki_dir / "core-decision-topics.json").read_text(encoding="utf-8"))
+    draft_assets = json.loads((wiki_dir / "topic-draft-assets.json").read_text(encoding="utf-8"))
     assert report["core_decision_topic_count"] >= 2
+    assert report["topic_draft_asset_count"] == draft_assets["count"]
     assert report["human_review_object"] == "core_decision_topics"
+    assert report["artifacts"]["topic_draft_assets"]["items"]
     assert core_topics["version"] == "hxy-core-decision-topics.v1"
+    assert draft_assets["version"] == "hxy-topic-draft-assets.v1"
+    assert draft_assets["official_use_allowed"] is False
     assert core_topics["raw_claims_hidden"] is True
     assert "claim_triage_is_machine_intermediate" in core_topics["authority_rule"]
 
