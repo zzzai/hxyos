@@ -122,6 +122,19 @@ TOPIC_DRAFT_ASSET_TYPES = {
     "risk_boundary": "risk_card",
     "first_store_operations": "sop_card",
 }
+REVIEW_PACKET_DECISION_OPTIONS = [
+    "needs_more_evidence",
+    "revise_draft",
+    "ready_for_manual_approval",
+    "reject",
+]
+PROMOTION_TARGETS = {
+    "positioning_card": "approved_positioning_card",
+    "script_card": "approved_script_card",
+    "sop_card": "approved_sop_card",
+    "risk_card": "approved_risk_boundary_card",
+    "evidence_task": "evidence_backlog",
+}
 
 
 def _stable_id(prefix: str, *parts: str) -> str:
@@ -623,6 +636,89 @@ def build_topic_draft_assets(core_decision_topics: dict[str, Any], limit: int = 
     }
 
 
+def _review_questions_for_asset(asset: dict[str, Any]) -> list[str]:
+    asset_type = str(asset.get("asset_type") or "evidence_task")
+    if asset_type == "positioning_card":
+        return [
+            "这个判断是否有真实顾客原话支撑？",
+            "员工能否不用创始人解释就讲清？",
+            "顾客听完能否复述，并说出为什么愿意付费？",
+        ]
+    if asset_type == "script_card":
+        return [
+            "员工能否在 30 秒内讲清且不说过头？",
+            "顾客能否复述核心意思？",
+            "是否避开医疗、保证效果和夸大表达？",
+        ]
+    if asset_type == "sop_card":
+        return [
+            "这套动作是否有明确负责人？",
+            "首店现场是否能按步骤执行？",
+            "复盘指标和失败处理是否清楚？",
+        ]
+    if asset_type == "risk_card":
+        return [
+            "哪些禁用表达必须拦截？",
+            "对应的安全替代表达是什么？",
+            "适用于哪些渠道和岗位？",
+        ]
+    return [
+        "缺哪些证据？",
+        "谁负责补证据？",
+        "什么时候回到复核流程？",
+    ]
+
+
+def build_topic_review_packets(topic_draft_assets: dict[str, Any], limit: int = 12) -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
+    for asset in topic_draft_assets.get("items") or []:
+        if not isinstance(asset, dict):
+            continue
+        asset_type = str(asset.get("asset_type") or "evidence_task")
+        topic_key = str(asset.get("topic_key") or "")
+        draft = asset.get("draft") if isinstance(asset.get("draft"), dict) else {}
+        packet_key = topic_key or str(asset.get("asset_id") or _stable_id("review-packet", str(asset.get("title") or "")))
+        priority = "P0" if asset_type == "risk_card" else str(asset.get("priority") or "P1")
+        items.append(
+            {
+                "version": "hxy-topic-review-packet.v1",
+                "packet_id": f"hxy-topic-review-packet:{packet_key}",
+                "asset_id": asset.get("asset_id") or "",
+                "topic_key": topic_key,
+                "asset_type": asset_type,
+                "title": asset.get("title") or "",
+                "priority": priority,
+                "review_owner": asset.get("review_owner") or "运营负责人",
+                "status": "open",
+                "review_questions": _review_questions_for_asset(asset),
+                "evidence_gaps": list(draft.get("evidence_gaps") or []),
+                "next_actions": list(draft.get("next_actions") or []),
+                "decision_options": list(REVIEW_PACKET_DECISION_OPTIONS),
+                "promotion_target": PROMOTION_TARGETS.get(asset_type, "evidence_backlog"),
+                "blocked_actions": [
+                    "不能作为对外正式口径",
+                    "不能写入 approved answer cards",
+                    "不能自动发布",
+                ],
+                "source_samples": list(asset.get("source_samples") or []),
+                "official_use_allowed": False,
+                "requires_human_review": True,
+                "authority_rule": "review_packets_are_tasks_not_approval",
+            }
+        )
+    public_items = items[: max(0, limit)]
+    return {
+        "version": "hxy-topic-review-packets.v1",
+        "status": "ready" if public_items else "empty",
+        "count": len(public_items),
+        "total": len(items),
+        "items": public_items,
+        "official_use_allowed": False,
+        "requires_human_review": True,
+        "authority_rule": "review_packets_are_tasks_not_approval",
+    }
+
+
 def build_claim_triage(claims: list[dict[str, Any]], limit: int = 80) -> dict[str, Any]:
     noise_count = 0
     duplicate_count = 0
@@ -929,6 +1025,7 @@ def compile_directory(
     graph = build_knowledge_graph(extracts=extracts, claims=claims)
     core_decision_topics = build_core_decision_topics(claims, limit=12)
     topic_draft_assets = build_topic_draft_assets(core_decision_topics, limit=12)
+    topic_review_packets = build_topic_review_packets(topic_draft_assets, limit=12)
     claim_triage = build_claim_triage(claims, limit=200)
     review_queue = build_review_queue(claims, limit=20)
     answer_card_drafts = build_answer_card_drafts(review_queue["items"], limit=10)
@@ -941,6 +1038,10 @@ def compile_directory(
     )
     (wiki_root / "topic-draft-assets.json").write_text(
         json.dumps(topic_draft_assets, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (wiki_root / "topic-review-packets.json").write_text(
+        json.dumps(topic_review_packets, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     (wiki_root / "claim-triage.json").write_text(json.dumps(claim_triage, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -956,6 +1057,7 @@ def compile_directory(
         "review_queue_count": len(review_queue["items"]),
         "core_decision_topic_count": core_decision_topics["core_topic_count"],
         "topic_draft_asset_count": topic_draft_assets["count"],
+        "topic_review_packet_count": topic_review_packets["count"],
         "human_review_object": "core_decision_topics",
         "reviewable_claim_count": review_queue["reviewable_claim_count"],
         "noise_claim_count": review_queue["noise_claim_count"],
@@ -973,6 +1075,7 @@ def compile_directory(
             "claims": claims,
             "core_decision_topics": core_decision_topics,
             "topic_draft_assets": topic_draft_assets,
+            "topic_review_packets": topic_review_packets,
             "claim_triage": claim_triage,
             "graph": graph,
             "review_queue": review_queue,
@@ -1074,6 +1177,7 @@ def write_harness_run(
         "09_claim_triage.json": artifacts.get("claim_triage") or {"version": "hxy-claim-triage.v1", "items": []},
         "10_core_decision_topics.json": artifacts.get("core_decision_topics") or {"version": "hxy-core-decision-topics.v1", "items": []},
         "11_topic_draft_assets.json": artifacts.get("topic_draft_assets") or {"version": "hxy-topic-draft-assets.v1", "items": []},
+        "12_topic_review_packets.json": artifacts.get("topic_review_packets") or {"version": "hxy-topic-review-packets.v1", "items": []},
     }
     phase_paths: dict[str, str] = {}
     for file_name, payload in phase_payloads.items():

@@ -654,6 +654,85 @@ def test_build_topic_draft_assets_prefers_evidence_task_for_low_evidence_non_ris
     assert "补证据" in asset["draft"]["recommended_use"]
 
 
+def test_build_topic_review_packets_turns_draft_assets_into_human_tasks():
+    from apps.api.hxy_knowledge.knowledge_compiler import build_topic_review_packets
+
+    draft_assets = {
+        "version": "hxy-topic-draft-assets.v1",
+        "items": [
+            {
+                "version": "hxy-topic-draft-asset.v1",
+                "asset_id": "hxy-topic-draft:brand_positioning",
+                "topic_key": "brand_positioning",
+                "asset_type": "positioning_card",
+                "title": "品牌战略与核爆点定位",
+                "status": "needs_review",
+                "priority": "P0",
+                "review_owner": "创始人",
+                "decision_question": "这个判断现在能不能作为首店开业和对外口径的依据？",
+                "draft": {
+                    "evidence_gaps": ["补齐目标用户原话"],
+                    "next_actions": ["完成访谈"],
+                },
+                "source_samples": ["brand.md"],
+            }
+        ],
+    }
+
+    packets = build_topic_review_packets(draft_assets)
+
+    assert packets["version"] == "hxy-topic-review-packets.v1"
+    assert packets["status"] == "ready"
+    assert packets["count"] == 1
+    packet = packets["items"][0]
+    assert packet["version"] == "hxy-topic-review-packet.v1"
+    assert packet["packet_id"] == "hxy-topic-review-packet:brand_positioning"
+    assert packet["status"] == "open"
+    assert packet["promotion_target"] == "approved_positioning_card"
+    assert packet["decision_options"] == [
+        "needs_more_evidence",
+        "revise_draft",
+        "ready_for_manual_approval",
+        "reject",
+    ]
+    assert "真实顾客原话" in " ".join(packet["review_questions"])
+    assert "不能自动发布" in packet["blocked_actions"]
+    assert packet["official_use_allowed"] is False
+    assert packet["requires_human_review"] is True
+
+
+def test_build_topic_review_packets_keeps_risk_cards_blocked_and_p0():
+    from apps.api.hxy_knowledge.knowledge_compiler import build_topic_review_packets
+
+    draft_assets = {
+        "version": "hxy-topic-draft-assets.v1",
+        "items": [
+            {
+                "asset_id": "hxy-topic-draft:risk_boundary",
+                "topic_key": "risk_boundary",
+                "asset_type": "risk_card",
+                "title": "合规与功效表达边界",
+                "priority": "P1",
+                "review_owner": "运营/合规负责人",
+                "decision_question": "哪些表达必须禁用？",
+                "draft": {
+                    "evidence_gaps": ["确认禁用表达来源"],
+                    "next_actions": ["整理禁用表达"],
+                },
+                "source_samples": ["risk.md"],
+            }
+        ],
+    }
+
+    packet = build_topic_review_packets(draft_assets)["items"][0]
+
+    assert packet["priority"] == "P0"
+    assert packet["promotion_target"] == "approved_risk_boundary_card"
+    assert "禁用表达" in " ".join(packet["review_questions"])
+    assert "不能写入 approved answer cards" in packet["blocked_actions"]
+    assert packet["official_use_allowed"] is False
+
+
 def test_compile_directory_writes_core_decision_topics_before_claim_review_queue(tmp_path: Path):
     from apps.api.hxy_knowledge.knowledge_compiler import compile_directory
 
@@ -671,14 +750,20 @@ def test_compile_directory_writes_core_decision_topics_before_claim_review_queue
 
     assert (wiki_dir / "core-decision-topics.json").is_file()
     assert (wiki_dir / "topic-draft-assets.json").is_file()
+    assert (wiki_dir / "topic-review-packets.json").is_file()
     core_topics = json.loads((wiki_dir / "core-decision-topics.json").read_text(encoding="utf-8"))
     draft_assets = json.loads((wiki_dir / "topic-draft-assets.json").read_text(encoding="utf-8"))
+    review_packets = json.loads((wiki_dir / "topic-review-packets.json").read_text(encoding="utf-8"))
     assert report["core_decision_topic_count"] >= 2
     assert report["topic_draft_asset_count"] == draft_assets["count"]
+    assert report["topic_review_packet_count"] == review_packets["count"]
     assert report["human_review_object"] == "core_decision_topics"
     assert report["artifacts"]["topic_draft_assets"]["items"]
+    assert report["artifacts"]["topic_review_packets"]["items"]
     assert core_topics["version"] == "hxy-core-decision-topics.v1"
     assert draft_assets["version"] == "hxy-topic-draft-assets.v1"
+    assert review_packets["version"] == "hxy-topic-review-packets.v1"
+    assert review_packets["official_use_allowed"] is False
     assert draft_assets["official_use_allowed"] is False
     assert core_topics["raw_claims_hidden"] is True
     assert "claim_triage_is_machine_intermediate" in core_topics["authority_rule"]
