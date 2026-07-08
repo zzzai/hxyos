@@ -733,6 +733,150 @@ def test_build_topic_review_packets_keeps_risk_cards_blocked_and_p0():
     assert packet["official_use_allowed"] is False
 
 
+def test_build_topic_review_decision_stub_and_sample_keep_decisions_pending():
+    from apps.api.hxy_knowledge.knowledge_compiler import (
+        build_topic_review_decisions_sample,
+        build_topic_review_decisions_stub,
+    )
+
+    packets = {
+        "version": "hxy-topic-review-packets.v1",
+        "items": [
+            {
+                "version": "hxy-topic-review-packet.v1",
+                "packet_id": "hxy-topic-review-packet:brand_positioning",
+                "asset_id": "hxy-topic-draft:brand_positioning",
+                "topic_key": "brand_positioning",
+                "asset_type": "positioning_card",
+                "title": "品牌战略与核爆点定位",
+                "priority": "P0",
+                "review_owner": "创始人",
+                "decision_options": [
+                    "needs_more_evidence",
+                    "revise_draft",
+                    "ready_for_manual_approval",
+                    "reject",
+                ],
+                "promotion_target": "approved_positioning_card",
+            }
+        ],
+    }
+
+    stub = build_topic_review_decisions_stub(packets)
+    sample = build_topic_review_decisions_sample(stub)
+
+    assert stub["version"] == "hxy-topic-review-decisions-stub.v1"
+    assert stub["target_filename"] == "topic-review-decisions.json"
+    assert stub["decision_count"] == 1
+    assert stub["official_use_allowed"] is False
+    assert stub["publish_allowed"] is False
+    assert stub["write_to_database"] is False
+    assert stub["requires_human_review"] is True
+    assert stub["authority_rule"] == "topic_review_decisions_do_not_publish_official_knowledge"
+    assert stub["items"][0]["decision"] == "pending"
+    assert stub["items"][0]["status"] == "pending_decision"
+    assert "ready_for_manual_approval" in stub["items"][0]["allowed_decisions"]
+
+    assert sample["version"] == "hxy-topic-review-decisions-sample.v1"
+    assert sample["target_filename"] == "topic-review-decisions.json"
+    assert sample["initialized_from_stub"] is True
+    assert sample["official_use_allowed"] is False
+    assert sample["publish_allowed"] is False
+    assert sample["write_to_database"] is False
+    assert sample["items"][0]["decision"] == "pending"
+    assert sample["items"][0]["reviewer"] == ""
+    assert sample["items"][0]["rationale"] == ""
+    assert "approved_cards" not in json.dumps(sample, ensure_ascii=False)
+
+
+def test_validate_topic_review_decisions_allows_ready_state_without_publishing():
+    from apps.api.hxy_knowledge.knowledge_compiler import validate_topic_review_decisions
+
+    packets = {
+        "version": "hxy-topic-review-packets.v1",
+        "items": [
+            {
+                "packet_id": "hxy-topic-review-packet:brand_positioning",
+                "title": "品牌战略与核爆点定位",
+                "decision_options": [
+                    "needs_more_evidence",
+                    "revise_draft",
+                    "ready_for_manual_approval",
+                    "reject",
+                ],
+                "promotion_target": "approved_positioning_card",
+            }
+        ],
+    }
+    decisions = {
+        "version": "hxy-topic-review-decisions.v1",
+        "official_use_allowed": False,
+        "publish_allowed": False,
+        "write_to_database": False,
+        "items": [
+            {
+                "packet_id": "hxy-topic-review-packet:brand_positioning",
+                "decision": "ready_for_manual_approval",
+                "reviewer": "创始人",
+                "rationale": "已有顾客原话和员工复述记录，可以进入下一步人工批准前检查。",
+            }
+        ],
+    }
+
+    validation = validate_topic_review_decisions(packets, decisions)
+
+    assert validation["version"] == "hxy-topic-review-decisions-validation.v1"
+    assert validation["valid"] is True
+    assert validation["manual_decision_count"] == 1
+    assert validation["ready_for_manual_approval_count"] == 1
+    assert validation["approved_count"] == 0
+    assert validation["official_use_allowed"] is False
+    assert validation["publish_allowed"] is False
+    assert validation["write_to_database"] is False
+    assert validation["authority_rule"] == "ready_for_manual_approval_is_not_approved_knowledge"
+    assert validation["items"][0]["decision"] == "ready_for_manual_approval"
+    assert validation["items"][0]["status"] == "valid_manual_decision"
+
+
+def test_validate_topic_review_decisions_rejects_invalid_decision_and_publish_flags():
+    from apps.api.hxy_knowledge.knowledge_compiler import validate_topic_review_decisions
+
+    packets = {
+        "version": "hxy-topic-review-packets.v1",
+        "items": [
+            {
+                "packet_id": "hxy-topic-review-packet:risk_boundary",
+                "title": "合规与功效表达边界",
+                "decision_options": ["needs_more_evidence", "revise_draft", "ready_for_manual_approval", "reject"],
+                "promotion_target": "approved_risk_boundary_card",
+            }
+        ],
+    }
+    decisions = {
+        "version": "hxy-topic-review-decisions.v1",
+        "official_use_allowed": True,
+        "publish_allowed": True,
+        "write_to_database": True,
+        "items": [
+            {
+                "packet_id": "hxy-topic-review-packet:risk_boundary",
+                "decision": "approve",
+                "reviewer": "",
+                "rationale": "",
+            }
+        ],
+    }
+
+    validation = validate_topic_review_decisions(packets, decisions)
+
+    assert validation["valid"] is False
+    assert validation["invalid_decision_count"] == 1
+    assert validation["publish_block_count"] == 3
+    assert validation["items"][0]["status"] == "invalid"
+    assert "approve" in json.dumps(validation["errors"], ensure_ascii=False)
+    assert "不能发布" in json.dumps(validation["errors"], ensure_ascii=False)
+
+
 def test_compile_directory_writes_core_decision_topics_before_claim_review_queue(tmp_path: Path):
     from apps.api.hxy_knowledge.knowledge_compiler import compile_directory
 
@@ -751,20 +895,30 @@ def test_compile_directory_writes_core_decision_topics_before_claim_review_queue
     assert (wiki_dir / "core-decision-topics.json").is_file()
     assert (wiki_dir / "topic-draft-assets.json").is_file()
     assert (wiki_dir / "topic-review-packets.json").is_file()
+    assert (wiki_dir / "topic-review-decisions.stub.json").is_file()
+    assert (wiki_dir / "topic-review-decisions.sample.json").is_file()
     core_topics = json.loads((wiki_dir / "core-decision-topics.json").read_text(encoding="utf-8"))
     draft_assets = json.loads((wiki_dir / "topic-draft-assets.json").read_text(encoding="utf-8"))
     review_packets = json.loads((wiki_dir / "topic-review-packets.json").read_text(encoding="utf-8"))
+    decision_stub = json.loads((wiki_dir / "topic-review-decisions.stub.json").read_text(encoding="utf-8"))
+    decision_sample = json.loads((wiki_dir / "topic-review-decisions.sample.json").read_text(encoding="utf-8"))
     assert report["core_decision_topic_count"] >= 2
     assert report["topic_draft_asset_count"] == draft_assets["count"]
     assert report["topic_review_packet_count"] == review_packets["count"]
+    assert report["topic_review_decision_stub_count"] == decision_stub["decision_count"]
     assert report["human_review_object"] == "core_decision_topics"
     assert report["artifacts"]["topic_draft_assets"]["items"]
     assert report["artifacts"]["topic_review_packets"]["items"]
     assert core_topics["version"] == "hxy-core-decision-topics.v1"
     assert draft_assets["version"] == "hxy-topic-draft-assets.v1"
     assert review_packets["version"] == "hxy-topic-review-packets.v1"
+    assert decision_stub["version"] == "hxy-topic-review-decisions-stub.v1"
+    assert decision_sample["version"] == "hxy-topic-review-decisions-sample.v1"
+    assert {item["decision"] for item in decision_sample["items"]} == {"pending"}
     assert review_packets["official_use_allowed"] is False
     assert draft_assets["official_use_allowed"] is False
+    assert decision_sample["official_use_allowed"] is False
+    assert decision_sample["publish_allowed"] is False
     assert core_topics["raw_claims_hidden"] is True
     assert "claim_triage_is_machine_intermediate" in core_topics["authority_rule"]
 

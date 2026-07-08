@@ -41,6 +41,11 @@ from hxy_knowledge.golden_questions import authority_cards
 from hxy_knowledge.golden_questions import golden_questions
 from hxy_knowledge.ingest_loop import run_ingest_loop
 from hxy_knowledge.importer import load_current_records
+from hxy_knowledge.knowledge_compiler import (
+    build_topic_review_decisions_sample,
+    build_topic_review_decisions_stub,
+    validate_topic_review_decisions,
+)
 from hxy_knowledge.loop_engine import build_p0_governance_status, validate_p0_review_decisions
 from hxy_knowledge.memory_ingest import build_instant_memory_records
 from hxy_knowledge.model_router import ModelRouter
@@ -139,6 +144,10 @@ class CompilerReviewDecisionRequest(BaseModel):
     reviewer: str = "unknown"
     note: str = ""
     revised_claim: str = ""
+
+
+class TopicReviewDecisionPreviewRequest(BaseModel):
+    decisions: dict[str, Any] = Field(default_factory=dict)
 
 
 class ProcessMemoryRequest(BaseModel):
@@ -2465,6 +2474,58 @@ def _compiler_topic_review_packets_from_payload(payload: dict[str, Any] | None, 
     }
 
 
+def _compiler_topic_review_decisions_workflow_from_payloads(
+    *,
+    packet_payload: dict[str, Any] | None,
+    stub_payload: dict[str, Any] | None,
+    sample_payload: dict[str, Any] | None,
+    decisions_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    packets = packet_payload if isinstance(packet_payload, dict) else {"version": "hxy-topic-review-packets.v1", "items": []}
+    stub = stub_payload if isinstance(stub_payload, dict) else build_topic_review_decisions_stub(packets)
+    sample = sample_payload if isinstance(sample_payload, dict) else build_topic_review_decisions_sample(stub)
+    validation = validate_topic_review_decisions(packets, decisions_payload) if decisions_payload else None
+    decision_count = int(stub.get("decision_count") or len(stub.get("items") or []))
+    if not packet_payload:
+        current_step = "missing_review_packets"
+        next_action = "先运行知识编译器生成 topic-review-packets.json。"
+    elif not decisions_payload:
+        current_step = "awaiting_manual_decisions"
+        next_action = "复制 sample 到 topic-review-decisions.json，由负责人填写人工判断后再做 preview 校验。"
+    elif validation and not validation.get("valid"):
+        current_step = "blocked_at_decision_validation"
+        next_action = "修正 topic-review-decisions.json；ready_for_manual_approval 不是批准，不能发布。"
+    elif validation and int(validation.get("manual_decision_count") or 0) <= 0:
+        current_step = "blocked_at_empty_manual_decisions"
+        next_action = "至少填写一条 needs_more_evidence、revise_draft、ready_for_manual_approval 或 reject。"
+    else:
+        current_step = "manual_decisions_ready_for_next_review"
+        next_action = "进入下一步人工批准前检查；仍不能写入正式知识库。"
+    return {
+        "version": "hxy-topic-review-decisions-workflow.v1",
+        "current_step": current_step,
+        "decision_count": decision_count,
+        "manual_decision_count": int((validation or {}).get("manual_decision_count") or 0),
+        "pending_count": int((validation or {}).get("pending_count") or decision_count),
+        "ready_for_manual_approval_count": int((validation or {}).get("ready_for_manual_approval_count") or 0),
+        "stub": stub,
+        "sample": sample,
+        "validation": validation,
+        "files": {
+            "packets": "knowledge/wiki/topic-review-packets.json",
+            "stub": "knowledge/wiki/topic-review-decisions.stub.json",
+            "sample": "knowledge/wiki/topic-review-decisions.sample.json",
+            "decisions": "knowledge/wiki/topic-review-decisions.json",
+        },
+        "next_action": next_action,
+        "official_use_allowed": False,
+        "publish_allowed": False,
+        "write_to_database": False,
+        "requires_human_review": True,
+        "authority_rule": "topic_review_decisions_are_manual_records_not_approved_knowledge",
+    }
+
+
 REVIEW_TOPIC_DEFINITIONS: dict[str, dict[str, str]] = {
     "risk_boundary": {
         "title": "医疗与功效表达边界",
@@ -3771,6 +3832,40 @@ def create_app(
     ) -> dict[str, Any]:
         payload = _read_json_file(resolved_root / "knowledge" / "wiki" / "topic-review-packets.json")
         return _compiler_topic_review_packets_from_payload(payload, limit=limit)
+
+    @app.get("/api/operating-brain/knowledge-compiler/topic-review-decisions")
+    async def operating_brain_knowledge_compiler_topic_review_decisions_endpoint() -> dict[str, Any]:
+        wiki_root = resolved_root / "knowledge" / "wiki"
+        packet_payload = _read_json_file(wiki_root / "topic-review-packets.json")
+        stub_payload = _read_json_file(wiki_root / "topic-review-decisions.stub.json")
+        sample_payload = _read_json_file(wiki_root / "topic-review-decisions.sample.json")
+        decisions_payload = _read_json_file(wiki_root / "topic-review-decisions.json")
+        return _compiler_topic_review_decisions_workflow_from_payloads(
+            packet_payload=packet_payload,
+            stub_payload=stub_payload,
+            sample_payload=sample_payload,
+            decisions_payload=decisions_payload,
+        )
+
+    @app.post("/api/operating-brain/knowledge-compiler/topic-review-decision-preview")
+    async def operating_brain_knowledge_compiler_topic_review_decision_preview_endpoint(
+        request: TopicReviewDecisionPreviewRequest,
+    ) -> dict[str, Any]:
+        packet_payload = _read_json_file(resolved_root / "knowledge" / "wiki" / "topic-review-packets.json")
+        if not packet_payload:
+            raise HTTPException(status_code=404, detail="topic-review-packets.json not found")
+        validation = validate_topic_review_decisions(packet_payload, request.decisions)
+        return {
+            "version": "hxy-topic-review-decision-preview.v1",
+            "preview_only": True,
+            "valid": bool(validation.get("valid")),
+            "validation": validation,
+            "official_use_allowed": False,
+            "publish_allowed": False,
+            "write_to_database": False,
+            "requires_human_review": True,
+            "authority_rule": "topic_review_decision_preview_validates_payload_without_writing",
+        }
 
     @app.get("/api/operating-brain/knowledge-compiler/compliance-review-pack")
     async def operating_brain_knowledge_compiler_compliance_review_pack_endpoint(

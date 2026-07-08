@@ -719,6 +719,179 @@ def build_topic_review_packets(topic_draft_assets: dict[str, Any], limit: int = 
     }
 
 
+def build_topic_review_decisions_stub(topic_review_packets: dict[str, Any], limit: int = 50) -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
+    for packet in topic_review_packets.get("items") or []:
+        if not isinstance(packet, dict):
+            continue
+        allowed_decisions = list(packet.get("decision_options") or REVIEW_PACKET_DECISION_OPTIONS)
+        items.append(
+            {
+                "packet_id": packet.get("packet_id") or "",
+                "asset_id": packet.get("asset_id") or "",
+                "topic_key": packet.get("topic_key") or "",
+                "asset_type": packet.get("asset_type") or "evidence_task",
+                "title": packet.get("title") or "",
+                "priority": packet.get("priority") or "P1",
+                "review_owner": packet.get("review_owner") or "运营负责人",
+                "promotion_target": packet.get("promotion_target") or "evidence_backlog",
+                "decision": "pending",
+                "status": "pending_decision",
+                "allowed_decisions": allowed_decisions,
+                "official_use_allowed": False,
+                "requires_human_review": True,
+            }
+        )
+    public_items = items[: max(0, limit)]
+    return {
+        "version": "hxy-topic-review-decisions-stub.v1",
+        "target_filename": "topic-review-decisions.json",
+        "decision_count": len(public_items),
+        "total": len(items),
+        "allowed_decisions": list(REVIEW_PACKET_DECISION_OPTIONS),
+        "items": public_items,
+        "official_use_allowed": False,
+        "publish_allowed": False,
+        "write_to_database": False,
+        "requires_human_review": True,
+        "authority_rule": "topic_review_decisions_do_not_publish_official_knowledge",
+    }
+
+
+def build_topic_review_decisions_sample(decision_stub: dict[str, Any]) -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
+    for item in decision_stub.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        items.append(
+            {
+                "packet_id": item.get("packet_id") or "",
+                "decision": "pending",
+                "reviewer": "",
+                "rationale": "",
+                "evidence_summary": "",
+                "next_step": "",
+                "allowed_decisions": list(item.get("allowed_decisions") or REVIEW_PACKET_DECISION_OPTIONS),
+                "official_use_allowed": False,
+                "publish_allowed": False,
+            }
+        )
+    return {
+        "version": "hxy-topic-review-decisions-sample.v1",
+        "target_filename": decision_stub.get("target_filename") or "topic-review-decisions.json",
+        "initialized_from_stub": True,
+        "decision_count": len(items),
+        "items": items,
+        "official_use_allowed": False,
+        "publish_allowed": False,
+        "write_to_database": False,
+        "requires_human_review": True,
+        "authority_rule": "topic_review_decisions_sample_is_editable_not_approval",
+    }
+
+
+def validate_topic_review_decisions(topic_review_packets: dict[str, Any], decisions: dict[str, Any] | None) -> dict[str, Any]:
+    decisions_payload = decisions if isinstance(decisions, dict) else {}
+    packets_by_id = {
+        str(packet.get("packet_id") or ""): packet
+        for packet in (topic_review_packets.get("items") or [])
+        if isinstance(packet, dict) and packet.get("packet_id")
+    }
+    errors: list[dict[str, Any]] = []
+    publish_block_count = 0
+    for flag in ["official_use_allowed", "publish_allowed", "write_to_database"]:
+        if decisions_payload.get(flag) is True:
+            publish_block_count += 1
+            errors.append(
+                {
+                    "code": f"{flag}_must_be_false",
+                    "message": f"{flag} 必须为 false；topic review decisions 不能发布或写库。",
+                }
+            )
+
+    if decisions_payload.get("version") not in {None, "hxy-topic-review-decisions.v1"}:
+        errors.append(
+            {
+                "code": "invalid_version",
+                "message": "决策文件版本必须是 hxy-topic-review-decisions.v1。",
+            }
+        )
+
+    items: list[dict[str, Any]] = []
+    manual_decision_count = 0
+    pending_count = 0
+    invalid_decision_count = 0
+    ready_for_manual_approval_count = 0
+    for raw_item in decisions_payload.get("items") or []:
+        if not isinstance(raw_item, dict):
+            continue
+        packet_id = str(raw_item.get("packet_id") or "")
+        packet = packets_by_id.get(packet_id)
+        allowed = list(packet.get("decision_options") or REVIEW_PACKET_DECISION_OPTIONS) if packet else list(REVIEW_PACKET_DECISION_OPTIONS)
+        decision = str(raw_item.get("decision") or "pending")
+        item_errors: list[str] = []
+        if not packet:
+            item_errors.append("unknown_packet_id")
+        if decision == "pending":
+            pending_count += 1
+            status = "pending_decision"
+        elif decision not in allowed:
+            invalid_decision_count += 1
+            item_errors.append(f"invalid_decision:{decision}")
+            status = "invalid"
+        else:
+            manual_decision_count += 1
+            status = "valid_manual_decision"
+            if not str(raw_item.get("reviewer") or "").strip():
+                item_errors.append("missing_reviewer")
+            if not str(raw_item.get("rationale") or "").strip():
+                item_errors.append("missing_rationale")
+            if decision == "ready_for_manual_approval":
+                ready_for_manual_approval_count += 1
+        if item_errors:
+            status = "invalid" if decision != "pending" else "pending_decision"
+            for error in item_errors:
+                errors.append(
+                    {
+                        "code": error,
+                        "packet_id": packet_id,
+                        "message": f"{packet_id or 'unknown'} 决策无效：{error}。ready_for_manual_approval 也不是批准。",
+                    }
+                )
+        items.append(
+            {
+                "packet_id": packet_id,
+                "decision": decision,
+                "status": status,
+                "errors": item_errors,
+                "promotion_target": packet.get("promotion_target") if packet else "",
+                "official_use_allowed": False,
+                "publish_allowed": False,
+            }
+        )
+
+    valid = not errors and invalid_decision_count == 0
+    return {
+        "version": "hxy-topic-review-decisions-validation.v1",
+        "valid": valid,
+        "decision_count": len(items),
+        "manual_decision_count": manual_decision_count,
+        "pending_count": pending_count,
+        "invalid_decision_count": invalid_decision_count,
+        "ready_for_manual_approval_count": ready_for_manual_approval_count,
+        "approved_count": 0,
+        "publish_block_count": publish_block_count,
+        "error_count": len(errors),
+        "errors": errors,
+        "items": items,
+        "official_use_allowed": False,
+        "publish_allowed": False,
+        "write_to_database": False,
+        "requires_human_review": True,
+        "authority_rule": "ready_for_manual_approval_is_not_approved_knowledge",
+    }
+
+
 def build_claim_triage(claims: list[dict[str, Any]], limit: int = 80) -> dict[str, Any]:
     noise_count = 0
     duplicate_count = 0
@@ -1026,6 +1199,8 @@ def compile_directory(
     core_decision_topics = build_core_decision_topics(claims, limit=12)
     topic_draft_assets = build_topic_draft_assets(core_decision_topics, limit=12)
     topic_review_packets = build_topic_review_packets(topic_draft_assets, limit=12)
+    topic_review_decision_stub = build_topic_review_decisions_stub(topic_review_packets, limit=50)
+    topic_review_decision_sample = build_topic_review_decisions_sample(topic_review_decision_stub)
     claim_triage = build_claim_triage(claims, limit=200)
     review_queue = build_review_queue(claims, limit=20)
     answer_card_drafts = build_answer_card_drafts(review_queue["items"], limit=10)
@@ -1044,6 +1219,14 @@ def compile_directory(
         json.dumps(topic_review_packets, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    (wiki_root / "topic-review-decisions.stub.json").write_text(
+        json.dumps(topic_review_decision_stub, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (wiki_root / "topic-review-decisions.sample.json").write_text(
+        json.dumps(topic_review_decision_sample, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     (wiki_root / "claim-triage.json").write_text(json.dumps(claim_triage, ensure_ascii=False, indent=2), encoding="utf-8")
     (wiki_root / "review-queue.json").write_text(json.dumps(review_queue, ensure_ascii=False, indent=2), encoding="utf-8")
     (wiki_root / "answer-card-drafts.json").write_text(json.dumps(answer_card_drafts, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1058,6 +1241,7 @@ def compile_directory(
         "core_decision_topic_count": core_decision_topics["core_topic_count"],
         "topic_draft_asset_count": topic_draft_assets["count"],
         "topic_review_packet_count": topic_review_packets["count"],
+        "topic_review_decision_stub_count": topic_review_decision_stub["decision_count"],
         "human_review_object": "core_decision_topics",
         "reviewable_claim_count": review_queue["reviewable_claim_count"],
         "noise_claim_count": review_queue["noise_claim_count"],
@@ -1076,6 +1260,8 @@ def compile_directory(
             "core_decision_topics": core_decision_topics,
             "topic_draft_assets": topic_draft_assets,
             "topic_review_packets": topic_review_packets,
+            "topic_review_decision_stub": topic_review_decision_stub,
+            "topic_review_decision_sample": topic_review_decision_sample,
             "claim_triage": claim_triage,
             "graph": graph,
             "review_queue": review_queue,
@@ -1178,6 +1364,10 @@ def write_harness_run(
         "10_core_decision_topics.json": artifacts.get("core_decision_topics") or {"version": "hxy-core-decision-topics.v1", "items": []},
         "11_topic_draft_assets.json": artifacts.get("topic_draft_assets") or {"version": "hxy-topic-draft-assets.v1", "items": []},
         "12_topic_review_packets.json": artifacts.get("topic_review_packets") or {"version": "hxy-topic-review-packets.v1", "items": []},
+        "13_topic_review_decisions_stub.json": artifacts.get("topic_review_decision_stub")
+        or {"version": "hxy-topic-review-decisions-stub.v1", "items": []},
+        "14_topic_review_decisions_sample.json": artifacts.get("topic_review_decision_sample")
+        or {"version": "hxy-topic-review-decisions-sample.v1", "items": []},
     }
     phase_paths: dict[str, str] = {}
     for file_name, payload in phase_payloads.items():

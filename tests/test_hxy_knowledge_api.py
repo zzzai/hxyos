@@ -1394,6 +1394,120 @@ used_by:
         self.assertFalse(body["items"][0]["official_use_allowed"])
         self.assertTrue(body["items"][0]["requires_human_review"])
 
+    def test_operating_brain_compiler_topic_review_decisions_returns_stub_and_sample_without_approval(self):
+        wiki_dir = self.root / "knowledge" / "wiki"
+        wiki_dir.mkdir(parents=True)
+        packets = {
+            "version": "hxy-topic-review-packets.v1",
+            "status": "ready",
+            "count": 1,
+            "total": 1,
+            "items": [
+                {
+                    "version": "hxy-topic-review-packet.v1",
+                    "packet_id": "hxy-topic-review-packet:brand_positioning",
+                    "asset_id": "hxy-topic-draft:brand_positioning",
+                    "topic_key": "brand_positioning",
+                    "asset_type": "positioning_card",
+                    "title": "品牌战略与核爆点定位",
+                    "priority": "P0",
+                    "review_owner": "创始人",
+                    "status": "open",
+                    "decision_options": [
+                        "needs_more_evidence",
+                        "revise_draft",
+                        "ready_for_manual_approval",
+                        "reject",
+                    ],
+                    "promotion_target": "approved_positioning_card",
+                    "official_use_allowed": False,
+                    "requires_human_review": True,
+                }
+            ],
+            "official_use_allowed": False,
+            "requires_human_review": True,
+        }
+        (wiki_dir / "topic-review-packets.json").write_text(json.dumps(packets, ensure_ascii=False), encoding="utf-8")
+
+        response = self.client.get("/api/operating-brain/knowledge-compiler/topic-review-decisions")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-topic-review-decisions-workflow.v1")
+        self.assertEqual(body["current_step"], "awaiting_manual_decisions")
+        self.assertEqual(body["decision_count"], 1)
+        self.assertEqual(body["stub"]["version"], "hxy-topic-review-decisions-stub.v1")
+        self.assertEqual(body["sample"]["version"], "hxy-topic-review-decisions-sample.v1")
+        self.assertEqual(body["sample"]["target_filename"], "topic-review-decisions.json")
+        self.assertEqual(body["sample"]["items"][0]["decision"], "pending")
+        self.assertFalse(body["official_use_allowed"])
+        self.assertFalse(body["publish_allowed"])
+        self.assertFalse(body["write_to_database"])
+        self.assertTrue(body["requires_human_review"])
+        self.assertFalse((wiki_dir / "topic-review-decisions.json").exists())
+
+    def test_operating_brain_compiler_topic_review_decision_preview_is_read_only(self):
+        wiki_dir = self.root / "knowledge" / "wiki"
+        wiki_dir.mkdir(parents=True)
+        (wiki_dir / "topic-review-packets.json").write_text(
+            json.dumps(
+                {
+                    "version": "hxy-topic-review-packets.v1",
+                    "items": [
+                        {
+                            "packet_id": "hxy-topic-review-packet:brand_positioning",
+                            "asset_id": "hxy-topic-draft:brand_positioning",
+                            "topic_key": "brand_positioning",
+                            "asset_type": "positioning_card",
+                            "title": "品牌战略与核爆点定位",
+                            "priority": "P0",
+                            "review_owner": "创始人",
+                            "decision_options": [
+                                "needs_more_evidence",
+                                "revise_draft",
+                                "ready_for_manual_approval",
+                                "reject",
+                            ],
+                            "promotion_target": "approved_positioning_card",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        decisions = {
+            "version": "hxy-topic-review-decisions.v1",
+            "official_use_allowed": False,
+            "publish_allowed": False,
+            "write_to_database": False,
+            "items": [
+                {
+                    "packet_id": "hxy-topic-review-packet:brand_positioning",
+                    "decision": "ready_for_manual_approval",
+                    "reviewer": "创始人",
+                    "rationale": "证据已经够进入人工批准前检查。",
+                }
+            ],
+        }
+
+        response = self.client.post(
+            "/api/operating-brain/knowledge-compiler/topic-review-decision-preview",
+            json={"decisions": decisions},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-topic-review-decision-preview.v1")
+        self.assertTrue(body["preview_only"])
+        self.assertTrue(body["validation"]["valid"])
+        self.assertEqual(body["validation"]["ready_for_manual_approval_count"], 1)
+        self.assertEqual(body["validation"]["approved_count"], 0)
+        self.assertFalse(body["official_use_allowed"])
+        self.assertFalse(body["publish_allowed"])
+        self.assertFalse(body["write_to_database"])
+        self.assertFalse((wiki_dir / "topic-review-decisions.json").exists())
+
     def test_operating_brain_compiler_compliance_review_pack_endpoint_is_read_only(self):
         wiki_dir = self.root / "knowledge" / "wiki"
         wiki_dir.mkdir(parents=True)
