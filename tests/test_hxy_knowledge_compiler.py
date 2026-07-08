@@ -877,6 +877,124 @@ def test_validate_topic_review_decisions_rejects_invalid_decision_and_publish_fl
     assert "不能发布" in json.dumps(validation["errors"], ensure_ascii=False)
 
 
+def test_build_topic_publication_preflight_blocks_ready_decisions_without_metadata():
+    from apps.api.hxy_knowledge.knowledge_compiler import build_topic_publication_preflight
+
+    packets = {
+        "version": "hxy-topic-review-packets.v1",
+        "items": [
+            {
+                "packet_id": "hxy-topic-review-packet:brand_positioning",
+                "asset_id": "hxy-topic-draft:brand_positioning",
+                "topic_key": "brand_positioning",
+                "asset_type": "positioning_card",
+                "title": "品牌战略与核爆点定位",
+                "decision_options": ["needs_more_evidence", "revise_draft", "ready_for_manual_approval", "reject"],
+                "promotion_target": "approved_positioning_card",
+            }
+        ],
+    }
+    decisions = {
+        "version": "hxy-topic-review-decisions.v1",
+        "official_use_allowed": False,
+        "publish_allowed": False,
+        "write_to_database": False,
+        "items": [
+            {
+                "packet_id": "hxy-topic-review-packet:brand_positioning",
+                "decision": "ready_for_manual_approval",
+                "reviewer": "创始人",
+                "rationale": "已完成顾客原话和员工复述检查。",
+            }
+        ],
+    }
+
+    preflight = build_topic_publication_preflight(packets, decisions)
+
+    assert preflight["version"] == "hxy-topic-publication-preflight.v1"
+    assert preflight["valid_decisions"] is True
+    assert preflight["ready_decision_count"] == 1
+    assert preflight["ready_count"] == 0
+    assert preflight["blocked_count"] == 1
+    assert preflight["publish_allowed"] is False
+    assert preflight["write_to_database"] is False
+    assert preflight["official_use_allowed"] is False
+    assert preflight["items"][0]["status"] == "blocked_missing_publication_metadata"
+    assert preflight["items"][0]["manual_publication_ready"] is False
+    assert set(preflight["items"][0]["missing_fields"]) == {
+        "approver",
+        "approved_at",
+        "knowledge_version",
+        "effective_scope",
+        "source_evidence_summary",
+    }
+
+
+def test_build_topic_publication_preflight_marks_complete_metadata_ready_without_publishing():
+    from apps.api.hxy_knowledge.knowledge_compiler import (
+        build_topic_publication_package,
+        build_topic_publication_preflight,
+    )
+
+    packets = {
+        "version": "hxy-topic-review-packets.v1",
+        "items": [
+            {
+                "packet_id": "hxy-topic-review-packet:employee_script",
+                "asset_id": "hxy-topic-draft:employee_script",
+                "topic_key": "employee_script",
+                "asset_type": "script_card",
+                "title": "员工可执行话术与训练",
+                "decision_options": ["needs_more_evidence", "revise_draft", "ready_for_manual_approval", "reject"],
+                "promotion_target": "approved_script_card",
+            }
+        ],
+    }
+    decisions = {
+        "version": "hxy-topic-review-decisions.v1",
+        "official_use_allowed": False,
+        "publish_allowed": False,
+        "write_to_database": False,
+        "items": [
+            {
+                "packet_id": "hxy-topic-review-packet:employee_script",
+                "decision": "ready_for_manual_approval",
+                "reviewer": "运营负责人",
+                "rationale": "员工演练通过，顾客能复述。",
+                "publication_metadata": {
+                    "approver": "创始人",
+                    "approved_at": "2026-07-08",
+                    "knowledge_version": "hxy-topic-employee-script-20260708",
+                    "effective_scope": "首店开业员工训练",
+                    "source_evidence_summary": "3 名员工演练记录 + 5 条顾客复述记录。",
+                },
+            }
+        ],
+    }
+
+    preflight = build_topic_publication_preflight(packets, decisions)
+    package = build_topic_publication_package(preflight)
+
+    assert preflight["valid_decisions"] is True
+    assert preflight["ready_decision_count"] == 1
+    assert preflight["ready_count"] == 1
+    assert preflight["blocked_count"] == 0
+    assert preflight["items"][0]["status"] == "ready_for_manual_publication"
+    assert preflight["items"][0]["manual_publication_ready"] is True
+    assert preflight["publish_allowed"] is False
+
+    assert package["version"] == "hxy-topic-publication-package.v1"
+    assert package["candidate_count"] == 1
+    assert package["official_use_allowed"] is False
+    assert package["publish_allowed"] is False
+    assert package["write_to_database"] is False
+    candidate = package["publication_candidates"][0]
+    assert candidate["status"] == "pending_manual_publication"
+    assert candidate["promotion_target"] == "approved_script_card"
+    assert candidate["publication_metadata"]["knowledge_version"] == "hxy-topic-employee-script-20260708"
+    assert "approved_knowledge" not in json.dumps(package, ensure_ascii=False)
+
+
 def test_compile_directory_writes_core_decision_topics_before_claim_review_queue(tmp_path: Path):
     from apps.api.hxy_knowledge.knowledge_compiler import compile_directory
 

@@ -128,6 +128,13 @@ REVIEW_PACKET_DECISION_OPTIONS = [
     "ready_for_manual_approval",
     "reject",
 ]
+TOPIC_PUBLICATION_REQUIRED_METADATA_FIELDS = [
+    "approver",
+    "approved_at",
+    "knowledge_version",
+    "effective_scope",
+    "source_evidence_summary",
+]
 PROMOTION_TARGETS = {
     "positioning_card": "approved_positioning_card",
     "script_card": "approved_script_card",
@@ -889,6 +896,114 @@ def validate_topic_review_decisions(topic_review_packets: dict[str, Any], decisi
         "write_to_database": False,
         "requires_human_review": True,
         "authority_rule": "ready_for_manual_approval_is_not_approved_knowledge",
+    }
+
+
+def topic_publication_metadata_template() -> dict[str, str]:
+    return {field: "" for field in TOPIC_PUBLICATION_REQUIRED_METADATA_FIELDS}
+
+
+def _missing_topic_publication_metadata_fields(metadata: dict[str, Any]) -> list[str]:
+    missing: list[str] = []
+    for field in TOPIC_PUBLICATION_REQUIRED_METADATA_FIELDS:
+        value = metadata.get(field)
+        if value is None or str(value).strip() == "":
+            missing.append(field)
+    return missing
+
+
+def build_topic_publication_preflight(topic_review_packets: dict[str, Any], decisions: dict[str, Any] | None) -> dict[str, Any]:
+    validation = validate_topic_review_decisions(topic_review_packets, decisions)
+    decisions_payload = decisions if isinstance(decisions, dict) else {}
+    packets_by_id = {
+        str(packet.get("packet_id") or ""): packet
+        for packet in (topic_review_packets.get("items") or [])
+        if isinstance(packet, dict) and packet.get("packet_id")
+    }
+    items: list[dict[str, Any]] = []
+    for decision in decisions_payload.get("items") or []:
+        if not isinstance(decision, dict):
+            continue
+        if str(decision.get("decision") or "") != "ready_for_manual_approval":
+            continue
+        packet_id = str(decision.get("packet_id") or "")
+        packet = packets_by_id.get(packet_id, {})
+        metadata = decision.get("publication_metadata") if isinstance(decision.get("publication_metadata"), dict) else {}
+        missing_fields = _missing_topic_publication_metadata_fields(metadata)
+        manual_publication_ready = not missing_fields and bool(validation.get("valid"))
+        items.append(
+            {
+                "packet_id": packet_id,
+                "asset_id": packet.get("asset_id") or "",
+                "topic_key": packet.get("topic_key") or "",
+                "asset_type": packet.get("asset_type") or "evidence_task",
+                "title": packet.get("title") or "",
+                "promotion_target": packet.get("promotion_target") or "evidence_backlog",
+                "status": "ready_for_manual_publication" if manual_publication_ready else "blocked_missing_publication_metadata",
+                "manual_publication_ready": manual_publication_ready,
+                "missing_fields": missing_fields,
+                "publication_metadata": metadata,
+                "metadata_template": topic_publication_metadata_template(),
+                "official_use_allowed": False,
+                "publish_allowed": False,
+                "write_to_database": False,
+                "authority_rule": "topic_publication_preflight_does_not_publish_official_knowledge",
+            }
+        )
+    ready_count = sum(1 for item in items if item.get("manual_publication_ready") is True)
+    blocked_count = len(items) - ready_count
+    return {
+        "version": "hxy-topic-publication-preflight.v1",
+        "valid_decisions": bool(validation.get("valid")),
+        "decision_validation": validation,
+        "ready_decision_count": len(items),
+        "ready_count": ready_count,
+        "blocked_count": blocked_count,
+        "required_metadata_fields": list(TOPIC_PUBLICATION_REQUIRED_METADATA_FIELDS),
+        "metadata_template": topic_publication_metadata_template(),
+        "items": items,
+        "official_use_allowed": False,
+        "publish_allowed": False,
+        "write_to_database": False,
+        "requires_human_review": True,
+        "authority_rule": "topic_publication_preflight_does_not_publish_official_knowledge",
+    }
+
+
+def build_topic_publication_package(publication_preflight: dict[str, Any]) -> dict[str, Any]:
+    candidates: list[dict[str, Any]] = []
+    for item in publication_preflight.get("items") or []:
+        if not isinstance(item, dict) or item.get("manual_publication_ready") is not True:
+            continue
+        candidates.append(
+            {
+                "version": "hxy-topic-publication-candidate.v1",
+                "packet_id": item.get("packet_id") or "",
+                "asset_id": item.get("asset_id") or "",
+                "topic_key": item.get("topic_key") or "",
+                "asset_type": item.get("asset_type") or "evidence_task",
+                "title": item.get("title") or "",
+                "promotion_target": item.get("promotion_target") or "evidence_backlog",
+                "status": "pending_manual_publication",
+                "publication_metadata": item.get("publication_metadata") if isinstance(item.get("publication_metadata"), dict) else {},
+                "source": "topic_review_publication_preflight",
+                "official_use_allowed": False,
+                "publish_allowed": False,
+                "write_to_database": False,
+                "authority_rule": "topic_publication_package_does_not_publish_official_knowledge",
+            }
+        )
+    return {
+        "version": "hxy-topic-publication-package.v1",
+        "preflight_version": publication_preflight.get("version") or "",
+        "candidate_count": len(candidates),
+        "blocked_count": int(publication_preflight.get("blocked_count") or 0),
+        "publication_candidates": candidates,
+        "official_use_allowed": False,
+        "publish_allowed": False,
+        "write_to_database": False,
+        "requires_human_review": True,
+        "authority_rule": "topic_publication_package_does_not_publish_official_knowledge",
     }
 
 

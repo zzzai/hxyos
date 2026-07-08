@@ -624,6 +624,29 @@ class HxyBrainFrontendTest(unittest.TestCase):
         for forbidden in ["一键批准", "批准发布", "自动发布", "写入 approved", "发布正式知识"]:
             self.assertNotIn(forbidden, panel_html)
 
+    def test_knowledge_workbench_renders_topic_publication_gate_without_publish_action(self):
+        html = (ROOT / "apps" / "admin-web" / "knowledge.html").read_text(encoding="utf-8")
+
+        for label in [
+            "正式知识发布闸门",
+            "批准前检查",
+            "缺少发布元数据",
+            "pending_manual_publication",
+            "id=\"topicPublicationGate\"",
+            "id=\"refreshTopicPublicationGateButton\"",
+            "renderTopicPublicationGate",
+            "loadTopicPublicationGate",
+            "/api/operating-brain/knowledge-compiler/topic-publication-preflight",
+            "/api/operating-brain/knowledge-compiler/topic-publication-package",
+        ]:
+            self.assertIn(label, html)
+
+        panel_start = html.index("正式知识发布闸门")
+        panel_end = html.index("合规审核包", panel_start)
+        panel_html = html[panel_start:panel_end]
+        for forbidden in ["一键发布", "批准发布", "写入正式知识", "写入 approved", "confirm_manual_publication"]:
+            self.assertNotIn(forbidden, panel_html)
+
     def test_knowledge_page_exposes_compliance_language_check_execution_panel(self):
         html = (ROOT / "apps" / "admin-web" / "knowledge.html").read_text(encoding="utf-8")
 

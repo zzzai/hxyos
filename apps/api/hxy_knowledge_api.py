@@ -42,6 +42,8 @@ from hxy_knowledge.golden_questions import golden_questions
 from hxy_knowledge.ingest_loop import run_ingest_loop
 from hxy_knowledge.importer import load_current_records
 from hxy_knowledge.knowledge_compiler import (
+    build_topic_publication_package,
+    build_topic_publication_preflight,
     build_topic_review_decisions_sample,
     build_topic_review_decisions_stub,
     validate_topic_review_decisions,
@@ -3866,6 +3868,27 @@ def create_app(
             "requires_human_review": True,
             "authority_rule": "topic_review_decision_preview_validates_payload_without_writing",
         }
+
+    @app.get("/api/operating-brain/knowledge-compiler/topic-publication-preflight")
+    async def operating_brain_knowledge_compiler_topic_publication_preflight_endpoint() -> dict[str, Any]:
+        wiki_root = resolved_root / "knowledge" / "wiki"
+        packet_payload = _read_json_file(wiki_root / "topic-review-packets.json") or {
+            "version": "hxy-topic-review-packets.v1",
+            "items": [],
+        }
+        decisions_payload = _read_json_file(wiki_root / "topic-review-decisions.json")
+        return build_topic_publication_preflight(packet_payload, decisions_payload)
+
+    @app.get("/api/operating-brain/knowledge-compiler/topic-publication-package")
+    async def operating_brain_knowledge_compiler_topic_publication_package_endpoint() -> dict[str, Any]:
+        wiki_root = resolved_root / "knowledge" / "wiki"
+        packet_payload = _read_json_file(wiki_root / "topic-review-packets.json") or {
+            "version": "hxy-topic-review-packets.v1",
+            "items": [],
+        }
+        decisions_payload = _read_json_file(wiki_root / "topic-review-decisions.json")
+        preflight = build_topic_publication_preflight(packet_payload, decisions_payload)
+        return build_topic_publication_package(preflight)
 
     @app.get("/api/operating-brain/knowledge-compiler/compliance-review-pack")
     async def operating_brain_knowledge_compiler_compliance_review_pack_endpoint(

@@ -1508,6 +1508,137 @@ used_by:
         self.assertFalse(body["write_to_database"])
         self.assertFalse((wiki_dir / "topic-review-decisions.json").exists())
 
+    def test_operating_brain_compiler_topic_publication_preflight_blocks_missing_metadata(self):
+        wiki_dir = self.root / "knowledge" / "wiki"
+        wiki_dir.mkdir(parents=True)
+        (wiki_dir / "topic-review-packets.json").write_text(
+            json.dumps(
+                {
+                    "version": "hxy-topic-review-packets.v1",
+                    "items": [
+                        {
+                            "packet_id": "hxy-topic-review-packet:brand_positioning",
+                            "asset_id": "hxy-topic-draft:brand_positioning",
+                            "topic_key": "brand_positioning",
+                            "asset_type": "positioning_card",
+                            "title": "品牌战略与核爆点定位",
+                            "decision_options": [
+                                "needs_more_evidence",
+                                "revise_draft",
+                                "ready_for_manual_approval",
+                                "reject",
+                            ],
+                            "promotion_target": "approved_positioning_card",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        (wiki_dir / "topic-review-decisions.json").write_text(
+            json.dumps(
+                {
+                    "version": "hxy-topic-review-decisions.v1",
+                    "official_use_allowed": False,
+                    "publish_allowed": False,
+                    "write_to_database": False,
+                    "items": [
+                        {
+                            "packet_id": "hxy-topic-review-packet:brand_positioning",
+                            "decision": "ready_for_manual_approval",
+                            "reviewer": "创始人",
+                            "rationale": "可以进入批准前检查。",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        response = self.client.get("/api/operating-brain/knowledge-compiler/topic-publication-preflight")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-topic-publication-preflight.v1")
+        self.assertEqual(body["ready_decision_count"], 1)
+        self.assertEqual(body["ready_count"], 0)
+        self.assertEqual(body["blocked_count"], 1)
+        self.assertEqual(body["items"][0]["status"], "blocked_missing_publication_metadata")
+        self.assertFalse(body["official_use_allowed"])
+        self.assertFalse(body["publish_allowed"])
+        self.assertFalse(body["write_to_database"])
+
+    def test_operating_brain_compiler_topic_publication_package_is_candidate_only(self):
+        wiki_dir = self.root / "knowledge" / "wiki"
+        wiki_dir.mkdir(parents=True)
+        (wiki_dir / "topic-review-packets.json").write_text(
+            json.dumps(
+                {
+                    "version": "hxy-topic-review-packets.v1",
+                    "items": [
+                        {
+                            "packet_id": "hxy-topic-review-packet:employee_script",
+                            "asset_id": "hxy-topic-draft:employee_script",
+                            "topic_key": "employee_script",
+                            "asset_type": "script_card",
+                            "title": "员工可执行话术与训练",
+                            "decision_options": [
+                                "needs_more_evidence",
+                                "revise_draft",
+                                "ready_for_manual_approval",
+                                "reject",
+                            ],
+                            "promotion_target": "approved_script_card",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        (wiki_dir / "topic-review-decisions.json").write_text(
+            json.dumps(
+                {
+                    "version": "hxy-topic-review-decisions.v1",
+                    "official_use_allowed": False,
+                    "publish_allowed": False,
+                    "write_to_database": False,
+                    "items": [
+                        {
+                            "packet_id": "hxy-topic-review-packet:employee_script",
+                            "decision": "ready_for_manual_approval",
+                            "reviewer": "运营负责人",
+                            "rationale": "员工演练通过。",
+                            "publication_metadata": {
+                                "approver": "创始人",
+                                "approved_at": "2026-07-08",
+                                "knowledge_version": "hxy-topic-employee-script-20260708",
+                                "effective_scope": "首店员工训练",
+                                "source_evidence_summary": "员工演练记录。",
+                            },
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        response = self.client.get("/api/operating-brain/knowledge-compiler/topic-publication-package")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["version"], "hxy-topic-publication-package.v1")
+        self.assertEqual(body["candidate_count"], 1)
+        self.assertEqual(body["publication_candidates"][0]["status"], "pending_manual_publication")
+        self.assertEqual(body["publication_candidates"][0]["promotion_target"], "approved_script_card")
+        self.assertFalse(body["official_use_allowed"])
+        self.assertFalse(body["publish_allowed"])
+        self.assertFalse(body["write_to_database"])
+        self.assertNotIn("approved_knowledge", json.dumps(body, ensure_ascii=False))
+
     def test_operating_brain_compiler_compliance_review_pack_endpoint_is_read_only(self):
         wiki_dir = self.root / "knowledge" / "wiki"
         wiki_dir.mkdir(parents=True)

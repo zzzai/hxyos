@@ -1305,6 +1305,19 @@
 
       <div class="panel full">
         <div class="panel-header">
+          <div class="panel-title">正式知识发布闸门 <small>批准前检查 · 缺少发布元数据会阻断</small></div>
+          <button class="secondary" id="refreshTopicPublicationGateButton" type="button">刷新发布闸门</button>
+        </div>
+        <div class="panel-body">
+          <div class="result">这里只检查 ready_for_manual_approval 是否具备正式发布元数据；通过后也只是 pending_manual_publication 候选包。</div>
+          <div id="topicPublicationGate" class="review-topic-list" aria-label="正式知识发布闸门">
+            <div class="result">等待刷新</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel full">
+        <div class="panel-header">
           <div class="panel-title">合规审核包 <small id="complianceReviewPackMeta">只读审核包 · 等待编译产物</small></div>
           <button class="secondary" id="refreshComplianceReviewPack" type="button">刷新审核包</button>
         </div>
@@ -1443,6 +1456,8 @@
     const refreshTopicReviewPacketsButton = document.querySelector("#refreshTopicReviewPacketsButton");
     const topicReviewDecisionWorkflow = document.querySelector("#topicReviewDecisionWorkflow");
     const refreshTopicReviewDecisionsButton = document.querySelector("#refreshTopicReviewDecisionsButton");
+    const topicPublicationGate = document.querySelector("#topicPublicationGate");
+    const refreshTopicPublicationGateButton = document.querySelector("#refreshTopicPublicationGateButton");
     const complianceReviewPack = document.querySelector("#complianceReviewPack");
     const benchmarkCorrections = document.querySelector("#benchmarkCorrections");
     const p0GovernanceStatus = document.querySelector("#p0GovernanceStatus");
@@ -1774,6 +1789,43 @@
       `;
     }
 
+    function renderTopicPublicationGate(preflight, publicationPackage) {
+      if (!topicPublicationGate) return;
+      const items = Array.isArray(preflight.items) ? preflight.items : [];
+      const candidates = Array.isArray(publicationPackage.publication_candidates) ? publicationPackage.publication_candidates : [];
+      if (!items.length) {
+        topicPublicationGate.innerHTML = `
+          <div class="result">
+            暂无 ready_for_manual_approval 项。先完成 topic-review-decisions.json，再进入批准前检查。
+            候选包：${escapeHtml(String(publicationPackage.candidate_count || 0))} 个。
+          </div>
+        `;
+        return;
+      }
+      topicPublicationGate.innerHTML = items.map((item) => {
+        const missing = Array.isArray(item.missing_fields) ? item.missing_fields : [];
+        return `
+          <article class="review-topic-item">
+            <div>
+              <div class="tag">${escapeHtml(item.status || "blocked_missing_publication_metadata")}</div>
+              <div style="height:6px"></div>
+              <div class="tag">${escapeHtml(item.promotion_target || "evidence_backlog")}</div>
+            </div>
+            <div class="review-topic-main">
+              <div class="review-topic-title">${escapeHtml(item.title || "批准前检查")}</div>
+              <div class="review-topic-section"><strong>发布元数据</strong><span>${missing.length ? `缺少发布元数据：${escapeHtml(missing.join(" / "))}` : "已填写完整"}</span></div>
+              <div class="review-topic-section"><strong>候选状态</strong><span>${escapeHtml(item.manual_publication_ready ? "pending_manual_publication" : "blocked")}</span></div>
+              <div class="review-topic-section"><strong>候选包</strong><span>${escapeHtml(String(candidates.length))} 个 · ${escapeHtml(publicationPackage.authority_rule || "")}</span></div>
+              <div class="review-topic-section"><strong>边界</strong><span>批准前检查只读；候选包仍需人工处理，不直接进入正式知识。</span></div>
+            </div>
+            <div>
+              <span class="status-pill strong">${escapeHtml(item.manual_publication_ready ? "ready" : "blocked")}</span>
+            </div>
+          </article>
+        `;
+      }).join("");
+    }
+
     function renderComplianceReviewPack(payload) {
       const items = payload.items || [];
       document.querySelector("#complianceReviewPackMeta").textContent = `${payload.count || 0} 条 · 只读审核包 · 不能自动发布`;
@@ -1944,6 +1996,8 @@
           topicDraftAssets,
           topicReviewPackets,
           topicReviewDecisions,
+          topicPublicationPreflight,
+          topicPublicationPackage,
           compliancePack,
           corrections,
           ingestLoop,
@@ -1961,6 +2015,8 @@
           requestJson("/api/operating-brain/knowledge-compiler/topic-draft-assets?limit=12"),
           requestJson("/api/operating-brain/knowledge-compiler/topic-review-packets?limit=12"),
           requestJson("/api/operating-brain/knowledge-compiler/topic-review-decisions"),
+          requestJson("/api/operating-brain/knowledge-compiler/topic-publication-preflight"),
+          requestJson("/api/operating-brain/knowledge-compiler/topic-publication-package"),
           requestJson("/api/operating-brain/knowledge-compiler/compliance-review-pack?limit=20"),
           requestJson("/api/operating-brain/benchmark/corrections?limit=20"),
           requestJson("/api/operating-brain/ingest-loop/status"),
@@ -1978,6 +2034,7 @@
         renderTopicDraftAssets(topicDraftAssets);
         renderTopicReviewPackets(topicReviewPackets);
         renderTopicReviewDecisions(topicReviewDecisions);
+        renderTopicPublicationGate(topicPublicationPreflight, topicPublicationPackage);
         renderComplianceReviewPack(compliancePack);
         renderBenchmarkCorrections(corrections);
         renderIngestLoopStatus(ingestLoop);
@@ -2072,6 +2129,19 @@
         const payload = await requestJson("/api/operating-brain/knowledge-compiler/topic-review-decisions");
         renderTopicReviewDecisions(payload);
         setResult("人工决策文件状态已刷新。只做预览校验，不写库。", "ok");
+      } catch (error) {
+        setResult(error.message, "error");
+      }
+    }
+
+    async function loadTopicPublicationGate() {
+      try {
+        const [preflight, publicationPackage] = await Promise.all([
+          requestJson("/api/operating-brain/knowledge-compiler/topic-publication-preflight"),
+          requestJson("/api/operating-brain/knowledge-compiler/topic-publication-package"),
+        ]);
+        renderTopicPublicationGate(preflight, publicationPackage);
+        setResult("正式知识发布闸门已刷新。这里只做批准前检查。", "ok");
       } catch (error) {
         setResult(error.message, "error");
       }
@@ -2200,6 +2270,7 @@
         await loadTopicDraftAssets();
         await loadTopicReviewPackets();
         await loadTopicReviewDecisions();
+        await loadTopicPublicationGate();
         await refreshComplianceReviewPack();
         setResult("资料入库 Loop 已停在人工复核。", "ok");
       } catch (error) {
@@ -2252,6 +2323,7 @@
     refreshTopicDraftAssetsButton?.addEventListener("click", loadTopicDraftAssets);
     refreshTopicReviewPacketsButton?.addEventListener("click", loadTopicReviewPackets);
     refreshTopicReviewDecisionsButton?.addEventListener("click", loadTopicReviewDecisions);
+    refreshTopicPublicationGateButton?.addEventListener("click", loadTopicPublicationGate);
     document.querySelector("#refreshComplianceReviewPack").addEventListener("click", refreshComplianceReviewPack);
     document.querySelector("#refreshBenchmarkCorrections").addEventListener("click", refreshBenchmarkCorrections);
     document.querySelector("#refreshP0Governance").addEventListener("click", refreshP0Governance);
