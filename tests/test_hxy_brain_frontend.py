@@ -572,6 +572,33 @@ class HxyBrainFrontendTest(unittest.TestCase):
         for forbidden in ["raw claim", "chunk_id", "cluster_id", "review queue", "needs_review"]:
             self.assertNotIn(forbidden, draft_html)
 
+    def test_knowledge_workbench_renders_topic_review_packets_without_approval_buttons(self):
+        html = (ROOT / "apps" / "admin-web" / "knowledge.html").read_text(encoding="utf-8")
+
+        for label in [
+            "复核任务包",
+            "谁看",
+            "看什么",
+            "允许的判断",
+            "不能做什么",
+            "needs_more_evidence",
+            "revise_draft",
+            "ready_for_manual_approval",
+            "reject",
+            "id=\"topicReviewPacketsList\"",
+            "id=\"refreshTopicReviewPacketsButton\"",
+            "renderTopicReviewPackets",
+            "loadTopicReviewPackets",
+            "/api/operating-brain/knowledge-compiler/topic-review-packets?limit=12",
+        ]:
+            self.assertIn(label, html)
+
+        panel_start = html.index("复核任务包")
+        panel_end = html.index("合规审核包", panel_start)
+        panel_html = html[panel_start:panel_end]
+        for forbidden in ["批准发布", "一键批准", "写入 approved", "chunk_id", "cluster_id", "raw claim"]:
+            self.assertNotIn(forbidden, panel_html)
+
     def test_knowledge_page_exposes_compliance_language_check_execution_panel(self):
         html = (ROOT / "apps" / "admin-web" / "knowledge.html").read_text(encoding="utf-8")
 

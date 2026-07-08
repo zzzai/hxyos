@@ -1273,6 +1273,25 @@
 
       <div class="panel full">
         <div class="panel-header">
+          <div class="panel-title">复核任务包 <small>谁看 · 看什么 · 允许的判断 · 不能做什么</small></div>
+          <button class="secondary" id="refreshTopicReviewPacketsButton" type="button">刷新任务包</button>
+        </div>
+        <div class="panel-body">
+          <div class="result">把草稿资产变成可交办的复核任务包。这里只提示判断路径，不做发布动作。</div>
+          <div class="review-actions" aria-label="允许的判断" style="justify-content:flex-start;margin:10px 0 14px">
+            <span class="tag">needs_more_evidence</span>
+            <span class="tag">revise_draft</span>
+            <span class="tag">ready_for_manual_approval</span>
+            <span class="tag">reject</span>
+          </div>
+          <div id="topicReviewPacketsList" class="review-topic-list" aria-label="复核任务包列表">
+            <div class="result">等待刷新</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel full">
+        <div class="panel-header">
           <div class="panel-title">合规审核包 <small id="complianceReviewPackMeta">只读审核包 · 等待编译产物</small></div>
           <button class="secondary" id="refreshComplianceReviewPack" type="button">刷新审核包</button>
         </div>
@@ -1407,6 +1426,8 @@
     const reviewTopics = document.querySelector("#reviewTopics");
     const topicDraftAssetsList = document.querySelector("#topicDraftAssetsList");
     const refreshTopicDraftAssetsButton = document.querySelector("#refreshTopicDraftAssetsButton");
+    const topicReviewPacketsList = document.querySelector("#topicReviewPacketsList");
+    const refreshTopicReviewPacketsButton = document.querySelector("#refreshTopicReviewPacketsButton");
     const complianceReviewPack = document.querySelector("#complianceReviewPack");
     const benchmarkCorrections = document.querySelector("#benchmarkCorrections");
     const p0GovernanceStatus = document.querySelector("#p0GovernanceStatus");
@@ -1672,6 +1693,41 @@
       }).join("");
     }
 
+    function renderTopicReviewPackets(payload) {
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      if (!topicReviewPacketsList) return;
+      if (!items.length) {
+        topicReviewPacketsList.innerHTML = `<div class="result">暂无复核任务包。先运行知识编译器生成草稿资产。</div>`;
+        return;
+      }
+      topicReviewPacketsList.innerHTML = items.map((item) => {
+        const questions = Array.isArray(item.review_questions) ? item.review_questions : [];
+        const gaps = Array.isArray(item.evidence_gaps) ? item.evidence_gaps : [];
+        const decisions = Array.isArray(item.decision_options) ? item.decision_options : [];
+        const blocked = Array.isArray(item.blocked_actions) ? item.blocked_actions : [];
+        return `
+          <article class="review-topic-item">
+            <div>
+              <div class="tag">${escapeHtml(item.priority || "P1")}</div>
+              <div style="height:6px"></div>
+              <div class="tag">${escapeHtml(item.promotion_target || "evidence_backlog")}</div>
+            </div>
+            <div class="review-topic-main">
+              <div class="review-topic-title">${escapeHtml(item.title || "复核任务包")}</div>
+              <div class="review-topic-section"><strong>谁看</strong><span>${escapeHtml(item.review_owner || "运营负责人")}</span></div>
+              <div class="review-topic-section"><strong>看什么</strong><span>${escapeHtml(questions.join(" / ") || "等待任务包生成")}</span></div>
+              <div class="review-topic-section"><strong>证据缺口</strong><span>${escapeHtml(gaps.join(" / ") || "暂无")}</span></div>
+              <div class="review-topic-section"><strong>允许的判断</strong><span>${escapeHtml(decisions.join(" / ") || "needs_more_evidence / revise_draft / ready_for_manual_approval / reject")}</span></div>
+              <div class="review-topic-section"><strong>不能做什么</strong><span>${escapeHtml(blocked.join(" / ") || "不能自动发布")}</span></div>
+            </div>
+            <div>
+              <span class="status-pill strong">${escapeHtml(item.status || "open")}</span>
+            </div>
+          </article>
+        `;
+      }).join("");
+    }
+
     function renderComplianceReviewPack(payload) {
       const items = payload.items || [];
       document.querySelector("#complianceReviewPackMeta").textContent = `${payload.count || 0} 条 · 只读审核包 · 不能自动发布`;
@@ -1840,6 +1896,7 @@
           automationCatalog,
           topics,
           topicDraftAssets,
+          topicReviewPackets,
           compliancePack,
           corrections,
           ingestLoop,
@@ -1855,6 +1912,7 @@
           requestJson("/api/operating-brain/automation-tasks"),
           requestJson("/api/operating-brain/knowledge-compiler/review-topics?limit=12"),
           requestJson("/api/operating-brain/knowledge-compiler/topic-draft-assets?limit=12"),
+          requestJson("/api/operating-brain/knowledge-compiler/topic-review-packets?limit=12"),
           requestJson("/api/operating-brain/knowledge-compiler/compliance-review-pack?limit=20"),
           requestJson("/api/operating-brain/benchmark/corrections?limit=20"),
           requestJson("/api/operating-brain/ingest-loop/status"),
@@ -1870,6 +1928,7 @@
         renderAutomationTasks(automationCatalog);
         renderReviewTopics(topics);
         renderTopicDraftAssets(topicDraftAssets);
+        renderTopicReviewPackets(topicReviewPackets);
         renderComplianceReviewPack(compliancePack);
         renderBenchmarkCorrections(corrections);
         renderIngestLoopStatus(ingestLoop);
@@ -1944,6 +2003,16 @@
         const payload = await requestJson("/api/operating-brain/knowledge-compiler/topic-draft-assets?limit=12");
         renderTopicDraftAssets(payload);
         setResult("议题转资产已刷新。草稿停在待人工复核，不会发布正式知识。", "ok");
+      } catch (error) {
+        setResult(error.message, "error");
+      }
+    }
+
+    async function loadTopicReviewPackets() {
+      try {
+        const payload = await requestJson("/api/operating-brain/knowledge-compiler/topic-review-packets?limit=12");
+        renderTopicReviewPackets(payload);
+        setResult("复核任务包已刷新。这里只提示人工判断路径，不会发布正式知识。", "ok");
       } catch (error) {
         setResult(error.message, "error");
       }
@@ -2070,6 +2139,7 @@
         renderIngestLoopStatus(payload);
         await refreshReviewTopics();
         await loadTopicDraftAssets();
+        await loadTopicReviewPackets();
         await refreshComplianceReviewPack();
         setResult("资料入库 Loop 已停在人工复核。", "ok");
       } catch (error) {
@@ -2120,6 +2190,7 @@
     document.querySelector("#runBrandDecision").addEventListener("click", runBrandDecision);
     document.querySelector("#refreshReviewTopics").addEventListener("click", refreshReviewTopics);
     refreshTopicDraftAssetsButton?.addEventListener("click", loadTopicDraftAssets);
+    refreshTopicReviewPacketsButton?.addEventListener("click", loadTopicReviewPackets);
     document.querySelector("#refreshComplianceReviewPack").addEventListener("click", refreshComplianceReviewPack);
     document.querySelector("#refreshBenchmarkCorrections").addEventListener("click", refreshBenchmarkCorrections);
     document.querySelector("#refreshP0Governance").addEventListener("click", refreshP0Governance);
