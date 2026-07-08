@@ -15,6 +15,12 @@ ALLOWED_COMMAND_PREFIXES = (
 )
 
 FORBIDDEN_SCOPE_PREFIXES = ("/root/htops", "root/htops")
+PRIVATE_KNOWLEDGE_PREFIXES = (
+    "knowledge/raw/",
+    "knowledge/wiki/",
+    "knowledge/reports/",
+    "knowledge/runs/",
+)
 
 
 def _error(code: str, message: str, **extra: Any) -> dict[str, Any]:
@@ -24,6 +30,11 @@ def _error(code: str, message: str, **extra: Any) -> dict[str, Any]:
 def _is_allowed_command(command: str) -> bool:
     clean = " ".join(str(command or "").strip().split())
     return any(clean == prefix or clean.startswith(f"{prefix} ") for prefix in ALLOWED_COMMAND_PREFIXES)
+
+
+def _contains_reward_hacking_pattern(spec: dict[str, Any]) -> bool:
+    text = json.dumps(spec, ensure_ascii=False).lower()
+    return "case " in text and ("force exact" in text or "hardcode" in text or "固定答案" in text)
 
 
 def validate_harness_spec(spec: dict[str, Any], *, root_dir: str | Path) -> dict[str, Any]:
@@ -41,6 +52,14 @@ def validate_harness_spec(spec: dict[str, Any], *, root_dir: str | Path) -> dict
         clean = str(path or "").strip()
         if clean.startswith(FORBIDDEN_SCOPE_PREFIXES):
             errors.append(_error("forbidden_scope_path", "Scope cannot include htops paths.", path=clean))
+        if clean.startswith(PRIVATE_KNOWLEDGE_PREFIXES):
+            errors.append(
+                _error(
+                    "private_knowledge_scope",
+                    "Harness scope cannot include private knowledge artifacts.",
+                    path=clean,
+                )
+            )
     commands = spec.get("verification_commands") if isinstance(spec.get("verification_commands"), list) else []
     if not commands:
         errors.append(_error("missing_verification_commands", "At least one verification command is required."))
@@ -53,6 +72,8 @@ def validate_harness_spec(spec: dict[str, Any], *, root_dir: str | Path) -> dict
                     command=str(command or ""),
                 )
             )
+    if _contains_reward_hacking_pattern(spec):
+        errors.append(_error("reward_hacking_risk", "Spec appears to encourage benchmark case hardcoding."))
     return {
         "version": "hxy-harness-spec-validation.v1",
         "valid": not errors,

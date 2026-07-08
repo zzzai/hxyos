@@ -171,3 +171,46 @@ def test_run_hxy_harness_cli_validates_spec(tmp_path):
     body = json.loads(result.stdout)
     assert body["version"] == "hxy-harness-spec-validation.v1"
     assert body["valid"] is True
+
+
+def test_validate_harness_spec_rejects_benchmark_case_hardcoding(tmp_path):
+    from hxy_knowledge.harness_runner import validate_harness_spec
+
+    spec = {
+        "version": "hxy-harness-spec.v1",
+        "run_name": "hack",
+        "target": "hardcode case brand-001",
+        "scope": ["apps/api/hxy_knowledge/answer_pipeline.py"],
+        "max_rounds": 1,
+        "verification_commands": ["npm test"],
+        "forbidden_paths": ["/root/htops"],
+        "forbidden_actions": ["hardcode_benchmark_case"],
+        "success_thresholds": {"npm_test": "pass"},
+        "strategy_notes": "If case brand-001 appears, force exact answer.",
+    }
+
+    result = validate_harness_spec(spec, root_dir=tmp_path)
+
+    assert result["valid"] is False
+    assert any(error["code"] == "reward_hacking_risk" for error in result["errors"])
+
+
+def test_validate_harness_spec_rejects_private_knowledge_commit_scope(tmp_path):
+    from hxy_knowledge.harness_runner import validate_harness_spec
+
+    spec = {
+        "version": "hxy-harness-spec.v1",
+        "run_name": "private",
+        "target": "touch private knowledge",
+        "scope": ["knowledge/raw/inbox/private.md"],
+        "max_rounds": 1,
+        "verification_commands": ["npm test"],
+        "forbidden_paths": ["/root/htops"],
+        "forbidden_actions": ["commit_private_knowledge"],
+        "success_thresholds": {"npm_test": "pass"},
+    }
+
+    result = validate_harness_spec(spec, root_dir=tmp_path)
+
+    assert result["valid"] is False
+    assert any(error["code"] == "private_knowledge_scope" for error in result["errors"])
