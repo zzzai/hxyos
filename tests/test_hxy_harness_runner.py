@@ -48,3 +48,36 @@ def test_validate_harness_spec_rejects_htops_scope_and_unsafe_commands(tmp_path)
         "command_not_allowlisted",
     }
     assert result["write_to_database"] is False
+
+
+def test_run_harness_round_executes_allowlisted_commands_and_writes_report(tmp_path):
+    from hxy_knowledge.harness_runner import run_harness_round
+
+    root = tmp_path / "hxy"
+    root.mkdir()
+    command = ".venv/bin/pytest tests/test_fake.py"
+
+    result = run_harness_round(
+        {
+            "version": "hxy-harness-spec.v1",
+            "run_name": "unit",
+            "target": "prove runner",
+            "scope": [],
+            "max_rounds": 3,
+            "verification_commands": [command],
+            "forbidden_paths": ["/root/htops"],
+            "forbidden_actions": [],
+            "success_thresholds": {"all_commands": "pass"},
+        },
+        root_dir=root,
+        run_id="harness-unit",
+        round_number=1,
+        command_runner=lambda cmd, cwd: {"command": cmd, "returncode": 0, "stdout": "ok", "stderr": ""},
+    )
+
+    assert result["version"] == "hxy-harness-round-report.v1"
+    assert result["round"] == 1
+    assert result["status"] == "passed"
+    assert result["command_results"][0]["returncode"] == 0
+    assert result["write_to_database"] is False
+    assert (root / "knowledge" / "runs" / "harness-unit" / "round-1.json").exists()

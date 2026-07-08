@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -61,3 +63,58 @@ def validate_harness_spec(spec: dict[str, Any], *, root_dir: str | Path) -> dict
         "requires_human_review": True,
         "authority_rule": "harness_spec_validation_does_not_execute_or_publish",
     }
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _default_command_runner(command: str, cwd: Path) -> dict[str, Any]:
+    completed = subprocess.run(command.split(), cwd=cwd, text=True, capture_output=True, check=False)
+    return {
+        "command": command,
+        "returncode": completed.returncode,
+        "stdout": completed.stdout[-4000:],
+        "stderr": completed.stderr[-4000:],
+    }
+
+
+def run_harness_round(
+    spec: dict[str, Any],
+    *,
+    root_dir: str | Path,
+    run_id: str,
+    round_number: int,
+    command_runner: Any | None = None,
+) -> dict[str, Any]:
+    root = Path(root_dir)
+    validation = validate_harness_spec(spec, root_dir=root)
+    if not validation["valid"]:
+        report = {
+            "version": "hxy-harness-round-report.v1",
+            "round": round_number,
+            "status": "blocked",
+            "validation": validation,
+            "command_results": [],
+            "write_to_database": False,
+            "official_use_allowed": False,
+        }
+        _write_json(root / "knowledge" / "runs" / run_id / f"round-{round_number}.json", report)
+        return report
+
+    runner = command_runner or _default_command_runner
+    command_results = [runner(str(command), root) for command in spec.get("verification_commands") or []]
+    passed = all(int(result.get("returncode") or 0) == 0 for result in command_results)
+    report = {
+        "version": "hxy-harness-round-report.v1",
+        "round": round_number,
+        "status": "passed" if passed else "failed",
+        "command_results": command_results,
+        "write_to_database": False,
+        "official_use_allowed": False,
+        "requires_human_review": True,
+        "authority_rule": "harness_round_reports_evidence_only",
+    }
+    _write_json(root / "knowledge" / "runs" / run_id / f"round-{round_number}.json", report)
+    return report
