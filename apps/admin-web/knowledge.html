@@ -1252,6 +1252,27 @@
 
       <div class="panel full">
         <div class="panel-header">
+          <div class="panel-title">议题转资产 <small>建议资产 · 草稿停在待人工复核</small></div>
+          <button class="secondary" id="refreshTopicDraftAssetsButton" type="button">刷新资产草稿</button>
+        </div>
+        <div class="panel-body">
+          <div class="result">把核心议题转成定位卡、话术卡、SOP卡、风险边界卡或补证据任务。这里只生成草稿，不发布正式知识。</div>
+          <div class="review-actions" aria-label="建议资产类型" style="justify-content:flex-start;margin:10px 0 14px">
+            <span class="tag">定位卡</span>
+            <span class="tag">话术卡</span>
+            <span class="tag">SOP卡</span>
+            <span class="tag">风险边界卡</span>
+            <span class="tag">补证据任务</span>
+            <span class="tag">待人工复核</span>
+          </div>
+          <div id="topicDraftAssetsList" class="review-topic-list" aria-label="议题转资产列表">
+            <div class="result">等待刷新</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel full">
+        <div class="panel-header">
           <div class="panel-title">合规审核包 <small id="complianceReviewPackMeta">只读审核包 · 等待编译产物</small></div>
           <button class="secondary" id="refreshComplianceReviewPack" type="button">刷新审核包</button>
         </div>
@@ -1384,6 +1405,8 @@
     const skillRegistry = document.querySelector("#skillRegistry");
     const automationTasks = document.querySelector("#automationTasks");
     const reviewTopics = document.querySelector("#reviewTopics");
+    const topicDraftAssetsList = document.querySelector("#topicDraftAssetsList");
+    const refreshTopicDraftAssetsButton = document.querySelector("#refreshTopicDraftAssetsButton");
     const complianceReviewPack = document.querySelector("#complianceReviewPack");
     const benchmarkCorrections = document.querySelector("#benchmarkCorrections");
     const p0GovernanceStatus = document.querySelector("#p0GovernanceStatus");
@@ -1395,6 +1418,13 @@
     const brandDecisionResult = document.querySelector("#brandDecisionResult");
     const complianceLanguageCheckResult = document.querySelector("#complianceLanguageCheckResult");
     const reviewTopicState = { items: [] };
+    const assetTypeLabels = {
+      positioning_card: "定位卡",
+      script_card: "话术卡",
+      sop_card: "SOP卡",
+      risk_card: "风险边界卡",
+      evidence_task: "补证据任务"
+    };
 
     function defaultApiBase() {
       if (window.location.origin && window.location.origin !== "null") {
@@ -1607,6 +1637,41 @@
       }).join("");
     }
 
+    function renderTopicDraftAssets(payload) {
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      if (!topicDraftAssetsList) return;
+      if (!items.length) {
+        topicDraftAssetsList.innerHTML = `<div class="result">暂无草稿资产。先运行知识编译器，把核心经营议题整理出来。</div>`;
+        return;
+      }
+      topicDraftAssetsList.innerHTML = items.map((item) => {
+        const draft = item.draft || {};
+        const gaps = Array.isArray(draft.evidence_gaps) ? draft.evidence_gaps : [];
+        const actions = Array.isArray(draft.next_actions) ? draft.next_actions : [];
+        const sources = (item.source_samples || []).slice(0, 3).map((source) => `<span class="tag">${escapeHtml(source)}</span>`).join("");
+        return `
+          <article class="review-topic-item">
+            <div>
+              <div class="tag">${escapeHtml(item.priority || "P1")}</div>
+              <div style="height:6px"></div>
+              <div class="tag">${escapeHtml(assetTypeLabels[item.asset_type] || "补证据任务")}</div>
+            </div>
+            <div class="review-topic-main">
+              <div class="review-topic-title">${escapeHtml(item.title || "核心经营议题")}</div>
+              <div class="review-topic-section"><strong>建议资产</strong><span>${escapeHtml(assetTypeLabels[item.asset_type] || "补证据任务")}</span></div>
+              <div class="review-topic-section"><strong>先判断</strong><span>${escapeHtml(item.decision_question || "")}</span></div>
+              <div class="review-topic-section"><strong>证据缺口</strong><span>${escapeHtml(gaps.join(" / ") || "暂无")}</span></div>
+              <div class="review-topic-section"><strong>下一步</strong><span>${escapeHtml(actions.join(" / ") || "等待人工复核")}</span></div>
+              ${sources ? `<div class="review-actions" aria-label="来源样本">${sources}</div>` : ""}
+            </div>
+            <div>
+              <span class="status-pill strong">待人工复核</span>
+            </div>
+          </article>
+        `;
+      }).join("");
+    }
+
     function renderComplianceReviewPack(payload) {
       const items = payload.items || [];
       document.querySelector("#complianceReviewPackMeta").textContent = `${payload.count || 0} 条 · 只读审核包 · 不能自动发布`;
@@ -1774,6 +1839,7 @@
           skillCatalog,
           automationCatalog,
           topics,
+          topicDraftAssets,
           compliancePack,
           corrections,
           ingestLoop,
@@ -1788,6 +1854,7 @@
           requestJson("/api/operating-brain/skills"),
           requestJson("/api/operating-brain/automation-tasks"),
           requestJson("/api/operating-brain/knowledge-compiler/review-topics?limit=12"),
+          requestJson("/api/operating-brain/knowledge-compiler/topic-draft-assets?limit=12"),
           requestJson("/api/operating-brain/knowledge-compiler/compliance-review-pack?limit=20"),
           requestJson("/api/operating-brain/benchmark/corrections?limit=20"),
           requestJson("/api/operating-brain/ingest-loop/status"),
@@ -1802,6 +1869,7 @@
         renderSkills(skillCatalog);
         renderAutomationTasks(automationCatalog);
         renderReviewTopics(topics);
+        renderTopicDraftAssets(topicDraftAssets);
         renderComplianceReviewPack(compliancePack);
         renderBenchmarkCorrections(corrections);
         renderIngestLoopStatus(ingestLoop);
@@ -1866,6 +1934,16 @@
         const topics = await requestJson("/api/operating-brain/knowledge-compiler/review-topics?limit=12");
         renderReviewTopics(topics);
         setResult("待判断议题已刷新。原始 claim 未直接展示。", "ok");
+      } catch (error) {
+        setResult(error.message, "error");
+      }
+    }
+
+    async function loadTopicDraftAssets() {
+      try {
+        const payload = await requestJson("/api/operating-brain/knowledge-compiler/topic-draft-assets?limit=12");
+        renderTopicDraftAssets(payload);
+        setResult("议题转资产已刷新。草稿停在待人工复核，不会发布正式知识。", "ok");
       } catch (error) {
         setResult(error.message, "error");
       }
@@ -1991,6 +2069,7 @@
         const payload = await requestJson("/api/operating-brain/ingest-loop/run", { method: "POST" });
         renderIngestLoopStatus(payload);
         await refreshReviewTopics();
+        await loadTopicDraftAssets();
         await refreshComplianceReviewPack();
         setResult("资料入库 Loop 已停在人工复核。", "ok");
       } catch (error) {
@@ -2040,6 +2119,7 @@
     document.querySelector("#runComplianceLanguageCheck").addEventListener("click", runComplianceLanguageCheck);
     document.querySelector("#runBrandDecision").addEventListener("click", runBrandDecision);
     document.querySelector("#refreshReviewTopics").addEventListener("click", refreshReviewTopics);
+    refreshTopicDraftAssetsButton?.addEventListener("click", loadTopicDraftAssets);
     document.querySelector("#refreshComplianceReviewPack").addEventListener("click", refreshComplianceReviewPack);
     document.querySelector("#refreshBenchmarkCorrections").addEventListener("click", refreshBenchmarkCorrections);
     document.querySelector("#refreshP0Governance").addEventListener("click", refreshP0Governance);

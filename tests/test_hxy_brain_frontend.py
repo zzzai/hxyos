@@ -545,6 +545,33 @@ class HxyBrainFrontendTest(unittest.TestCase):
         ]:
             self.assertNotIn(forbidden, html)
 
+    def test_knowledge_workbench_renders_core_topic_draft_asset_workflow(self):
+        page = ROOT / "apps" / "admin-web" / "knowledge.html"
+        html = page.read_text(encoding="utf-8")
+
+        for label in [
+            "议题转资产",
+            "建议资产",
+            "定位卡",
+            "话术卡",
+            "SOP卡",
+            "风险边界卡",
+            "补证据任务",
+            "待人工复核",
+            "id=\"topicDraftAssetsList\"",
+            "id=\"refreshTopicDraftAssetsButton\"",
+            "renderTopicDraftAssets",
+            "loadTopicDraftAssets",
+            "/api/operating-brain/knowledge-compiler/topic-draft-assets?limit=12",
+        ]:
+            self.assertIn(label, html)
+
+        draft_start = html.index("议题转资产")
+        draft_end = html.index("合规审核包", draft_start)
+        draft_html = html[draft_start:draft_end]
+        for forbidden in ["raw claim", "chunk_id", "cluster_id", "review queue", "needs_review"]:
+            self.assertNotIn(forbidden, draft_html)
+
     def test_knowledge_page_exposes_compliance_language_check_execution_panel(self):
         html = (ROOT / "apps" / "admin-web" / "knowledge.html").read_text(encoding="utf-8")
 
