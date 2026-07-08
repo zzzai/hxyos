@@ -1336,6 +1336,64 @@ used_by:
         self.assertFalse(body["items"][0]["official_use_allowed"])
         self.assertTrue(body["items"][0]["requires_human_review"])
 
+    def test_operating_brain_compiler_topic_review_packets_returns_unapproved_tasks(self):
+        wiki_dir = self.root / "knowledge" / "wiki"
+        wiki_dir.mkdir(parents=True)
+        (wiki_dir / "topic-review-packets.json").write_text(
+            json.dumps(
+                {
+                    "version": "hxy-topic-review-packets.v1",
+                    "status": "ready",
+                    "count": 1,
+                    "total": 1,
+                    "items": [
+                        {
+                            "version": "hxy-topic-review-packet.v1",
+                            "packet_id": "hxy-topic-review-packet:brand_positioning",
+                            "asset_id": "hxy-topic-draft:brand_positioning",
+                            "asset_type": "positioning_card",
+                            "title": "品牌战略与核爆点定位",
+                            "priority": "P0",
+                            "review_owner": "创始人",
+                            "status": "open",
+                            "review_questions": ["这个判断是否有真实顾客原话支撑？"],
+                            "evidence_gaps": ["补齐目标用户原话"],
+                            "decision_options": [
+                                "needs_more_evidence",
+                                "revise_draft",
+                                "ready_for_manual_approval",
+                                "reject",
+                            ],
+                            "promotion_target": "approved_positioning_card",
+                            "blocked_actions": ["不能自动发布"],
+                            "source_samples": ["brand.md"],
+                            "official_use_allowed": False,
+                            "requires_human_review": True,
+                            "authority_rule": "review_packets_are_tasks_not_approval",
+                        }
+                    ],
+                    "official_use_allowed": False,
+                    "requires_human_review": True,
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        response = self.client.get("/api/operating-brain/knowledge-compiler/topic-review-packets?limit=5")
+        body = response.json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(body["version"], "hxy-topic-review-packets.v1")
+        self.assertEqual(body["count"], 1)
+        self.assertEqual(body["items"][0]["status"], "open")
+        self.assertEqual(body["items"][0]["promotion_target"], "approved_positioning_card")
+        self.assertIn("ready_for_manual_approval", body["items"][0]["decision_options"])
+        self.assertFalse(body["official_use_allowed"])
+        self.assertTrue(body["requires_human_review"])
+        self.assertFalse(body["items"][0]["official_use_allowed"])
+        self.assertTrue(body["items"][0]["requires_human_review"])
+
     def test_operating_brain_compiler_compliance_review_pack_endpoint_is_read_only(self):
         wiki_dir = self.root / "knowledge" / "wiki"
         wiki_dir.mkdir(parents=True)

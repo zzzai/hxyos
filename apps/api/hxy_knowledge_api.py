@@ -2413,6 +2413,58 @@ def _compiler_topic_draft_assets_from_payload(payload: dict[str, Any] | None, *,
     }
 
 
+def _compiler_topic_review_packets_from_payload(payload: dict[str, Any] | None, *, limit: int) -> dict[str, Any]:
+    if not payload:
+        return {
+            "version": "hxy-topic-review-packets.v1",
+            "status": "missing",
+            "count": 0,
+            "total": 0,
+            "items": [],
+            "official_use_allowed": False,
+            "requires_human_review": True,
+            "authority_rule": "review_packets_are_tasks_not_approval",
+            "next_actions": ["运行知识编译器生成 knowledge/wiki/topic-review-packets.json。"],
+        }
+    items = []
+    for item in payload.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        public = {
+            "version": item.get("version") or "hxy-topic-review-packet.v1",
+            "packet_id": item.get("packet_id") or "",
+            "asset_id": item.get("asset_id") or "",
+            "topic_key": item.get("topic_key") or "",
+            "asset_type": item.get("asset_type") or "evidence_task",
+            "title": item.get("title") or "",
+            "priority": item.get("priority") or "P1",
+            "review_owner": item.get("review_owner") or "",
+            "status": "open",
+            "review_questions": list(item.get("review_questions") or []),
+            "evidence_gaps": list(item.get("evidence_gaps") or []),
+            "next_actions": list(item.get("next_actions") or []),
+            "decision_options": list(item.get("decision_options") or []),
+            "promotion_target": item.get("promotion_target") or "evidence_backlog",
+            "blocked_actions": list(item.get("blocked_actions") or []),
+            "source_samples": [_source_label(source) for source in (item.get("source_samples") or [])],
+            "official_use_allowed": False,
+            "requires_human_review": True,
+            "authority_rule": "review_packets_are_tasks_not_approval",
+        }
+        items.append(public)
+    public_items = items[:limit]
+    return {
+        "version": "hxy-topic-review-packets.v1",
+        "status": payload.get("status") or ("ready" if items else "empty"),
+        "count": len(public_items),
+        "total": int(payload.get("total") or len(items)),
+        "items": public_items,
+        "official_use_allowed": False,
+        "requires_human_review": True,
+        "authority_rule": "review_packets_are_tasks_not_approval",
+    }
+
+
 REVIEW_TOPIC_DEFINITIONS: dict[str, dict[str, str]] = {
     "risk_boundary": {
         "title": "医疗与功效表达边界",
@@ -3712,6 +3764,13 @@ def create_app(
     ) -> dict[str, Any]:
         payload = _read_json_file(resolved_root / "knowledge" / "wiki" / "topic-draft-assets.json")
         return _compiler_topic_draft_assets_from_payload(payload, limit=limit)
+
+    @app.get("/api/operating-brain/knowledge-compiler/topic-review-packets")
+    async def operating_brain_knowledge_compiler_topic_review_packets_endpoint(
+        limit: int = Query(default=12, ge=1, le=50),
+    ) -> dict[str, Any]:
+        payload = _read_json_file(resolved_root / "knowledge" / "wiki" / "topic-review-packets.json")
+        return _compiler_topic_review_packets_from_payload(payload, limit=limit)
 
     @app.get("/api/operating-brain/knowledge-compiler/compliance-review-pack")
     async def operating_brain_knowledge_compiler_compliance_review_pack_endpoint(
