@@ -3,10 +3,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "npm run test:py && npm run test:ts && npm run test:web",
+    "test": "npm run test:py && npm run test:ts && npm run test:web && npm run test:e2e",
     "test:py": ".venv/bin/pytest -q",
     "test:ts": "vitest run",
     "test:web": "npm --prefix apps/hxy-web test -- --run",
+    "test:e2e": "npm --prefix apps/hxy-web run test:e2e",
     "build:web": "npm --prefix apps/hxy-web run build",
     "build:brain": "tsx scripts/build-hxy-structured-knowledge.ts"
   },

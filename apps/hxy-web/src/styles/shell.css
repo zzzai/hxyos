@@ -513,7 +513,9 @@ button:disabled {
   .app-shell.has-details {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) 68px;
+    grid-template-rows:
+      minmax(0, 1fr)
+      calc(68px + env(safe-area-inset-bottom));
   }
 
   .conversation-stage {
@@ -526,6 +528,7 @@ button:disabled {
     background: var(--color-surface);
     border-top: 1px solid var(--color-border);
     border-right: 0;
+    padding-bottom: env(safe-area-inset-bottom);
   }
 
   .rail-header {

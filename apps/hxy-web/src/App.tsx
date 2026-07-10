@@ -1,4 +1,10 @@
-import { FormEvent, useState } from "react";
+import {
+  FormEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   ArrowUp,
   Info,
@@ -58,6 +64,19 @@ export default function App() {
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<string[]>([]);
+  const detailsTriggerRef = useRef<HTMLButtonElement>(null);
+  const detailsDrawerRef = useRef<HTMLElement>(null);
+  const detailsCloseRef = useRef<HTMLButtonElement>(null);
+  const detailsWasOpen = useRef(false);
+
+  useEffect(() => {
+    if (isDetailsOpen) {
+      detailsCloseRef.current?.focus();
+    } else if (detailsWasOpen.current) {
+      detailsTriggerRef.current?.focus();
+    }
+    detailsWasOpen.current = isDetailsOpen;
+  }, [isDetailsOpen]);
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -66,6 +85,36 @@ export default function App() {
 
     setMessages((current) => [...current, message]);
     setDraft("");
+  };
+
+  const handleDetailsKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setIsDetailsOpen(false);
+      return;
+    }
+
+    if (event.key !== "Tab") return;
+    const focusable = Array.from(
+      detailsDrawerRef.current?.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ) ?? [],
+    );
+    if (!focusable.length) {
+      event.preventDefault();
+      detailsDrawerRef.current?.focus();
+      return;
+    }
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (
+      (event.shiftKey && document.activeElement === first) ||
+      (!event.shiftKey && document.activeElement === last)
+    ) {
+      event.preventDefault();
+      (event.shiftKey ? last : first).focus();
+    }
   };
 
   return (
@@ -119,6 +168,7 @@ export default function App() {
             <span>{localBootstrap.store.displayName}</span>
           </div>
           <button
+            ref={detailsTriggerRef}
             className="source-button"
             type="button"
             aria-label="查看当前对话详情"
@@ -130,29 +180,33 @@ export default function App() {
         </header>
 
         <section className="conversation-content" aria-live="polite">
-          {messages.length === 0 ? (
+          {activeView !== "conversation" ? (
             <div className="empty-state">
               <div className="empty-symbol" aria-hidden="true">
                 <MessageSquare />
               </div>
               <h1>{viewHeadings[activeView]}</h1>
-              {activeView === "conversation" ? (
-                <div className="suggestions" data-testid="suggestions">
-                  {localBootstrap.suggestions.map((suggestion) => (
-                    <button
-                      type="button"
-                      key={suggestion}
-                      onClick={() => setDraft(suggestion)}
-                    >
-                      {suggestion}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <p className="empty-note">
-                  {activeView === "tasks" ? "暂时没有待办" : "个人信息尚未接入"}
-                </p>
-              )}
+              <p className="empty-note">
+                {activeView === "tasks" ? "暂时没有待办" : "个人信息尚未接入"}
+              </p>
+            </div>
+          ) : messages.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-symbol" aria-hidden="true">
+                <MessageSquare />
+              </div>
+              <h1>{viewHeadings.conversation}</h1>
+              <div className="suggestions" data-testid="suggestions">
+                {localBootstrap.suggestions.map((suggestion) => (
+                  <button
+                    type="button"
+                    key={suggestion}
+                    onClick={() => setDraft(suggestion)}
+                  >
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
             </div>
           ) : (
             <div className="message-list" aria-label="当前对话">
@@ -204,13 +258,22 @@ export default function App() {
       </main>
 
       {isDetailsOpen ? (
-        <aside className="details-drawer" aria-label="当前对话详情">
+        <aside
+          ref={detailsDrawerRef}
+          className="details-drawer"
+          role="dialog"
+          aria-label="当前对话详情"
+          aria-modal="true"
+          tabIndex={-1}
+          onKeyDown={handleDetailsKeyDown}
+        >
           <header>
             <div>
               <span className="drawer-eyebrow">当前对话</span>
               <h2>对话详情</h2>
             </div>
             <button
+              ref={detailsCloseRef}
               className="icon-button"
               type="button"
               aria-label="关闭当前对话详情"

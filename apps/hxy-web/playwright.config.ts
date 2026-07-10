@@ -2,12 +2,17 @@ import { existsSync } from "node:fs";
 
 import { defineConfig } from "@playwright/test";
 
-const chromiumExecutablePath = ["/usr/bin/chromium", "/snap/bin/chromium"].find(
-  existsSync,
-);
+type FileExists = (path: string) => boolean;
 
-if (!chromiumExecutablePath) {
-  throw new Error("System Chromium was not found");
+export function resolveChromiumLaunchOptions(
+  candidates: readonly string[] = ["/usr/bin/chromium", "/snap/bin/chromium"],
+  explicitPath = process.env.HXY_CHROMIUM_PATH,
+  fileExists: FileExists = existsSync,
+) {
+  const executablePath =
+    (explicitPath && fileExists(explicitPath) ? explicitPath : undefined) ??
+    candidates.find(fileExists);
+  return executablePath ? { executablePath } : {};
 }
 
 export default defineConfig({
@@ -18,9 +23,7 @@ export default defineConfig({
     baseURL: "http://127.0.0.1:4173",
     browserName: "chromium",
     headless: true,
-    launchOptions: {
-      executablePath: chromiumExecutablePath,
-    },
+    launchOptions: resolveChromiumLaunchOptions(),
   },
   webServer: {
     command: "npm run dev -- --host 127.0.0.1 --port 4173 --strictPort",

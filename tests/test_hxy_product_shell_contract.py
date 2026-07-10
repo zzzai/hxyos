@@ -6,6 +6,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "apps" / "hxy-web" / "src" / "App.tsx"
 ROOT_PACKAGE = ROOT / "package.json"
+SHELL_STYLES = ROOT / "apps" / "hxy-web" / "src" / "styles" / "shell.css"
+CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 JOURNEYS = (
     ROOT / "tests" / "fixtures" / "product-shell" / "role-journeys.json"
 )
@@ -78,6 +80,21 @@ class HxyProductShellContractTest(unittest.TestCase):
 
         self.assertIn("test:web", scripts)
         self.assertIn("npm run test:web", scripts["test"])
+        self.assertIn("test:e2e", scripts)
+        self.assertIn("npm run test:e2e", scripts["test"])
+
+    def test_ci_installs_and_verifies_the_product_shell(self):
+        workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("apps/hxy-web", workflow)
+        self.assertIn("npm ci", workflow)
+        self.assertIn("playwright install", workflow)
+        self.assertIn("npm test", workflow)
+
+    def test_mobile_navigation_reserves_the_device_safe_area(self):
+        styles = SHELL_STYLES.read_text(encoding="utf-8")
+
+        self.assertIn("safe-area-inset-bottom", styles)
 
 
 if __name__ == "__main__":

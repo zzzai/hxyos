@@ -70,7 +70,7 @@ describe("HXYOS product shell", () => {
     await user.click(
       screen.getByRole("button", { name: "查看当前对话详情" }),
     );
-    const details = screen.getByRole("complementary", {
+    const details = screen.getByRole("dialog", {
       name: "当前对话详情",
     });
     expect(details).toBeVisible();
@@ -79,11 +79,40 @@ describe("HXYOS product shell", () => {
     ).toBeVisible();
     expect(within(details).queryByText(/来源/)).not.toBeInTheDocument();
 
-    await user.click(
-      screen.getByRole("button", { name: "关闭当前对话详情" }),
-    );
+    const closeButton = screen.getByRole("button", {
+      name: "关闭当前对话详情",
+    });
+    expect(closeButton).toHaveFocus();
+    await user.tab();
+    expect(closeButton).toHaveFocus();
+
+    await user.keyboard("{Escape}");
     expect(
-      screen.queryByRole("complementary", { name: "当前对话详情" }),
+      screen.queryByRole("dialog", { name: "当前对话详情" }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "查看当前对话详情" }),
+    ).toHaveFocus();
+  });
+
+  it("keeps non-conversation views independent after a message is sent", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.type(
+      screen.getByRole("textbox", { name: "告诉 HXYOS 你要做什么" }),
+      "检查今天的开业任务",
+    );
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    expect(screen.getByText("检查今天的开业任务")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "待办" }));
+    expect(
+      screen.queryByText("检查今天的开业任务"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "今天的待办" })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "我的" }));
+    expect(screen.getByRole("heading", { name: "我的" })).toBeVisible();
   });
 });
