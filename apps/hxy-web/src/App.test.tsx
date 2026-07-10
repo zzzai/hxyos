@@ -56,22 +56,34 @@ describe("HXYOS product shell", () => {
     expect(suggestions.length).toBeLessThanOrEqual(3);
   });
 
-  it("opens and closes source details on demand", async () => {
+  it("opens and closes truthful current-conversation details on demand", async () => {
     const user = userEvent.setup();
     render(<App />);
 
     expect(
-      screen.queryByRole("complementary", { name: "来源详情" }),
+      screen.queryByRole("complementary", { name: "当前对话详情" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "查看来源" }),
     ).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "查看来源" }));
+    await user.click(
+      screen.getByRole("button", { name: "查看当前对话详情" }),
+    );
+    const details = screen.getByRole("complementary", {
+      name: "当前对话详情",
+    });
+    expect(details).toBeVisible();
     expect(
-      screen.getByRole("complementary", { name: "来源详情" }),
+      within(details).getByText("回答服务尚未接入，当前没有可显示的回答详情"),
     ).toBeVisible();
+    expect(within(details).queryByText(/来源/)).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "关闭来源详情" }));
+    await user.click(
+      screen.getByRole("button", { name: "关闭当前对话详情" }),
+    );
     expect(
-      screen.queryByRole("complementary", { name: "来源详情" }),
+      screen.queryByRole("complementary", { name: "当前对话详情" }),
     ).not.toBeInTheDocument();
   });
 });

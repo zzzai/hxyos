@@ -1,7 +1,7 @@
 import { FormEvent, useState } from "react";
 import {
   ArrowUp,
-  BookOpen,
+  Info,
   ListTodo,
   MessageSquare,
   PanelLeftClose,
@@ -121,11 +121,11 @@ export default function App() {
           <button
             className="source-button"
             type="button"
-            aria-label="查看来源"
+            aria-label="查看当前对话详情"
             onClick={() => setIsDetailsOpen(true)}
           >
-            <BookOpen aria-hidden="true" />
-            <span>查看来源</span>
+            <Info aria-hidden="true" />
+            <span>查看详情</span>
           </button>
         </header>
 
@@ -204,25 +204,25 @@ export default function App() {
       </main>
 
       {isDetailsOpen ? (
-        <aside className="details-drawer" aria-label="来源详情">
+        <aside className="details-drawer" aria-label="当前对话详情">
           <header>
             <div>
               <span className="drawer-eyebrow">当前对话</span>
-              <h2>来源详情</h2>
+              <h2>对话详情</h2>
             </div>
             <button
               className="icon-button"
               type="button"
-              aria-label="关闭来源详情"
-              title="关闭来源详情"
+              aria-label="关闭当前对话详情"
+              title="关闭当前对话详情"
               onClick={() => setIsDetailsOpen(false)}
             >
               <X aria-hidden="true" />
             </button>
           </header>
           <div className="drawer-empty">
-            <BookOpen aria-hidden="true" />
-            <p>当前还没有可查看的来源</p>
+            <Info aria-hidden="true" />
+            <p>回答服务尚未接入，当前没有可显示的回答详情</p>
           </div>
         </aside>
       ) : null}
