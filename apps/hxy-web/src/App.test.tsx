@@ -4,6 +4,32 @@ import { describe, expect, it } from "vitest";
 
 import App from "./App";
 
+const TEST_SESSION = {
+  user: {
+    account_id: "account-test-employee",
+    display_name: "测试店员",
+  },
+  active_assignment: {
+    assignment_id: "assignment-test-employee",
+    organization: { id: "organization-test", name: "测试组织" },
+    store: { id: "store-test", name: "测试门店" },
+    role: "store_employee" as const,
+    role_label: "门店员工",
+    capabilities: [
+      "conversation:use",
+      "issues:create",
+      "store:read",
+      "tasks:read",
+      "training:practice",
+    ],
+  },
+  available_assignments: [],
+};
+
+function renderApp() {
+  return render(<App initialSession={TEST_SESSION} />);
+}
+
 const FORBIDDEN_FRONTSTAGE_TERMS = [
   "claim",
   "chunk_id",
@@ -13,7 +39,7 @@ const FORBIDDEN_FRONTSTAGE_TERMS = [
 
 describe("HXYOS product shell", () => {
   it("shows one accessible composer in the main experience", () => {
-    render(<App />);
+    renderApp();
 
     expect(
       screen.getByRole("textbox", { name: "告诉 HXYOS 你要做什么" }),
@@ -25,7 +51,7 @@ describe("HXYOS product shell", () => {
   });
 
   it("limits primary navigation to conversation, tasks, and profile", () => {
-    render(<App />);
+    renderApp();
 
     const primaryNavigation = screen.getByRole("navigation", {
       name: "主要导航",
@@ -38,7 +64,7 @@ describe("HXYOS product shell", () => {
   });
 
   it("keeps internal terminology out of the frontstage", () => {
-    const { container } = render(<App />);
+    const { container } = renderApp();
     const frontstageText = container.textContent?.toLowerCase() ?? "";
 
     for (const forbidden of FORBIDDEN_FRONTSTAGE_TERMS) {
@@ -47,7 +73,7 @@ describe("HXYOS product shell", () => {
   });
 
   it("shows no more than three context-aware suggestions", () => {
-    render(<App />);
+    renderApp();
 
     const suggestions = within(screen.getByTestId("suggestions")).getAllByRole(
       "button",
@@ -56,9 +82,18 @@ describe("HXYOS product shell", () => {
     expect(suggestions.length).toBeLessThanOrEqual(3);
   });
 
+  it("derives role, store, and suggestions from the authenticated session", () => {
+    renderApp();
+
+    expect(screen.getByText("门店员工")).toBeVisible();
+    expect(screen.getByText("测试门店")).toBeVisible();
+    expect(screen.getByRole("button", { name: "询问该怎么说" })).toBeVisible();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  });
+
   it("opens and closes truthful current-conversation details on demand", async () => {
     const user = userEvent.setup();
-    const { container } = render(<App />);
+    const { container } = renderApp();
 
     expect(
       screen.queryByRole("complementary", { name: "当前对话详情" }),
@@ -105,7 +140,7 @@ describe("HXYOS product shell", () => {
 
   it("keeps non-conversation views independent after a message is sent", async () => {
     const user = userEvent.setup();
-    render(<App />);
+    renderApp();
 
     await user.type(
       screen.getByRole("textbox", { name: "告诉 HXYOS 你要做什么" }),

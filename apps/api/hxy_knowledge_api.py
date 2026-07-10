@@ -77,6 +77,8 @@ from hxy_knowledge.workspace_events import (
     list_workspace_events,
     redact_workspace_event,
 )
+from hxy_product.repository import IdentityRepository
+from hxy_product.routes import create_identity_router
 
 
 RepositoryFactory = Callable[[], Any]
@@ -334,6 +336,15 @@ def _default_repository_factory(database_url: str) -> RepositoryFactory:
         if not database_url:
             raise HTTPException(status_code=503, detail="HXY_DATABASE_URL is not configured")
         return KnowledgeRepository(database_url)
+
+    return make_repository
+
+
+def _default_product_identity_repository_factory(database_url: str) -> RepositoryFactory:
+    def make_repository() -> IdentityRepository:
+        if not database_url:
+            raise HTTPException(status_code=503, detail="HXY_DATABASE_URL is not configured")
+        return IdentityRepository(database_url)
 
     return make_repository
 
@@ -3425,6 +3436,7 @@ def create_app(
     root_dir: Path | None = None,
     repository_factory: RepositoryFactory | None = None,
     model_router: Any | None = None,
+    product_identity_repository_factory: RepositoryFactory | None = None,
 ) -> FastAPI:
     settings = get_settings()
     resolved_root = (root_dir or settings.root_dir).resolve()
@@ -3434,6 +3446,10 @@ def create_app(
     workspace_event_store = resolved_root / "knowledge" / "workspace" / "events.jsonl"
     ingest_loop_state_path = resolved_root / "knowledge" / "runs" / "ingest-loop-latest" / "loop-state.json"
     make_repository = repository_factory or _default_repository_factory(settings.database_url)
+    make_product_identity_repository = (
+        product_identity_repository_factory
+        or _default_product_identity_repository_factory(settings.database_url)
+    )
     model_router = model_router or ModelRouter()
     require_api_token = _require_api_token(settings.api_token)
     allowed_upload_extensions = {extension.lower() for extension in settings.allowed_upload_extensions}
@@ -3446,6 +3462,7 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.include_router(create_identity_router(make_product_identity_repository))
 
     def _resolve_p0_run_dir(run_id: str) -> tuple[str, Path]:
         normalized_run_id = run_id.strip()

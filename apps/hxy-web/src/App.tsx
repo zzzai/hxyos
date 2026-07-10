@@ -13,37 +13,27 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Paperclip,
+  RotateCcw,
   Store,
   UserRound,
   X,
 } from "lucide-react";
 
-type HxyRole = "founder" | "store_manager" | "store_employee";
+import type { CanonicalRole, MeResponse } from "./api/client";
+import {
+  SessionProvider,
+  type SessionLoader,
+  useSession,
+} from "./features/session/SessionProvider";
+
 type PrimaryView = "conversation" | "tasks" | "profile";
 
-interface MeBootstrap {
-  user: {
-    role: HxyRole;
-    roleLabel: string;
-  };
-  store: {
-    id: string | null;
-    displayName: string;
-  };
-  suggestions: readonly string[];
-}
-
-// Temporary local equivalent of the future /api/v1/me response.
-export const localBootstrap: MeBootstrap = {
-  user: {
-    role: "store_manager",
-    roleLabel: "店长",
-  },
-  store: {
-    id: null,
-    displayName: "当前门店",
-  },
-  suggestions: ["打开今天的待办", "顾客反馈了一个问题", "练习一次接待话术"],
+const roleSuggestions: Record<CanonicalRole, readonly string[]> = {
+  founder: ["询问当前开业进度", "查看今天的关键事项", "创建下一项任务"],
+  hq_operations: ["查看门店待办", "跟进一个运营问题", "创建后续事项"],
+  store_manager: ["打开今天的待办", "处理一个门店问题", "创建后续事项"],
+  store_employee: ["询问该怎么说", "练习一次接待话术", "上报一个门店问题"],
+  system_admin: ["查看系统待办", "报告一个系统问题", "创建跟进事项"],
 };
 
 const navigationItems = [
@@ -58,7 +48,8 @@ const viewHeadings: Record<PrimaryView, string> = {
   profile: "我的",
 };
 
-export default function App() {
+function ProductShell() {
+  const { retry, session, status } = useSession();
   const [activeView, setActiveView] = useState<PrimaryView>("conversation");
   const [isRailCompact, setIsRailCompact] = useState(true);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
@@ -68,6 +59,21 @@ export default function App() {
   const detailsDrawerRef = useRef<HTMLElement>(null);
   const detailsCloseRef = useRef<HTMLButtonElement>(null);
   const detailsWasOpen = useRef(false);
+  const assignment = session?.active_assignment;
+  const suggestions = assignment
+    ? roleSuggestions[assignment.role].slice(0, 3)
+    : [];
+  const roleLabel =
+    assignment?.role_label ??
+    (status === "loading"
+      ? "正在加载身份"
+      : status === "unauthorized"
+        ? "登录已失效"
+        : "身份加载失败");
+  const scopeLabel =
+    assignment?.store?.name ??
+    assignment?.organization.name ??
+    (status === "loading" ? "HXYOS" : "请重试");
 
   useEffect(() => {
     if (isDetailsOpen) {
@@ -165,11 +171,22 @@ export default function App() {
         <header className="stage-header">
           <div className="context-line" aria-label="当前身份和门店">
             <Store aria-hidden="true" />
-            <span>{localBootstrap.user.roleLabel}</span>
+            <span>{roleLabel}</span>
             <span className="context-separator" aria-hidden="true">
               /
             </span>
-            <span>{localBootstrap.store.displayName}</span>
+            <span>{scopeLabel}</span>
+            {status === "unauthorized" || status === "error" ? (
+              <button
+                className="icon-button"
+                type="button"
+                aria-label="重试身份加载"
+                title="重试身份加载"
+                onClick={retry}
+              >
+                <RotateCcw aria-hidden="true" />
+              </button>
+            ) : null}
           </div>
           <button
             ref={detailsTriggerRef}
@@ -201,7 +218,7 @@ export default function App() {
               </div>
               <h1>{viewHeadings.conversation}</h1>
               <div className="suggestions" data-testid="suggestions">
-                {localBootstrap.suggestions.map((suggestion) => (
+                {suggestions.map((suggestion) => (
                   <button
                     type="button"
                     key={suggestion}
@@ -294,5 +311,18 @@ export default function App() {
         </aside>
       ) : null}
     </div>
+  );
+}
+
+interface AppProps {
+  initialSession?: MeResponse;
+  sessionLoader?: SessionLoader;
+}
+
+export default function App({ initialSession, sessionLoader }: AppProps) {
+  return (
+    <SessionProvider loader={sessionLoader} initialSession={initialSession}>
+      <ProductShell />
+    </SessionProvider>
   );
 }
