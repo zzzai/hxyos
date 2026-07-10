@@ -130,6 +130,10 @@ def bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def session_cookie(token: str) -> dict[str, str]:
+    return {"Cookie": f"hxy_session={token}"}
+
+
 def test_employee_session_returns_only_its_assignment_and_capabilities(identity_client) -> None:
     client, repository, factory_calls = identity_client
 
@@ -189,6 +193,70 @@ def test_founder_session_returns_founder_assignment(identity_client) -> None:
         FOUNDER_ASSIGNMENT_ID,
         FOUNDER_OPERATIONS_ASSIGNMENT_ID,
     }
+
+
+def test_http_only_session_cookie_authenticates(identity_client) -> None:
+    client, repository, _ = identity_client
+
+    response = client.get(
+        "/api/v1/me",
+        headers=session_cookie("employee-session"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["active_assignment"]["role"] == "store_employee"
+    assert repository.resolver_tokens == ["employee-session"]
+    assert repository.assignment_account_ids == [EMPLOYEE_ID]
+
+
+def test_valid_authorization_header_takes_precedence_over_cookie(identity_client) -> None:
+    client, repository, _ = identity_client
+
+    response = client.get(
+        "/api/v1/me",
+        headers={
+            **bearer("founder-session"),
+            **session_cookie("employee-session"),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["active_assignment"]["role"] == "founder"
+    assert repository.resolver_tokens == ["founder-session"]
+
+
+def test_malformed_authorization_does_not_fall_back_to_valid_cookie(identity_client) -> None:
+    client, repository, _ = identity_client
+
+    response = client.get(
+        "/api/v1/me",
+        headers={
+            "Authorization": "Basic invalid-session",
+            **session_cookie("employee-session"),
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Unauthorized"}
+    assert repository.resolver_tokens == []
+    assert repository.assignment_account_ids == []
+
+
+def test_invalid_authorization_does_not_fall_back_to_valid_cookie(identity_client) -> None:
+    client, repository, _ = identity_client
+
+    response = client.get(
+        "/api/v1/me",
+        headers={
+            **bearer("invalid-session"),
+            **session_cookie("employee-session"),
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Unauthorized"}
+    assert repository.resolver_tokens == ["invalid-session"]
+    assert repository.assignment_account_ids == []
 
 
 def test_owned_assignment_can_be_selected_as_active(identity_client) -> None:
