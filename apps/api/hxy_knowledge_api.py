@@ -5,9 +5,11 @@ import json
 import re
 import base64
 import secrets
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -79,6 +81,7 @@ from hxy_knowledge.workspace_events import (
     redact_workspace_event,
 )
 from hxy_product.auth import ProductAuthSettings
+from hxy_product.knowledge_context import AssignmentKnowledgeRepository
 from hxy_product.conversation_repository import ConversationRepository
 from hxy_product.conversation_routes import create_conversation_router
 from hxy_product.material_repository import MaterialRepository
@@ -3537,18 +3540,79 @@ def create_app(
             "system_admin": "headquarters",
         }
         answer_role = answer_role_by_role.get(assignment.role, "team")
-        return answer_service.generate_answer(
+        context_repository = AssignmentKnowledgeRepository(
+            make_repository(),
+            make_material_repository(),
+            assignment_id=assignment.assignment_id,
+        )
+        started_at = time.perf_counter()
+        answer = answer_service.generate_answer(
             question=question,
             scenario=scenario_by_role.get(assignment.role, "组织内部工作问答"),
             domain=None,
             stage=None,
             limit=5,
-            repository=make_repository(),
+            repository=context_repository,
             model_router=model_router,
             hooks=answer_hooks,
             role=answer_role,
             pipeline_role=answer_role,
         )
+        retrieval_trace = context_repository.retrieval_trace()
+        private_evidence = [
+            item
+            for item in (answer.get("evidence") or answer.get("sources") or [])
+            if isinstance(item, dict) and item.get("source_type") == "private_material"
+        ]
+        private_count = max(
+            int(retrieval_trace.get("private_material_count") or 0),
+            len(private_evidence),
+        )
+        authority_card_hit = bool(answer.get("from_answer_card"))
+        if private_count and not authority_card_hit:
+            answer["answer_status"] = "AI 草稿"
+            answer["needs_review"] = True
+            if answer.get("confidence") == "high":
+                answer["confidence"] = "medium"
+
+        model_route = answer.get("model_route") if isinstance(answer.get("model_route"), dict) else {}
+        model_name = str(
+            model_route.get("model")
+            or model_route.get("model_name")
+            or model_route.get("provider")
+            or ""
+        )
+        usage = answer.get("model_usage") if isinstance(answer.get("model_usage"), dict) else {}
+        answer["_product_trace"] = {
+            "trace_id": str(uuid4()),
+            "assignment_id": assignment.assignment_id,
+            "role": assignment.role,
+            "intent": str(answer.get("intent") or "unknown")[:120],
+            "retrieval_count": int(retrieval_trace.get("retrieval_count") or 0),
+            "private_material_count": private_count,
+            "authority_card_hit": authority_card_hit,
+            "model_name": model_name[:120],
+            "input_tokens": usage.get("input_tokens"),
+            "output_tokens": usage.get("output_tokens"),
+            "latency_ms": max(0, round((time.perf_counter() - started_at) * 1000)),
+            "payload": {
+                "source_types": sorted(
+                    {
+                        str(item.get("source_type") or "unknown")[:80]
+                        for item in (answer.get("evidence") or answer.get("sources") or [])
+                        if isinstance(item, dict)
+                    }
+                ),
+                "private_material_ids": sorted(
+                    {
+                        str(item.get("material_id") or item.get("asset_id") or "")
+                        for item in private_evidence
+                        if item.get("material_id") or item.get("asset_id")
+                    }
+                )[:20],
+            },
+        }
+        return answer
 
     app.include_router(
         create_conversation_router(

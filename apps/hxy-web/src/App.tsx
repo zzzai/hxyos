@@ -775,6 +775,16 @@ function ProductShell({
                       <li key={`${source.title}-${index}`}>
                         <strong>{source.title}</strong>
                         {source.excerpt ? <p>{source.excerpt}</p> : null}
+                        {source.url ? (
+                          <a
+                            href={source.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            aria-label={`查看${source.title}`}
+                          >
+                            查看资料
+                          </a>
+                        ) : null}
                       </li>
                     ))}
                   </ul>

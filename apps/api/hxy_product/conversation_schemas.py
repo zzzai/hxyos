@@ -40,6 +40,7 @@ class ProductSource(StrictProductModel):
         "approved",
         "action_asset",
     ]
+    url: str | None = None
 
 
 class ProductMessage(StrictProductModel):

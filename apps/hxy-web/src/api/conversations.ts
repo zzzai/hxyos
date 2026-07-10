@@ -4,6 +4,7 @@ export interface AnswerSource {
   title: string;
   excerpt: string;
   strength: string;
+  url: string | null;
 }
 
 export interface ConversationMessage {

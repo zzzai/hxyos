@@ -34,6 +34,10 @@ _ABSOLUTE_PATH_RE = re.compile(
 _HXY_RELATIVE_PATH_RE = re.compile(
     r"(?<!\w)(?:knowledge|data|apps|packages|ops|scripts|tests)/(?:[^\s，。；;]+)"
 )
+_MATERIAL_SOURCE_URL_RE = re.compile(
+    r"^/api/v1/materials/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/content$",
+    re.IGNORECASE,
+)
 
 
 def _redact_internal_paths(value: str) -> str:
@@ -52,6 +56,11 @@ def _safe_title(value: Any) -> str:
 def _safe_enum(value: Any, allowed: frozenset[str], default: str) -> str:
     normalized = str(value or "").strip()
     return normalized if normalized in allowed else default
+
+
+def _safe_source_url(value: Any) -> str | None:
+    candidate = str(value or "").strip()
+    return candidate if _MATERIAL_SOURCE_URL_RE.fullmatch(candidate) else None
 
 
 def _safe_sources(answer: dict[str, Any]) -> list[dict[str, str]]:
@@ -73,6 +82,7 @@ def _safe_sources(answer: dict[str, Any]) -> list[dict[str, str]]:
                 "title": _safe_title(item.get("title")),
                 "excerpt": excerpt[:500],
                 "strength": strength,
+                "url": _safe_source_url(item.get("source_url") or item.get("url")),
             }
         )
     return sources
@@ -133,6 +143,7 @@ def _public_message(record: dict[str, Any]) -> dict[str, Any]:
                     _SOURCE_STRENGTHS,
                     "reference",
                 ),
+                "url": _safe_source_url(item.get("url")),
             }
             for item in record.get("sources") or []
             if isinstance(item, dict)
@@ -267,6 +278,7 @@ def create_conversation_router(
                     user_message["id"],
                     client_message_id,
                     safe_payload,
+                    trace_payload=answer.get("_product_trace"),
                 )
             except Exception:
                 repository.mark_generation_failed(

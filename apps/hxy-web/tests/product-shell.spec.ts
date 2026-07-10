@@ -116,6 +116,7 @@ async function mockProductApi(page: Page) {
               title: "员工标准话术",
               excerpt: "先问状态，不做治疗承诺",
               strength: "high",
+              url: null,
             },
           ],
           next_actions: [],

@@ -187,6 +187,7 @@ def build_evidence(items: list[dict[str, Any]], intent: str = "knowledge_lookup"
                 "stage": item.get("stage"),
                 "status": item.get("status"),
                 "source_type": item.get("source_type"),
+                "source_url": item.get("source_url"),
                 "score": score,
                 "strength": "high" if score >= 30 else "medium" if score >= 10 else "low",
                 "excerpt": compact_evidence_content(item.get("content") or "", max_length=260, intent=intent),

@@ -330,6 +330,7 @@ class ConversationRepository:
         user_message_id: str,
         client_message_id: str,
         payload: dict[str, Any],
+        trace_payload: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         answer_id = payload.get("answer_id") or None
         with self.connect() as connection:
@@ -410,6 +411,66 @@ class ConversationRepository:
                 ).fetchone()
             if assistant_row is None:
                 return None
+
+            if trace_payload:
+                connection.execute(
+                    """
+                    INSERT INTO hxy_product_answer_traces (
+                      trace_id,
+                      assignment_id,
+                      conversation_id,
+                      user_message_id,
+                      assistant_message_id,
+                      role,
+                      intent,
+                      retrieval_count,
+                      private_material_count,
+                      authority_card_hit,
+                      model_name,
+                      input_tokens,
+                      output_tokens,
+                      latency_ms,
+                      outcome,
+                      payload_json
+                    )
+                    VALUES (
+                      %s::uuid,
+                      %s::uuid,
+                      %s::uuid,
+                      %s::uuid,
+                      %s::uuid,
+                      %s,
+                      %s,
+                      %s,
+                      %s,
+                      %s,
+                      %s,
+                      %s,
+                      %s,
+                      %s,
+                      'succeeded',
+                      %s::jsonb
+                    )
+                    ON CONFLICT (assistant_message_id) DO NOTHING
+                    """,
+                    (
+                        trace_payload["trace_id"],
+                        assignment_id,
+                        conversation_id,
+                        user_message_id,
+                        assistant_row["message_id"],
+                        str(trace_payload.get("role") or "unknown")[:80],
+                        str(trace_payload.get("intent") or "unknown")[:120],
+                        max(0, int(trace_payload.get("retrieval_count") or 0)),
+                        max(0, int(trace_payload.get("private_material_count") or 0)),
+                        bool(trace_payload.get("authority_card_hit")),
+                        str(trace_payload.get("model_name") or "")[:120],
+                        trace_payload.get("input_tokens"),
+                        trace_payload.get("output_tokens"),
+                        max(0, int(trace_payload.get("latency_ms") or 0)),
+                        json.dumps(trace_payload.get("payload") or {}, ensure_ascii=False),
+                    ),
+                )
 
             connection.execute(
                 """

@@ -72,6 +72,7 @@ class FakeConversationRepository:
         self.messages: dict[tuple[str, str], list[dict[str, Any]]] = {}
         self.reservations: dict[tuple[str, str], tuple[dict[str, Any], dict[str, Any] | None]] = {}
         self.calls: list[tuple[str, str]] = []
+        self.traces: list[dict[str, Any]] = []
         self.create_conversation(ASSIGNMENT_ID, conversation_id=CONVERSATION_ID)
         self.create_conversation(FOREIGN_ASSIGNMENT_ID, conversation_id=FOREIGN_CONVERSATION_ID)
 
@@ -159,6 +160,7 @@ class FakeConversationRepository:
         user_message_id: str,
         client_message_id: str,
         payload: dict[str, Any],
+        trace_payload: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         self.calls.append(("complete", assignment_id))
         key = (assignment_id, client_message_id)
@@ -181,6 +183,8 @@ class FakeConversationRepository:
             "next_actions": payload.get("next_actions", []),
         }
         self.messages[(assignment_id, conversation_id)].append(assistant_message)
+        if trace_payload:
+            self.traces.append(dict(trace_payload))
         self.reservations[key] = (reservation[0], assistant_message)
         conversation = self.conversations[(assignment_id, conversation_id)]
         conversation.update(
@@ -220,10 +224,20 @@ def bearer(token: str = "valid-session") -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+class EmptyMaterialRepository:
+    def __init__(self) -> None:
+        self.search_assignments: list[str] = []
+
+    def search_material_chunks(self, assignment_id: str, *_args, **_kwargs):
+        self.search_assignments.append(assignment_id)
+        return []
+
+
 @pytest.fixture
 def conversation_context(tmp_path: Path, monkeypatch):
     identity_repository = FakeIdentityRepository()
     conversation_repository = FakeConversationRepository()
+    material_repository = EmptyMaterialRepository()
     generated_questions: list[dict[str, Any]] = []
 
     def fake_generate_answer(*, question: str, **kwargs) -> dict[str, Any]:
@@ -262,6 +276,7 @@ def conversation_context(tmp_path: Path, monkeypatch):
         repository_factory=lambda: object(),
         product_identity_repository_factory=lambda: identity_repository,
         conversation_repository_factory=lambda: conversation_repository,
+        material_repository_factory=lambda: material_repository,
     )
     return (
         ASGIClient(app),
@@ -357,11 +372,17 @@ def test_send_message_returns_pair_and_redacts_internal_answer_metadata(conversa
     assert body["user_message"]["content"] == "我该怎么接待第一次到店的顾客？"
     assert body["assistant_message"]["content"] == "先问顾客当下感受，再按体验需求介绍项目。"
     assert body["assistant_message"]["sources"] == [
-        {"title": "接待话术.md", "excerpt": "参考 [已隐藏内部路径] 的接待原则。", "strength": "reference"},
+        {
+            "title": "接待话术.md",
+            "excerpt": "参考 [已隐藏内部路径] 的接待原则。",
+            "strength": "reference",
+            "url": None,
+        },
         {
             "title": "经营资料.pdf",
             "excerpt": "另见 [已隐藏内部路径] 和 [已隐藏内部路径]。",
             "strength": "candidate",
+            "url": None,
         },
     ]
     serialized = response.text
@@ -384,6 +405,10 @@ def test_send_message_returns_pair_and_redacts_internal_answer_metadata(conversa
     assert identity_repository.assignment_account_ids == [ACCOUNT_ID]
     assert ("reserve", ASSIGNMENT_ID) in repository.calls
     assert ("complete", ASSIGNMENT_ID) in repository.calls
+    assert len(repository.traces) == 1
+    assert repository.traces[0]["assignment_id"] == ASSIGNMENT_ID
+    assert repository.traces[0]["role"] == "store_manager"
+    assert "content" not in repository.traces[0]
 
 
 def test_idempotent_retry_returns_same_pair_without_regenerating(conversation_context) -> None:
@@ -694,3 +719,126 @@ def test_product_answer_payload_normalizes_internal_enum_values() -> None:
     assert payload["confidence"] == "low"
     assert payload["sources"][0]["strength"] == "reference"
     assert "/root/hxy" not in str(payload)
+
+
+def test_product_answer_payload_allows_only_authorized_material_source_urls() -> None:
+    module = importlib.import_module("apps.api.hxy_product.conversation_routes")
+
+    payload = module.product_answer_payload(
+        {
+            "answer": "资料摘要",
+            "answer_status": "AI 草稿",
+            "confidence": "medium",
+            "needs_review": True,
+            "evidence": [
+                {
+                    "title": "首店资料.md",
+                    "excerpt": "先了解顾客状态。",
+                    "strength": "reference",
+                    "source_url": f"/api/v1/materials/{uuid4()}/content",
+                },
+                {
+                    "title": "外部地址",
+                    "excerpt": "不能透传。",
+                    "strength": "reference",
+                    "source_url": "https://evil.example/private",
+                },
+            ],
+        }
+    )
+
+    assert payload["sources"][0]["url"].startswith("/api/v1/materials/")
+    assert payload["sources"][1]["url"] is None
+
+
+def test_product_answer_uses_only_active_assignment_private_context(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    api_module = importlib.import_module("apps.api.hxy_knowledge_api")
+    identity_repository = FakeIdentityRepository()
+    conversation_repository = FakeConversationRepository()
+    material_calls: list[str] = []
+    material_id = "70000000-0000-0000-0000-000000000021"
+
+    class BaseRepository:
+        def search(self, *_args, **_kwargs):
+            return []
+
+        def find_answer_card(self, *_args, **_kwargs):
+            return None
+
+        def save_answer_run(self, _payload):
+            return "70000000-0000-0000-0000-000000000031"
+
+    class MaterialRepository:
+        def search_material_chunks(self, assignment_id: str, *_args, **_kwargs):
+            material_calls.append(assignment_id)
+            return [
+                {
+                    "chunk_id": "private-chunk",
+                    "asset_id": material_id,
+                    "material_id": material_id,
+                    "title": "首店接待资料.md",
+                    "source_path": f"material:{material_id}",
+                    "source_url": f"/api/v1/materials/{material_id}/content",
+                    "domain": "operations",
+                    "stage": "working_context",
+                    "status": "reference",
+                    "source_type": "private_material",
+                    "score": 120,
+                    "content": "先询问顾客当下状态，再介绍适合的服务。",
+                    "official_use_allowed": False,
+                }
+            ]
+
+    def fake_generate_answer(**kwargs) -> dict[str, Any]:
+        items = kwargs["repository"].search(
+            kwargs["question"],
+            limit=5,
+            domain_hint="operations",
+        )
+        return {
+            "answer": "资料中建议先询问顾客当下状态。",
+            "answer_status": "已批准",
+            "confidence": "medium",
+            "needs_review": False,
+            "from_answer_card": False,
+            "intent": "operations",
+            "evidence": items,
+            "model_route": {"provider": "test", "model": "test-model"},
+        }
+
+    monkeypatch.setattr(api_module.answer_service, "generate_answer", fake_generate_answer)
+    app = api_module.create_app(
+        root_dir=tmp_path,
+        repository_factory=BaseRepository,
+        product_identity_repository_factory=lambda: identity_repository,
+        conversation_repository_factory=lambda: conversation_repository,
+        material_repository_factory=MaterialRepository,
+    )
+
+    response = ASGIClient(app).request(
+        "POST",
+        f"/api/v1/conversations/{CONVERSATION_ID}/messages",
+        headers=bearer(),
+        json={
+            "content": "刚上传的接待资料讲了什么？",
+            "client_message_id": str(uuid4()),
+        },
+    )
+
+    assert response.status_code == 200
+    assistant = response.json()["assistant_message"]
+    assert assistant["answer_status"] == "AI 草稿"
+    assert assistant["needs_review"] is True
+    assert assistant["sources"] == [
+        {
+            "title": "首店接待资料.md",
+            "excerpt": "先询问顾客当下状态，再介绍适合的服务。",
+            "strength": "reference",
+            "url": f"/api/v1/materials/{material_id}/content",
+        }
+    ]
+    assert material_calls == [ASSIGNMENT_ID]
+    assert conversation_repository.traces[0]["private_material_count"] == 1

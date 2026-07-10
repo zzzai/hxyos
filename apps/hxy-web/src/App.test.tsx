@@ -85,6 +85,7 @@ function conversationGateway(overrides: Record<string, unknown> = {}) {
             title: "员工标准话术",
             excerpt: "不承诺治疗效果",
             strength: "high",
+            url: null,
           },
         ],
         next_actions: [],
@@ -319,6 +320,46 @@ describe("HXYOS product shell", () => {
 
     await user.click(screen.getByRole("button", { name: "我的" }));
     expect(screen.getByRole("heading", { name: "我的" })).toBeVisible();
+  });
+
+  it("opens an authorized material citation from the existing details drawer", async () => {
+    const user = userEvent.setup();
+    const baseResponse = await conversationGateway().sendMessage();
+    const client = conversationGateway({
+      sendMessage: vi.fn().mockResolvedValue({
+        ...baseResponse,
+        assistant_message: {
+          ...baseResponse.assistant_message,
+          answer_status: "AI 草稿",
+          needs_review: true,
+          sources: [
+            {
+              title: "首店接待资料.md",
+              excerpt: "先询问顾客当下状态。",
+              strength: "reference",
+              url: "/api/v1/materials/70000000-0000-0000-0000-000000000021/content",
+            },
+          ],
+        },
+      }),
+    });
+    render(<App initialSession={TEST_SESSION} conversationClient={client} />);
+
+    await user.type(
+      screen.getByRole("textbox", { name: "告诉 HXYOS 你要做什么" }),
+      "刚上传的接待资料讲了什么？",
+    );
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    await user.click(
+      await screen.findByRole("button", { name: "查看当前对话详情" }),
+    );
+
+    expect(
+      screen.getByRole("link", { name: "查看首店接待资料.md" }),
+    ).toHaveAttribute(
+      "href",
+      "/api/v1/materials/70000000-0000-0000-0000-000000000021/content",
+    );
   });
 
   it("creates a conversation on first send and renders the real assistant answer", async () => {
