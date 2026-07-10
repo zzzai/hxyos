@@ -3,12 +3,13 @@ from __future__ import annotations
 import importlib
 import json
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 
 ASSIGNMENT_ID = "20000000-0000-0000-0000-000000000001"
 MATERIAL_ID = "70000000-0000-0000-0000-000000000001"
 JOB_ID = "80000000-0000-0000-0000-000000000001"
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _job() -> dict[str, Any]:
@@ -188,3 +189,40 @@ def test_worker_returns_idle_without_parser_work(tmp_path: Path) -> None:
 
     assert result == {"status": "idle"}
     assert parser_calls == []
+
+
+def test_material_worker_operations_are_hxy_owned_and_private() -> None:
+    launcher = (ROOT / "ops" / "hxy-material-worker.sh").read_text(
+        encoding="utf-8"
+    )
+    service = (ROOT / "ops" / "systemd" / "hxy-material-worker.service").read_text(
+        encoding="utf-8"
+    )
+    env_example = (ROOT / "ops" / "env" / "hxy-knowledge-api.env.example").read_text(
+        encoding="utf-8"
+    )
+
+    assert "scripts/run-hxy-material-worker.py" in launcher
+    assert "HXY_MATERIAL_WORKER_POLL_SECONDS" in launcher
+    assert "HXY_MATERIAL_WORKER_LEASE_SECONDS" in launcher
+    assert "HXY_MATERIAL_WORKER_BASE_RETRY_SECONDS" in launcher
+    assert "Description=HXY Material Intake Worker" in service
+    assert "ExecStart=/usr/bin/env bash /root/hxy/ops/hxy-material-worker.sh" in service
+    assert "UMask=0077" in service
+    assert "ReadWritePaths=/root/hxy/data/product-materials" in service
+    assert "Restart=always" in service
+    assert "HXY_MATERIAL_WORKER_POLL_SECONDS=2" in env_example
+    assert "HXY_MATERIAL_WORKER_LEASE_SECONDS=300" in env_example
+    assert "htops" not in (launcher + service).lower()
+
+
+def test_material_intake_runbook_has_one_shot_and_recovery_commands() -> None:
+    runbook = (
+        ROOT / "docs" / "operations" / "hxy-material-intake-runtime.md"
+    ).read_text(encoding="utf-8")
+
+    assert "--once" in runbook
+    assert "013_hxy_material_intake_jobs.sql" in runbook
+    assert "systemctl status hxy-material-worker" in runbook
+    assert "journalctl -u hxy-material-worker" in runbook
+    assert "不得自动进入正式知识" in runbook

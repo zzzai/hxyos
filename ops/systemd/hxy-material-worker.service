@@ -1,0 +1,25 @@
+[Unit]
+Description=HXY Material Intake Worker
+After=network-online.target hxy-knowledge-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root/hxy
+Environment=HOME=/root
+Environment=HXY_ROOT_DIR=/root/hxy
+Environment=HXY_ENV_FILE=/root/hxy/ops/env/hxy-knowledge-api.env
+ExecStart=/usr/bin/env bash /root/hxy/ops/hxy-material-worker.sh
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/root/hxy/data/product-materials
+
+[Install]
+WantedBy=multi-user.target
