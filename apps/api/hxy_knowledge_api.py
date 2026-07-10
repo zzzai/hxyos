@@ -14,6 +14,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
+from hxy_knowledge import answer_service
+from hxy_knowledge.answer_service import AnswerServiceHooks
 from hxy_knowledge.answer_pipeline import build_answer_pipeline
 from hxy_knowledge.brand_decision import review_brand_artifact, write_brand_review_record
 from hxy_knowledge.brand_assets import brand_authority_cards, build_brand_asset_center
@@ -24,7 +26,6 @@ from hxy_knowledge.answer_engine import (
     compact_content,
     has_metadata_noise,
     PRIMARY_CLAIM_DOMAINS,
-    synthesize_answer,
     usage_for,
 )
 from hxy_knowledge.answer_engine import classify_intent
@@ -57,7 +58,7 @@ from hxy_knowledge.okf import load_okf_documents, summarize_okf_lifecycle
 from hxy_knowledge.operating_brain import operating_brain_capabilities
 from hxy_knowledge.operating_issues import build_operating_issues, issue_from_intake
 from hxy_knowledge.process_memory import build_memory_promotion_draft, build_process_memory_record
-from hxy_knowledge.reliability import insufficient_answer, score_answer_quality
+from hxy_knowledge.reliability import score_answer_quality
 from hxy_knowledge.repository import KnowledgeRepository
 from hxy_knowledge.source_brief import build_source_brief
 from hxy_knowledge.startup_advancer import build_startup_advance
@@ -78,6 +79,8 @@ from hxy_knowledge.workspace_events import (
     redact_workspace_event,
 )
 from hxy_product.auth import ProductAuthSettings
+from hxy_product.conversation_repository import ConversationRepository
+from hxy_product.conversation_routes import create_conversation_router
 from hxy_product.repository import IdentityRepository
 from hxy_product.routes import create_identity_router
 
@@ -346,6 +349,15 @@ def _default_product_identity_repository_factory(database_url: str) -> Repositor
         if not database_url:
             raise HTTPException(status_code=503, detail="HXY_DATABASE_URL is not configured")
         return IdentityRepository(database_url)
+
+    return make_repository
+
+
+def _default_conversation_repository_factory(database_url: str) -> RepositoryFactory:
+    def make_repository() -> ConversationRepository:
+        if not database_url:
+            raise HTTPException(status_code=503, detail="HXY_DATABASE_URL is not configured")
+        return ConversationRepository(database_url)
 
     return make_repository
 
@@ -3438,6 +3450,7 @@ def create_app(
     repository_factory: RepositoryFactory | None = None,
     model_router: Any | None = None,
     product_identity_repository_factory: RepositoryFactory | None = None,
+    conversation_repository_factory: RepositoryFactory | None = None,
     product_auth_settings: ProductAuthSettings | None = None,
 ) -> FastAPI:
     settings = get_settings()
@@ -3451,6 +3464,10 @@ def create_app(
     make_product_identity_repository = (
         product_identity_repository_factory
         or _default_product_identity_repository_factory(settings.database_url)
+    )
+    make_conversation_repository = (
+        conversation_repository_factory
+        or _default_conversation_repository_factory(settings.database_url)
     )
     resolved_product_auth_settings = product_auth_settings or ProductAuthSettings.from_environment()
     model_router = model_router or ModelRouter()
@@ -3469,6 +3486,54 @@ def create_app(
         create_identity_router(
             make_product_identity_repository,
             resolved_product_auth_settings,
+        )
+    )
+    answer_hooks = AnswerServiceHooks(
+        classify_frontdoor=_classify_frontdoor,
+        repository_search=_repository_search,
+        items_need_better_retrieval=_items_need_better_retrieval,
+        fallback_queries=_fallback_queries,
+        answer_from_authority_card=_answer_from_authority_card,
+        attach_model_route=_attach_model_route,
+        attach_answer_pipeline=_attach_answer_pipeline,
+        apply_frontdoor_to_answer=_apply_frontdoor_to_answer,
+        maybe_apply_model_answer=_maybe_apply_model_answer,
+    )
+
+    def generate_product_answer(*, question: str, assignment: Any) -> dict[str, Any]:
+        scenario_by_role = {
+            "founder": "创始人内部决策",
+            "hq_operations": "总部运营工作问答",
+            "store_manager": "店长现场经营",
+            "store_employee": "门店员工工作问答",
+            "system_admin": "系统管理内部问答",
+        }
+        answer_role_by_role = {
+            "founder": "founder",
+            "hq_operations": "headquarters",
+            "store_manager": "store_manager",
+            "store_employee": "store_staff",
+            "system_admin": "headquarters",
+        }
+        answer_role = answer_role_by_role.get(assignment.role, "team")
+        return answer_service.generate_answer(
+            question=question,
+            scenario=scenario_by_role.get(assignment.role, "组织内部工作问答"),
+            domain=None,
+            stage=None,
+            limit=5,
+            repository=make_repository(),
+            model_router=model_router,
+            hooks=answer_hooks,
+            role=answer_role,
+            pipeline_role=answer_role,
+        )
+
+    app.include_router(
+        create_conversation_router(
+            make_product_identity_repository,
+            make_conversation_repository,
+            generate_product_answer,
         )
     )
 
@@ -4717,101 +4782,18 @@ def create_app(
         scenario = request.scenario.strip() or "创始人内部决策"
         if not question:
             raise HTTPException(status_code=400, detail="question is required")
-        repo = make_repository()
-        understanding = understand_text(question, scenario=scenario, role="founder")
-        understanding["thinking_lenses"] = apply_thinking_lenses(question, stage="zero_to_one")
-        rule_domain_hint, rule_hint_audience = classify_intent(question)
-        frontdoor = _classify_frontdoor(
-            model_router=model_router,
+        return answer_service.generate_answer(
             question=question,
             scenario=scenario,
-            rule_intent=rule_domain_hint,
-            rule_audience=rule_hint_audience,
-        )
-        understanding["frontdoor_classification"] = frontdoor
-        domain_hint = str(frontdoor.get("intent") or rule_domain_hint)
-        if domain_hint not in _FRONTDOOR_INTENTS:
-            domain_hint = rule_domain_hint
-        items = _repository_search(
-            repo,
-            question,
             domain=request.domain,
             stage=request.stage,
             limit=request.limit,
-            domain_hint=domain_hint,
+            repository=make_repository(),
+            model_router=model_router,
+            hooks=answer_hooks,
+            role="founder",
+            pipeline_role="team",
         )
-        used_query = question
-        if _items_need_better_retrieval(items, domain_hint):
-            for fallback_query in _fallback_queries(question):
-                fallback_items = _repository_search(
-                    repo,
-                    fallback_query,
-                    domain=request.domain,
-                    stage=request.stage,
-                    limit=request.limit,
-                    domain_hint=domain_hint,
-                )
-                if fallback_items and not _items_need_better_retrieval(fallback_items, domain_hint):
-                    items = fallback_items
-                    used_query = fallback_query
-                    break
-                if not items and fallback_items:
-                    items = fallback_items
-                    used_query = fallback_query
-                    break
-        intent, _audience = classify_intent(question, items)
-        if frontdoor.get("mode") == "ai" and domain_hint != "knowledge_lookup":
-            intent = domain_hint
-        card = repo.find_answer_card(question, intent)
-        if card:
-            answer = _answer_from_authority_card(
-                question=question,
-                used_query=used_query,
-                scenario=scenario,
-                understanding=understanding,
-                card=card,
-            )
-            _attach_model_route(answer, model_router.route("authority_answer"))
-            _attach_answer_pipeline(answer, role="team")
-            answer_id = repo.save_answer_run(answer)
-            answer["answer_id"] = answer_id
-            return answer
-        answer = synthesize_answer(question, used_query, items, scenario=scenario)
-        answer["from_answer_card"] = False
-        answer["understanding"] = understanding
-        _apply_frontdoor_to_answer(answer, frontdoor)
-        _attach_model_route(answer, model_router.route("rag_answer"))
-        _maybe_apply_model_answer(model_router=model_router, question=question, answer=answer)
-        quality_score = score_answer_quality(
-            question=question,
-            intent=answer.get("intent") or intent,
-            scenario=scenario,
-            answer=answer.get("answer") or "",
-            evidence=answer.get("evidence") or [],
-            confidence=answer.get("confidence") or "low",
-            needs_review=bool(answer.get("needs_review", True)),
-            from_answer_card=False,
-        )
-        answer["quality_score"] = quality_score
-        answer["quality_dimensions"] = quality_score["dimensions"]
-        if quality_score["level"] == "low" and bool(answer.get("needs_review", True)):
-            answer["answer"] = insufficient_answer(question, "当前召回资料没有形成足够稳定的权威结论")
-            answer["answer_status"] = "资料不足"
-            answer["confidence"] = "low"
-            answer["needs_review"] = True
-            answer["result_card"] = build_result_card(
-                intent=answer.get("intent") or intent,
-                scenario=scenario,
-                answer=answer["answer"],
-                evidence=answer.get("evidence") or [],
-                confidence="low",
-                conflicts=answer.get("conflicts") or ["证据不足"],
-                needs_review=True,
-            )
-        _attach_answer_pipeline(answer, role="team")
-        answer_id = repo.save_answer_run(answer)
-        answer["answer_id"] = answer_id
-        return answer
 
     @app.post("/api/knowledge/feedback", dependencies=[Depends(require_api_token)])
     async def knowledge_feedback(request: FeedbackRequest) -> dict[str, Any]:
