@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 try:
@@ -17,6 +18,43 @@ class MaterialStorageQuotaExceeded(Exception):
 
 class MaterialJobLeaseLost(Exception):
     pass
+
+
+_MATERIAL_QUERY_SPLIT = re.compile(r"[\s,，。！？?；;：:、（）()\[\]【】\"'“”‘’/\\|+·\-_<>《》]+")
+_MATERIAL_QUERY_TERMS = (
+    "品牌",
+    "定位",
+    "产品",
+    "清泡调补养",
+    "泡脚",
+    "门店",
+    "首店",
+    "接待",
+    "服务",
+    "顾客",
+    "会员",
+    "员工",
+    "店长",
+    "运营",
+    "流程",
+    "话术",
+    "培训",
+    "选址",
+    "装修",
+    "财务",
+    "融资",
+    "合规",
+    "风险",
+)
+_DEICTIC_MATERIAL_TERMS = (
+    "刚上传",
+    "刚才上传",
+    "这份资料",
+    "这个资料",
+    "这个文件",
+    "最新资料",
+    "上传的资料",
+)
 
 
 def _json_object(value: Any) -> dict[str, Any]:
@@ -48,6 +86,35 @@ def _material_from_row(row: dict[str, Any]) -> dict[str, Any]:
         "official_use_allowed": False,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
+    }
+
+
+def _material_query_terms(query: str) -> list[str]:
+    terms = [term for term in _MATERIAL_QUERY_TERMS if term in query]
+    for part in _MATERIAL_QUERY_SPLIT.sub(" ", query).split():
+        if 2 <= len(part) <= 12 and part not in terms:
+            terms.append(part)
+    return terms[:8]
+
+
+def _material_chunk_from_row(row: dict[str, Any]) -> dict[str, Any]:
+    material_id = str(row["material_id"])
+    return {
+        "chunk_id": str(row["chunk_id"]),
+        "asset_id": material_id,
+        "material_id": material_id,
+        "title": str(row.get("original_file_name") or "资料来源")[:180],
+        "source_path": f"material:{material_id}",
+        "normalized_path": None,
+        "source_url": f"/api/v1/materials/{material_id}/content",
+        "domain": str(row.get("domain") or "general"),
+        "stage": "working_context",
+        "status": "reference",
+        "source_type": "private_material",
+        "score": int(row.get("score") or 0),
+        "heading": str(row.get("heading") or "")[:300],
+        "content": str(row.get("content") or ""),
+        "official_use_allowed": False,
     }
 
 
@@ -735,6 +802,85 @@ class MaterialRepository:
                 (assignment_id, material_id),
             ).fetchone()
         return _material_from_row(row) if row else None
+
+    def search_material_chunks(
+        self,
+        assignment_id: str,
+        query: str,
+        *,
+        domain_hint: str | None = None,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        bounded_limit = max(1, min(int(limit), 20))
+        latest_mode = any(term in query for term in _DEICTIC_MATERIAL_TERMS)
+        common_select = """
+            SELECT chunk.chunk_id::text,
+                   chunk.material_id::text,
+                   material.original_file_name,
+                   chunk.heading,
+                   chunk.content,
+                   COALESCE(material.understanding_json->>'domain', 'general') AS domain
+            FROM hxy_material_chunks AS chunk
+            JOIN hxy_product_materials AS material
+              ON material.assignment_id = chunk.assignment_id
+             AND material.material_id = chunk.material_id
+            WHERE chunk.assignment_id = %s::uuid
+              AND material.status = 'ready'
+        """
+        if latest_mode:
+            sql = (
+                common_select
+                + """
+                ORDER BY material.updated_at DESC,
+                         chunk.material_id DESC,
+                         chunk.chunk_index
+                LIMIT %s
+                """
+            )
+            params: tuple[Any, ...] = (assignment_id, bounded_limit)
+        else:
+            terms = _material_query_terms(query)
+            domain_clause = ""
+            scoped_params: list[Any] = [assignment_id]
+            if domain_hint:
+                domain_clause = " AND COALESCE(material.understanding_json->>'domain', 'general') = %s"
+                scoped_params.append(domain_hint)
+            scoped = common_select + domain_clause
+            full_pattern = f"%{query.strip()}%"
+            term_patterns = [f"%{term}%" for term in terms]
+            score_parts = [
+                "CASE WHEN content ILIKE %s THEN 100 ELSE 0 END",
+                "CASE WHEN heading ILIKE %s THEN 70 ELSE 0 END",
+                "CAST(similarity(content, %s) * 50 AS INTEGER)",
+            ]
+            score_params: list[Any] = [full_pattern, full_pattern, query]
+            for _term in terms:
+                score_parts.append("CASE WHEN content ILIKE %s OR heading ILIKE %s THEN 15 ELSE 0 END")
+            for pattern in term_patterns:
+                score_params.extend([pattern, pattern])
+            match_clauses = ["content ILIKE %s", "heading ILIKE %s", "similarity(content, %s) >= 0.05"]
+            match_params: list[Any] = [full_pattern, full_pattern, query]
+            for _term in terms:
+                match_clauses.extend(["content ILIKE %s", "heading ILIKE %s"])
+            for pattern in term_patterns:
+                match_params.extend([pattern, pattern])
+            sql = f"""
+                WITH scoped AS ({scoped})
+                SELECT scoped.*,
+                       {' + '.join(score_parts)} AS score
+                FROM scoped
+                WHERE {' OR '.join(match_clauses)}
+                ORDER BY score DESC, material_id DESC, chunk_id
+                LIMIT %s
+            """
+            params = tuple([*scoped_params, *score_params, *match_params, bounded_limit])
+
+        with self.connect() as connection:
+            rows = connection.execute(sql, params).fetchall()
+        if latest_mode:
+            for row in rows:
+                row["score"] = 120
+        return [_material_chunk_from_row(row) for row in rows]
 
     def get_by_client_upload_id(
         self,
