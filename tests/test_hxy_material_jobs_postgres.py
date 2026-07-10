@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from threading import Barrier
 from uuid import uuid4
 
@@ -10,6 +11,7 @@ import pytest
 
 from apps.api.hxy_product.conversation_repository import ConversationRepository
 from apps.api.hxy_product.material_repository import MaterialRepository
+from apps.api.hxy_release.activation_release import run_postflight
 
 
 DATABASE_URL = os.getenv("HXY_TEST_DATABASE_URL", "").strip()
@@ -329,6 +331,9 @@ def test_postgres_material_queue_lease_reclaim_and_completion() -> None:
             "succeeded",
         )
         assert traces[0][7] == {"source_types": ["private_material"]}
+
+        postflight = run_postflight(Path(__file__).resolve().parents[1], DATABASE_URL)
+        assert postflight["status"] == "passed"
     finally:
         with psycopg.connect(DATABASE_URL) as connection:
             connection.execute(
