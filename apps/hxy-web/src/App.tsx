@@ -1,4 +1,5 @@
 import {
+  ChangeEvent,
   FormEvent,
   KeyboardEvent as ReactKeyboardEvent,
   useEffect,
@@ -7,6 +8,7 @@ import {
 } from "react";
 import {
   ArrowUp,
+  FileText,
   Info,
   ListTodo,
   MessageSquare,
@@ -26,6 +28,11 @@ import {
   type ConversationMessage,
   productConversationClient,
 } from "./api/conversations";
+import {
+  type MaterialClient,
+  type ProductMaterial,
+  productMaterialClient,
+} from "./api/materials";
 import {
   SessionProvider,
   type SessionLoader,
@@ -60,14 +67,23 @@ interface PendingMessage {
   localMessageId: string;
 }
 
+interface FailedMaterialUpload {
+  file: File;
+  clientUploadId: string;
+}
+
 interface ProductShellProps {
   conversationClient: ConversationClient;
+  materialClient: MaterialClient;
   clientMessageIdFactory: () => string;
+  materialUploadIdFactory: () => string;
 }
 
 function ProductShell({
   conversationClient,
+  materialClient,
   clientMessageIdFactory,
+  materialUploadIdFactory,
 }: ProductShellProps) {
   const { retry, session, status } = useSession();
   const [activeView, setActiveView] = useState<PrimaryView>("conversation");
@@ -82,17 +98,34 @@ function ProductShell({
   const [pendingMessage, setPendingMessage] = useState<PendingMessage | null>(
     null,
   );
+  const [latestMaterial, setLatestMaterial] = useState<ProductMaterial | null>(
+    null,
+  );
+  const [uploadingFileName, setUploadingFileName] = useState<string | null>(
+    null,
+  );
+  const [failedMaterial, setFailedMaterial] =
+    useState<FailedMaterialUpload | null>(null);
+  const [isRetryingUnderstanding, setIsRetryingUnderstanding] = useState(false);
+  const [understandingRetryFailed, setUnderstandingRetryFailed] =
+    useState(false);
+  const materialInputRef = useRef<HTMLInputElement>(null);
   const detailsTriggerRef = useRef<HTMLButtonElement>(null);
   const detailsDrawerRef = useRef<HTMLElement>(null);
   const detailsCloseRef = useRef<HTMLButtonElement>(null);
   const detailsWasOpen = useRef(false);
   const messageListEndRef = useRef<HTMLDivElement>(null);
   const historyRequestVersionRef = useRef(0);
+  const materialRequestVersionRef = useRef(0);
   const assignment = session?.active_assignment;
   const isAuthenticated = status === "authenticated" && assignment !== undefined;
   const suggestions = assignment
     ? roleSuggestions[assignment.role].slice(0, 3)
     : [];
+  const canCreateMaterials =
+    assignment?.capabilities.includes("materials:create") ?? false;
+  const canReadMaterials =
+    assignment?.capabilities.includes("materials:read") ?? false;
   const roleLabel =
     assignment?.role_label ??
     (status === "loading"
@@ -167,6 +200,40 @@ function ProductShell({
   }, [assignment?.assignment_id, conversationClient, isAuthenticated]);
 
   useEffect(() => {
+    const requestVersion = materialRequestVersionRef.current + 1;
+    materialRequestVersionRef.current = requestVersion;
+    setLatestMaterial(null);
+    setUploadingFileName(null);
+    setFailedMaterial(null);
+    setUnderstandingRetryFailed(false);
+
+    if (!isAuthenticated || !canReadMaterials) return;
+
+    let active = true;
+    void materialClient
+      .listMaterials()
+      .then(({ items }) => {
+        if (
+          active &&
+          materialRequestVersionRef.current === requestVersion &&
+          items.length > 0
+        ) {
+          setLatestMaterial(items[0]);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      active = false;
+    };
+  }, [
+    assignment?.assignment_id,
+    canReadMaterials,
+    isAuthenticated,
+    materialClient,
+  ]);
+
+  useEffect(() => {
     if (isDetailsOpen) {
       detailsCloseRef.current?.focus();
     } else if (detailsWasOpen.current) {
@@ -180,7 +247,49 @@ function ProductShell({
     if (typeof scrollIntoView === "function") {
       scrollIntoView.call(messageListEndRef.current, { block: "nearest" });
     }
-  }, [isSending, messages]);
+  }, [failedMaterial, isSending, latestMaterial, messages, uploadingFileName]);
+
+  const uploadMaterial = async (file: File, clientUploadId: string) => {
+    if (!isAuthenticated || !canCreateMaterials || uploadingFileName) return;
+    materialRequestVersionRef.current += 1;
+    setActiveView("conversation");
+    setUploadingFileName(file.name);
+    setFailedMaterial(null);
+    try {
+      const { material } = await materialClient.uploadMaterial(
+        file,
+        "",
+        clientUploadId,
+      );
+      setLatestMaterial(material);
+    } catch {
+      setFailedMaterial({ file, clientUploadId });
+    } finally {
+      setUploadingFileName(null);
+    }
+  };
+
+  const handleMaterialSelection = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (file) void uploadMaterial(file, materialUploadIdFactory());
+  };
+
+  const retryMaterialUnderstanding = async (material: ProductMaterial) => {
+    if (!isAuthenticated || !canCreateMaterials || isRetryingUnderstanding) {
+      return;
+    }
+    setIsRetryingUnderstanding(true);
+    setUnderstandingRetryFailed(false);
+    try {
+      const result = await materialClient.retryUnderstanding(material.id);
+      setLatestMaterial(result.material);
+    } catch {
+      setUnderstandingRetryFailed(true);
+    } finally {
+      setIsRetryingUnderstanding(false);
+    }
+  };
 
   const sendPendingMessage = async (pending: PendingMessage) => {
     historyRequestVersionRef.current += 1;
@@ -466,7 +575,71 @@ function ProductShell({
           )}
         </section>
 
-        <div className="composer-wrap">
+        <div
+          className="composer-wrap"
+          data-testid="composer-region"
+          aria-live="polite"
+        >
+          {latestMaterial ? (
+            <article className="material-receipt">
+              <div className="material-receipt-heading">
+                <FileText aria-hidden="true" />
+                <strong>{latestMaterial.file_name}</strong>
+                <span>
+                  {latestMaterial.status === "understanding_failed"
+                    ? "已保存"
+                    : latestMaterial.receipt.status}
+                </span>
+              </div>
+              <p>{latestMaterial.understanding.summary}</p>
+              <a
+                href={latestMaterial.original.url}
+                target="_blank"
+                rel="noreferrer"
+              >
+                查看原文
+              </a>
+              {latestMaterial.status === "understanding_failed" ? (
+                <button
+                  className="material-retry-button"
+                  type="button"
+                  aria-label="重新理解资料"
+                  disabled={isRetryingUnderstanding}
+                  onClick={() => void retryMaterialUnderstanding(latestMaterial)}
+                >
+                  {isRetryingUnderstanding ? "正在理解" : "重新理解"}
+                </button>
+              ) : null}
+              {understandingRetryFailed ? (
+                <span className="material-retry-error" role="alert">
+                  理解没有完成，可稍后重试
+                </span>
+              ) : null}
+            </article>
+          ) : null}
+          {uploadingFileName ? (
+            <div className="material-progress" role="status">
+              <span aria-hidden="true" />
+              <span>正在接收{uploadingFileName}</span>
+            </div>
+          ) : null}
+          {failedMaterial ? (
+            <div className="material-error" role="alert">
+              <span>{failedMaterial.file.name} 没有上传完成</span>
+              <button
+                type="button"
+                aria-label="重新上传"
+                onClick={() =>
+                  void uploadMaterial(
+                    failedMaterial.file,
+                    failedMaterial.clientUploadId,
+                  )
+                }
+              >
+                重试
+              </button>
+            </div>
+          ) : null}
           <form
             className="composer"
             data-testid="composer"
@@ -482,12 +655,26 @@ function ProductShell({
               onChange={(event) => setDraft(event.target.value)}
             />
             <div className="composer-actions">
+              <input
+                ref={materialInputRef}
+                className="visually-hidden"
+                type="file"
+                tabIndex={-1}
+                accept=".csv,.doc,.docx,.jpeg,.jpg,.json,.md,.pdf,.png,.ppt,.pptx,.txt,.webp,.xls,.xlsx"
+                disabled={
+                  !isAuthenticated || !canCreateMaterials || !!uploadingFileName
+                }
+                onChange={handleMaterialSelection}
+              />
               <button
                 className="icon-button attachment-button"
                 type="button"
-                aria-label="添加附件（即将开放）"
-                title="附件功能即将开放"
-                disabled
+                aria-label="添加资料"
+                title="添加资料"
+                disabled={
+                  !isAuthenticated || !canCreateMaterials || !!uploadingFileName
+                }
+                onClick={() => materialInputRef.current?.click()}
               >
                 <Paperclip aria-hidden="true" />
               </button>
@@ -579,20 +766,26 @@ interface AppProps {
   initialSession?: MeResponse;
   sessionLoader?: SessionLoader;
   conversationClient?: ConversationClient;
+  materialClient?: MaterialClient;
   clientMessageIdFactory?: () => string;
+  materialUploadIdFactory?: () => string;
 }
 
 export default function App({
   initialSession,
   sessionLoader,
   conversationClient = productConversationClient,
+  materialClient = productMaterialClient,
   clientMessageIdFactory = () => crypto.randomUUID(),
+  materialUploadIdFactory = () => crypto.randomUUID(),
 }: AppProps) {
   return (
     <SessionProvider loader={sessionLoader} initialSession={initialSession}>
       <ProductShell
         conversationClient={conversationClient}
+        materialClient={materialClient}
         clientMessageIdFactory={clientMessageIdFactory}
+        materialUploadIdFactory={materialUploadIdFactory}
       />
     </SessionProvider>
   );

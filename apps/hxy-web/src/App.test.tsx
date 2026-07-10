@@ -19,6 +19,8 @@ const TEST_SESSION = {
     capabilities: [
       "conversation:use",
       "issues:create",
+      "materials:create",
+      "materials:read",
       "store:read",
       "tasks:read",
       "training:practice",
@@ -93,6 +95,52 @@ function conversationGateway(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function materialGateway(overrides: Record<string, unknown> = {}) {
+  return {
+    listMaterials: vi.fn().mockResolvedValue({ items: [], count: 0 }),
+    retryUnderstanding: vi.fn().mockResolvedValue({
+      material: UNDERSTOOD_MATERIAL,
+    }),
+    uploadMaterial: vi.fn().mockResolvedValue({
+      material: UNDERSTOOD_MATERIAL,
+    }),
+    ...overrides,
+  };
+}
+
+const UNDERSTOOD_MATERIAL = {
+  id: "70000000-0000-0000-0000-000000000001",
+  file_name: "首店接待流程.md",
+  media_type: "text/markdown",
+  size_bytes: 36,
+  status: "understood",
+  receipt: {
+    status: "已收到",
+    message: "资料已安全保存，当前不会自动变成正式知识。",
+  },
+  original: {
+    url: "/api/v1/materials/70000000-0000-0000-0000-000000000001/content",
+    can_preview: true,
+  },
+  understanding: {
+    summary: "首店员工接待流程草稿，重点是先问顾客状态，再介绍服务。",
+    document_type: "门店流程资料",
+    source_origin: "internal",
+    authority_level: "working_material",
+    knowledge_scale: "micro",
+    domain: "operations",
+    parse_status: "extracted",
+    confidence: "medium",
+    warnings: [],
+    official_use_allowed: false,
+    use_boundary: "可用于整理候选流程，不能直接作为正式 SOP。",
+  },
+  created_at: "2026-07-10T10:00:00Z",
+  updated_at: "2026-07-10T10:00:00Z",
+} as const;
+
+const CLIENT_UPLOAD_ID = "80000000-0000-0000-0000-000000000001";
+
 const FORBIDDEN_FRONTSTAGE_TERMS = [
   "claim",
   "chunk_id",
@@ -109,8 +157,8 @@ describe("HXYOS product shell", () => {
     ).toBeEnabled();
     expect(screen.getAllByTestId("composer")).toHaveLength(1);
     expect(
-      screen.getByRole("button", { name: "添加附件（即将开放）" }),
-    ).toBeDisabled();
+      screen.getByRole("button", { name: "添加资料" }),
+    ).toBeEnabled();
   });
 
   it("limits primary navigation to conversation, tasks, and profile", () => {
@@ -436,5 +484,219 @@ describe("HXYOS product shell", () => {
     ).toBeVisible();
     await act(async () => Promise.resolve());
     expect(screen.queryByText("这是一条旧回答")).not.toBeInTheDocument();
+  });
+
+  it("uploads a selected file and shows one useful receipt with original access", async () => {
+    const user = userEvent.setup();
+    const materials = materialGateway();
+    const { container } = render(
+      <App
+        initialSession={TEST_SESSION}
+        conversationClient={conversationGateway()}
+        materialClient={materials}
+        materialUploadIdFactory={() => CLIENT_UPLOAD_ID}
+      />,
+    );
+    const file = new File(["先问顾客状态，再介绍服务。"], "首店接待流程.md", {
+      type: "text/markdown",
+    });
+    const input = container.querySelector<HTMLInputElement>(
+      'input[type="file"]',
+    );
+
+    expect(input).not.toBeNull();
+    await user.upload(input!, file);
+
+    expect(materials.uploadMaterial).toHaveBeenCalledWith(
+      file,
+      "",
+      CLIENT_UPLOAD_ID,
+    );
+    expect(await screen.findByText("首店接待流程.md")).toBeVisible();
+    expect(
+      within(screen.getByTestId("composer-region")).getByText(
+        "首店接待流程.md",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByLabelText("当前对话")).not.toBeInTheDocument();
+    expect(screen.getByText("已收到")).toBeVisible();
+    expect(
+      screen.getByText("首店员工接待流程草稿，重点是先问顾客状态，再介绍服务。"),
+    ).toBeVisible();
+    expect(screen.getByRole("link", { name: "查看原文" })).toHaveAttribute(
+      "href",
+      "/api/v1/materials/70000000-0000-0000-0000-000000000001/content",
+    );
+    expect(screen.queryByText("working_material")).not.toBeInTheDocument();
+  });
+
+  it("does not offer material upload without the assignment capability", () => {
+    const session = {
+      ...TEST_SESSION,
+      active_assignment: {
+        ...TEST_SESSION.active_assignment,
+        capabilities: TEST_SESSION.active_assignment.capabilities.filter(
+          (capability) => capability !== "materials:create",
+        ),
+      },
+    };
+
+    render(<App initialSession={session} materialClient={materialGateway()} />);
+
+    expect(screen.getByRole("button", { name: "添加资料" })).toBeDisabled();
+  });
+
+  it("restores the latest material receipt for the authenticated assignment", async () => {
+    const materials = materialGateway({
+      listMaterials: vi.fn().mockResolvedValue({
+        items: [UNDERSTOOD_MATERIAL],
+        count: 1,
+      }),
+    });
+
+    render(<App initialSession={TEST_SESSION} materialClient={materials} />);
+
+    expect(await screen.findByText("首店接待流程.md")).toBeVisible();
+    expect(materials.listMaterials).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("link", { name: "查看原文" })).toBeVisible();
+  });
+
+  it("keeps the original visible when system understanding is incomplete", async () => {
+    const materials = materialGateway({
+      listMaterials: vi.fn().mockResolvedValue({
+        items: [
+          {
+            ...UNDERSTOOD_MATERIAL,
+            status: "understanding_failed",
+            understanding: {
+              ...UNDERSTOOD_MATERIAL.understanding,
+              summary: "资料已保存，但本次系统理解没有完成。",
+              parse_status: "metadata_only",
+              confidence: "low",
+            },
+          },
+        ],
+        count: 1,
+      }),
+    });
+
+    render(<App initialSession={TEST_SESSION} materialClient={materials} />);
+
+    expect(await screen.findByText("已保存")).toBeVisible();
+    expect(
+      screen.getByText("资料已保存，但本次系统理解没有完成。"),
+    ).toBeVisible();
+    expect(screen.getByRole("link", { name: "查看原文" })).toBeVisible();
+    expect(screen.queryByText("已理解")).not.toBeInTheDocument();
+  });
+
+  it("retries understanding against the saved original", async () => {
+    const user = userEvent.setup();
+    const failedMaterial = {
+      ...UNDERSTOOD_MATERIAL,
+      status: "understanding_failed" as const,
+      understanding: {
+        ...UNDERSTOOD_MATERIAL.understanding,
+        summary: "资料已保存，但本次系统理解没有完成。",
+        parse_status: "metadata_only" as const,
+        confidence: "low" as const,
+      },
+    };
+    const materials = materialGateway({
+      listMaterials: vi.fn().mockResolvedValue({
+        items: [failedMaterial],
+        count: 1,
+      }),
+      retryUnderstanding: vi.fn().mockResolvedValue({
+        material: UNDERSTOOD_MATERIAL,
+      }),
+    });
+
+    render(<App initialSession={TEST_SESSION} materialClient={materials} />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "重新理解资料" }),
+    );
+
+    expect(materials.retryUnderstanding).toHaveBeenCalledWith(
+      UNDERSTOOD_MATERIAL.id,
+    );
+    expect(
+      await screen.findByText(
+        "首店员工接待流程草稿，重点是先问顾客状态，再介绍服务。",
+      ),
+    ).toBeVisible();
+  });
+
+  it("announces material upload progress and prevents duplicate selection", async () => {
+    const user = userEvent.setup();
+    let resolveUpload: (value: { material: typeof UNDERSTOOD_MATERIAL }) => void =
+      () => undefined;
+    const materials = materialGateway({
+      uploadMaterial: vi.fn(
+        () =>
+          new Promise<{ material: typeof UNDERSTOOD_MATERIAL }>((resolve) => {
+            resolveUpload = resolve;
+          }),
+      ),
+    });
+    const { container } = render(
+      <App initialSession={TEST_SESSION} materialClient={materials} />,
+    );
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]');
+    const file = new File(["门店资料"], "门店资料.md", {
+      type: "text/markdown",
+    });
+
+    await user.upload(input!, file);
+
+    expect(screen.getByRole("status")).toHaveTextContent("正在接收门店资料.md");
+    expect(screen.getByRole("button", { name: "添加资料" })).toBeDisabled();
+
+    await act(async () => resolveUpload({ material: UNDERSTOOD_MATERIAL }));
+    expect(await screen.findByText("首店接待流程.md")).toBeVisible();
+  });
+
+  it("keeps a failed material available for one-click retry", async () => {
+    const user = userEvent.setup();
+    const materials = materialGateway({
+      uploadMaterial: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("network unavailable"))
+        .mockResolvedValueOnce({ material: UNDERSTOOD_MATERIAL }),
+    });
+    const { container } = render(
+      <App
+        initialSession={TEST_SESSION}
+        materialClient={materials}
+        materialUploadIdFactory={() => CLIENT_UPLOAD_ID}
+      />,
+    );
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]');
+    const file = new File(["门店资料"], "门店资料.md", {
+      type: "text/markdown",
+    });
+
+    await user.upload(input!, file);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "门店资料.md 没有上传完成",
+    );
+    await user.click(screen.getByRole("button", { name: "重新上传" }));
+
+    expect(materials.uploadMaterial).toHaveBeenCalledTimes(2);
+    expect(materials.uploadMaterial).toHaveBeenNthCalledWith(
+      1,
+      file,
+      "",
+      CLIENT_UPLOAD_ID,
+    );
+    expect(materials.uploadMaterial).toHaveBeenNthCalledWith(
+      2,
+      file,
+      "",
+      CLIENT_UPLOAD_ID,
+    );
+    expect(await screen.findByText("首店接待流程.md")).toBeVisible();
   });
 });

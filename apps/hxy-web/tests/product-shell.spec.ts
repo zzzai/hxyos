@@ -8,7 +8,13 @@ const TEST_SESSION = {
     store: { id: "store-e2e", name: "首店" },
     role: "store_employee",
     role_label: "门店员工",
-    capabilities: ["conversation:use", "store:read", "tasks:read"],
+    capabilities: [
+      "conversation:use",
+      "materials:create",
+      "materials:read",
+      "store:read",
+      "tasks:read",
+    ],
   },
   available_assignments: [],
 };
@@ -82,6 +88,48 @@ async function mockProductApi(page: Page) {
             },
           ],
           next_actions: [],
+        },
+      },
+    });
+  });
+  await page.route("**/api/v1/materials*", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({ status: 200, json: { items: [], count: 0 } });
+      return;
+    }
+    await route.fulfill({
+      status: 201,
+      json: {
+        material: {
+          id: "70000000-0000-0000-0000-000000000001",
+          file_name: "首店接待流程.md",
+          media_type: "text/markdown",
+          size_bytes: 42,
+          status: "understood",
+          receipt: {
+            status: "已收到",
+            message: "资料已安全保存，当前不会自动变成正式知识。",
+          },
+          original: {
+            url: "/api/v1/materials/70000000-0000-0000-0000-000000000001/content",
+            can_preview: true,
+          },
+          understanding: {
+            summary:
+              "首店员工接待流程草稿，重点是先问顾客状态，再介绍服务。",
+            document_type: "门店流程资料",
+            source_origin: "internal",
+            authority_level: "working_material",
+            knowledge_scale: "micro",
+            domain: "operations",
+            parse_status: "extracted",
+            confidence: "medium",
+            warnings: [],
+            official_use_allowed: false,
+            use_boundary: "可用于整理候选流程，不能直接作为正式 SOP。",
+          },
+          created_at: "2026-07-10T10:00:00Z",
+          updated_at: "2026-07-10T10:00:00Z",
         },
       },
     });
@@ -168,5 +216,39 @@ test.describe("HXYOS product shell viewport contract", () => {
     await expect(details.getByText("先问状态，不做治疗承诺")).toBeVisible();
     await expect(page.getByText("chunk_id")).toHaveCount(0);
     await expect(page.getByText("/root/hxy")).toHaveCount(0);
+  });
+
+  test("uploads a material into the mobile conversation without covering the composer", async ({
+    page,
+  }) => {
+    await mockProductApi(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/");
+
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "首店接待流程.md",
+      mimeType: "text/markdown",
+      buffer: Buffer.from("先问顾客状态，再介绍服务。"),
+    });
+
+    await expect(page.getByText("首店接待流程.md")).toBeVisible();
+    await expect(page.getByText("已收到")).toBeVisible();
+    await expect(
+      page.getByText("首店员工接待流程草稿，重点是先问顾客状态，再介绍服务。"),
+    ).toBeVisible();
+    await expect(page.getByRole("link", { name: "查看原文" })).toBeVisible();
+
+    const composerBox = await page.getByTestId("composer").boundingBox();
+    const navigationBox = await page
+      .getByRole("navigation", { name: "主要导航" })
+      .boundingBox();
+    expect(composerBox).not.toBeNull();
+    expect(navigationBox).not.toBeNull();
+    expect(composerBox!.y + composerBox!.height).toBeLessThanOrEqual(
+      navigationBox!.y,
+    );
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBeLessThanOrEqual(390);
   });
 });
