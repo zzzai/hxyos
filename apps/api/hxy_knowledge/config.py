@@ -13,6 +13,8 @@ class KnowledgeSettings:
     api_token: str = ""
     cors_origins: tuple[str, ...] = ()
     max_upload_bytes: int = 10 * 1024 * 1024
+    max_material_storage_bytes: int = 1024 * 1024 * 1024
+    min_material_free_bytes: int = 512 * 1024 * 1024
     allowed_upload_extensions: tuple[str, ...] = (
         ".csv",
         ".doc",
@@ -60,6 +62,14 @@ def get_settings() -> KnowledgeSettings:
             "http://127.0.0.1:8088,http://localhost:8088,http://127.0.0.1:18084,http://localhost:18084",
         ),
         max_upload_bytes=_int_env("HXY_MAX_UPLOAD_BYTES", 10 * 1024 * 1024),
+        max_material_storage_bytes=_int_env(
+            "HXY_MAX_MATERIAL_STORAGE_BYTES",
+            1024 * 1024 * 1024,
+        ),
+        min_material_free_bytes=_int_env(
+            "HXY_MIN_MATERIAL_FREE_BYTES",
+            512 * 1024 * 1024,
+        ),
         allowed_upload_extensions=tuple(
             extension.lower()
             for extension in _csv_env(

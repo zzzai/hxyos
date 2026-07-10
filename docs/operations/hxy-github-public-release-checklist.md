@@ -17,6 +17,7 @@ knowledge/runs/
 knowledge/reports/
 knowledge/okf/core/
 data/seeds/
+data/product-materials/
 data/backups/
 data/exports/
 quarantine/

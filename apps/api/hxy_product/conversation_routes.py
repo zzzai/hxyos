@@ -16,7 +16,7 @@ from .conversation_schemas import (
     SendMessageRequest,
     SendMessageResponse,
 )
-from .routes import ROLE_CAPABILITIES
+from .routes import ROLE_CAPABILITIES, assignment_for_principal
 
 
 RepositoryFactory = Callable[[], Any]
@@ -179,12 +179,10 @@ def create_conversation_router(
         principal: Principal = Depends(resolve_principal),
         identity_repository: Any = Depends(get_identity_repository),
     ) -> Any:
-        assignments = identity_repository.list_assignments(principal.account_id)
-        for assignment in assignments:
-            capabilities = ROLE_CAPABILITIES.get(assignment.role, ())
-            if "conversation:use" in capabilities:
-                return assignment
-        raise HTTPException(status_code=403, detail="Forbidden")
+        assignment = assignment_for_principal(principal, identity_repository)
+        if "conversation:use" not in ROLE_CAPABILITIES.get(assignment.role, ()):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        return assignment
 
     @router.post(
         "/api/v1/conversations",

@@ -57,6 +57,7 @@ PRIVATE_PATH_MARKERS = [
     "knowledge/reports/",
     "knowledge/okf/core/",
     "data/seeds/",
+    "data/product-materials/",
     "data/backups/",
     "data/exports/",
     "apps/menu-h5/",
@@ -162,6 +163,7 @@ knowledge/runs/
 knowledge/reports/
 knowledge/okf/core/
 data/seeds/
+data/product-materials/
 data/backups/
 ops/env/*.env
 ```
@@ -211,7 +213,7 @@ The public repository must not contain private brand knowledge, internal source 
 ## Rules
 
 1. Keep real organizational knowledge in local/private storage.
-2. Do not commit `knowledge/raw`, `knowledge/wiki`, `knowledge/runs`, `knowledge/reports`, `knowledge/okf/core`, `data/seeds`, backups, exports, or `.env` files.
+2. Do not commit `knowledge/raw`, `knowledge/wiki`, `knowledge/runs`, `knowledge/reports`, `knowledge/okf/core`, `data/seeds`, `data/product-materials`, backups, exports, or `.env` files.
 3. Public fixtures must be generic examples.
 4. Process memory must never be treated as approved knowledge.
 5. AI-generated drafts must stop at human review.
@@ -235,6 +237,7 @@ knowledge/wiki/
 knowledge/okf/core/
 knowledge/taxonomy-overrides.json
 data/seeds/
+data/product-materials/
 data/exports/
 data/backups/
 

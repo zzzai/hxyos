@@ -41,12 +41,21 @@ class IdentityRepository:
         with self.connect() as connection:
             row = connection.execute(
                 """
-                SELECT account.id::text AS account_id, account.display_name
+                SELECT account.id::text AS account_id,
+                       account.display_name,
+                       assignment.assignment_id::text AS assignment_id
                 FROM staff_sessions AS session
                 JOIN staff_accounts AS account ON account.id = session.account_id
+                JOIN hxy_role_assignments AS assignment
+                  ON assignment.assignment_id = session.assignment_id
+                 AND assignment.account_id = session.account_id
+                JOIN hxy_organizations AS organization
+                  ON organization.organization_id = assignment.organization_id
                 WHERE session.token_hash = %s
                   AND session.expires_at > NOW()
                   AND account.status = 'active'
+                  AND assignment.status = 'active'
+                  AND organization.status = 'active'
                 LIMIT 1
                 """,
                 (token_hash,),
@@ -56,16 +65,30 @@ class IdentityRepository:
         return Principal(
             account_id=str(row["account_id"]),
             display_name=str(row["display_name"]),
+            assignment_id=str(row["assignment_id"]),
         )
 
     def find_active_principal(self, account_id: str) -> Principal | None:
         with self.connect() as connection:
             row = connection.execute(
                 """
-                SELECT id::text AS account_id, display_name
-                FROM staff_accounts
-                WHERE id = %s::uuid
-                  AND status = 'active'
+                SELECT account.id::text AS account_id,
+                       account.display_name,
+                       assignment.assignment_id::text AS assignment_id
+                FROM staff_accounts AS account
+                JOIN LATERAL (
+                  SELECT role_assignment.assignment_id
+                  FROM hxy_role_assignments AS role_assignment
+                  JOIN hxy_organizations AS organization
+                    ON organization.organization_id = role_assignment.organization_id
+                  WHERE role_assignment.account_id = account.id
+                    AND role_assignment.status = 'active'
+                    AND organization.status = 'active'
+                  ORDER BY role_assignment.created_at, role_assignment.assignment_id
+                  LIMIT 1
+                ) AS assignment ON TRUE
+                WHERE account.id = %s::uuid
+                  AND account.status = 'active'
                 LIMIT 1
                 """,
                 (account_id,),
@@ -75,6 +98,7 @@ class IdentityRepository:
         return Principal(
             account_id=str(row["account_id"]),
             display_name=str(row["display_name"]),
+            assignment_id=str(row["assignment_id"]),
         )
 
     def exchange_gateway_assertion(
@@ -90,10 +114,23 @@ class IdentityRepository:
             with self.connect() as connection:
                 row = connection.execute(
                     """
-                    SELECT id::text AS account_id, display_name
-                    FROM staff_accounts
-                    WHERE id = %s::uuid
-                      AND status = 'active'
+                    SELECT account.id::text AS account_id,
+                           account.display_name,
+                           assignment.assignment_id::text AS assignment_id
+                    FROM staff_accounts AS account
+                    JOIN LATERAL (
+                      SELECT role_assignment.assignment_id
+                      FROM hxy_role_assignments AS role_assignment
+                      JOIN hxy_organizations AS organization
+                        ON organization.organization_id = role_assignment.organization_id
+                      WHERE role_assignment.account_id = account.id
+                        AND role_assignment.status = 'active'
+                        AND organization.status = 'active'
+                      ORDER BY role_assignment.created_at, role_assignment.assignment_id
+                      LIMIT 1
+                    ) AS assignment ON TRUE
+                    WHERE account.id = %s::uuid
+                      AND account.status = 'active'
                     LIMIT 1
                     """,
                     (account_id,),
@@ -109,16 +146,27 @@ class IdentityRepository:
                 )
                 connection.execute(
                     """
-                    INSERT INTO staff_sessions (token_hash, account_id, expires_at)
-                    VALUES (%s, %s::uuid, NOW() + (%s * INTERVAL '1 second'))
+                    INSERT INTO staff_sessions (
+                      token_hash,
+                      account_id,
+                      assignment_id,
+                      expires_at
+                    )
+                    VALUES (
+                      %s,
+                      %s::uuid,
+                      %s::uuid,
+                      NOW() + (%s * INTERVAL '1 second')
+                    )
                     """,
-                    (token_hash, account_id, ttl_seconds),
+                    (token_hash, account_id, row["assignment_id"], ttl_seconds),
                 )
         except UniqueViolation:
             return None
         return Principal(
             account_id=str(row["account_id"]),
             display_name=str(row["display_name"]),
+            assignment_id=str(row["assignment_id"]),
         )
 
     def delete_session(self, raw_token: str) -> None:

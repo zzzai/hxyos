@@ -31,6 +31,7 @@ NOW = datetime(2026, 7, 10, 9, 0, tzinfo=timezone.utc)
 class FakePrincipal:
     account_id: str
     display_name: str
+    assignment_id: str
 
 
 @dataclass(frozen=True)
@@ -58,7 +59,7 @@ class FakeIdentityRepository:
     def resolve_session(self, raw_token: str) -> FakePrincipal | None:
         if raw_token != "valid-session":
             return None
-        return FakePrincipal(ACCOUNT_ID, "测试店长")
+        return FakePrincipal(ACCOUNT_ID, "测试店长", ASSIGNMENT_ID)
 
     def list_assignments(self, account_id: str) -> list[FakeAssignment]:
         self.assignment_account_ids.append(account_id)

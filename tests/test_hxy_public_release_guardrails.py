@@ -33,6 +33,7 @@ def test_public_release_checklist_documents_local_only_materials() -> None:
         "knowledge/reports/",
         "knowledge/okf/core/",
         "ops/env/*.env",
+        "data/product-materials/",
         "data/backups/",
         "quarantine/",
         "python3 scripts/check-hxy-public-release.py",
@@ -40,6 +41,28 @@ def test_public_release_checklist_documents_local_only_materials() -> None:
         "scripts/export-hxyos-public.py",
     ]:
         assert phrase in checklist
+
+
+def test_product_material_uploads_are_git_ignored() -> None:
+    result = subprocess.run(
+        [
+            "git",
+            "check-ignore",
+            "--quiet",
+            "data/product-materials/assignment/material/file.pdf",
+        ],
+        cwd=ROOT,
+    )
+
+    assert result.returncode == 0
+
+
+def test_release_tools_treat_product_materials_as_private() -> None:
+    for relative_path in [
+        "scripts/check-hxy-public-release.py",
+        "scripts/export-hxyos-public.py",
+    ]:
+        assert '"data/product-materials/"' in read(relative_path)
 
 
 def test_public_release_preflight_passes_current_repository() -> None:

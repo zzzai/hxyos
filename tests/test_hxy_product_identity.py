@@ -17,12 +17,14 @@ from apps.api.hxy_knowledge_api import create_app
 
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATION = ROOT / "data" / "migrations" / "009_hxy_product_identity.sql"
+SESSION_MIGRATION = ROOT / "data" / "migrations" / "012_hxy_assignment_sessions.sql"
 
 
 @dataclass(frozen=True)
 class FakePrincipal:
     account_id: str
     display_name: str
+    assignment_id: str
 
 
 @dataclass(frozen=True)
@@ -65,8 +67,16 @@ class FakeIdentityRepository:
         self.deleted_sessions: list[str] = []
         self.consumed_assertion_ids: set[str] = set()
         self.principals = {
-            "employee-session": FakePrincipal(EMPLOYEE_ID, "测试店员"),
-            "founder-session": FakePrincipal(FOUNDER_ID, "测试创始人"),
+            "employee-session": FakePrincipal(
+                EMPLOYEE_ID,
+                "测试店员",
+                EMPLOYEE_ASSIGNMENT_ID,
+            ),
+            "founder-session": FakePrincipal(
+                FOUNDER_ID,
+                "测试创始人",
+                FOUNDER_ASSIGNMENT_ID,
+            ),
         }
         self.assignments = {
             EMPLOYEE_ID: [
@@ -434,6 +444,8 @@ def test_employee_session_returns_only_its_assignment_and_capabilities(identity_
             "capabilities": [
                 "conversation:use",
                 "issues:create",
+                "materials:create",
+                "materials:read",
                 "store:read",
                 "tasks:read",
                 "training:practice",
@@ -449,6 +461,8 @@ def test_employee_session_returns_only_its_assignment_and_capabilities(identity_
                 "capabilities": [
                     "conversation:use",
                     "issues:create",
+                    "materials:create",
+                    "materials:read",
                     "store:read",
                     "tasks:read",
                     "training:practice",
@@ -476,6 +490,25 @@ def test_founder_session_returns_founder_assignment(identity_client) -> None:
         FOUNDER_ASSIGNMENT_ID,
         FOUNDER_OPERATIONS_ASSIGNMENT_ID,
     }
+
+
+def test_me_uses_the_assignment_bound_to_the_session_not_list_order(
+    identity_client,
+) -> None:
+    client, repository, _ = identity_client
+    repository.principals["founder-session"] = FakePrincipal(
+        FOUNDER_ID,
+        "测试创始人",
+        FOUNDER_OPERATIONS_ASSIGNMENT_ID,
+    )
+
+    response = client.get("/api/v1/me", headers=bearer("founder-session"))
+
+    assert response.status_code == 200
+    assert response.json()["active_assignment"]["assignment_id"] == (
+        FOUNDER_OPERATIONS_ASSIGNMENT_ID
+    )
+    assert response.json()["active_assignment"]["role"] == "hq_operations"
 
 
 def test_http_only_session_cookie_authenticates(identity_client) -> None:
@@ -542,7 +575,7 @@ def test_invalid_authorization_does_not_fall_back_to_valid_cookie(identity_clien
     assert repository.assignment_account_ids == []
 
 
-def test_owned_assignment_can_be_selected_as_active(identity_client) -> None:
+def test_query_parameter_cannot_override_the_session_assignment(identity_client) -> None:
     client, _, _ = identity_client
 
     response = client.get(
@@ -550,8 +583,8 @@ def test_owned_assignment_can_be_selected_as_active(identity_client) -> None:
         headers=bearer("founder-session"),
     )
 
-    assert response.status_code == 200
-    assert response.json()["active_assignment"]["role"] == "hq_operations"
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Forbidden"}
 
 
 def test_foreign_assignment_returns_generic_forbidden(identity_client) -> None:
@@ -667,6 +700,17 @@ def test_migration_defines_identity_ownership_without_business_seed_data() -> No
     assert "INSERT INTO" not in sql.upper()
 
 
+def test_session_migration_binds_each_session_to_one_assignment() -> None:
+    sql = SESSION_MIGRATION.read_text(encoding="utf-8")
+    normalized = " ".join(sql.split())
+
+    assert "ALTER TABLE staff_sessions" in normalized
+    assert "ADD COLUMN IF NOT EXISTS assignment_id UUID" in normalized
+    assert "REFERENCES hxy_role_assignments(assignment_id)" in normalized
+    assert "CREATE INDEX IF NOT EXISTS" in normalized
+    assert "INSERT INTO" not in sql.upper()
+
+
 class FakeQueryResult:
     def __init__(self, row=None, rows=None) -> None:
         self.row = row
@@ -714,7 +758,11 @@ class GatewayExchangeConnection:
         self.calls.append((sql, params))
         if "FROM staff_accounts" in sql:
             return FakeQueryResult(
-                row={"account_id": EMPLOYEE_ID, "display_name": "测试店员"},
+                row={
+                    "account_id": EMPLOYEE_ID,
+                    "display_name": "测试店员",
+                    "assignment_id": EMPLOYEE_ASSIGNMENT_ID,
+                },
             )
         if "INSERT INTO hxy_consumed_gateway_assertions" in sql and self.duplicate:
             raise UniqueViolation("assertion already consumed")
@@ -727,7 +775,11 @@ def test_postgres_repository_hashes_raw_token_and_requires_active_identity(monke
     connection = FakeConnection(
         [
             FakeQueryResult(
-                row={"account_id": EMPLOYEE_ID, "display_name": "测试店员"},
+                row={
+                    "account_id": EMPLOYEE_ID,
+                    "display_name": "测试店员",
+                    "assignment_id": EMPLOYEE_ASSIGNMENT_ID,
+                },
             )
         ]
     )
@@ -738,9 +790,11 @@ def test_postgres_repository_hashes_raw_token_and_requires_active_identity(monke
 
     assert principal is not None
     assert principal.account_id == EMPLOYEE_ID
+    assert principal.assignment_id == EMPLOYEE_ASSIGNMENT_ID
     sql, params = connection.calls[0]
     assert "staff_sessions" in sql
     assert "staff_accounts" in sql
+    assert "hxy_role_assignments" in sql
     assert "expires_at > NOW()" in sql
     assert "status = 'active'" in sql
     assert params == (
@@ -789,7 +843,11 @@ def test_postgres_repository_finds_only_active_asserted_account(monkeypatch) -> 
     connection = FakeConnection(
         [
             FakeQueryResult(
-                row={"account_id": EMPLOYEE_ID, "display_name": "测试店员"},
+                row={
+                    "account_id": EMPLOYEE_ID,
+                    "display_name": "测试店员",
+                    "assignment_id": EMPLOYEE_ASSIGNMENT_ID,
+                },
             )
         ]
     )
@@ -801,6 +859,7 @@ def test_postgres_repository_finds_only_active_asserted_account(monkeypatch) -> 
     assert principal is not None
     assert principal.account_id == EMPLOYEE_ID
     assert principal.display_name == "测试店员"
+    assert principal.assignment_id == EMPLOYEE_ASSIGNMENT_ID
     sql, params = connection.calls[0]
     assert "FROM staff_accounts" in sql
     assert "status = 'active'" in sql
@@ -835,7 +894,12 @@ def test_postgres_repository_atomically_consumes_assertion_and_creates_hashed_se
     assert "INSERT INTO hxy_consumed_gateway_assertions" in assertion_sql
     assert assertion_params == (GATEWAY_ASSERTION_ID, 2_000_000_000)
     assert "INSERT INTO staff_sessions" in session_sql
-    assert session_params == (expected_hash, EMPLOYEE_ID, 1800)
+    assert session_params == (
+        expected_hash,
+        EMPLOYEE_ID,
+        EMPLOYEE_ASSIGNMENT_ID,
+        1800,
+    )
     assert all("new-raw-session" not in sql for sql, _ in connection.calls)
     assert all("new-raw-session" not in params for _, params in connection.calls)
 

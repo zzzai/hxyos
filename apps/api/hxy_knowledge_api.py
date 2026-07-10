@@ -81,6 +81,9 @@ from hxy_knowledge.workspace_events import (
 from hxy_product.auth import ProductAuthSettings
 from hxy_product.conversation_repository import ConversationRepository
 from hxy_product.conversation_routes import create_conversation_router
+from hxy_product.material_repository import MaterialRepository
+from hxy_product.material_routes import create_material_router
+from hxy_product.material_understanding import build_material_understanding
 from hxy_product.repository import IdentityRepository
 from hxy_product.routes import create_identity_router
 
@@ -358,6 +361,15 @@ def _default_conversation_repository_factory(database_url: str) -> RepositoryFac
         if not database_url:
             raise HTTPException(status_code=503, detail="HXY_DATABASE_URL is not configured")
         return ConversationRepository(database_url)
+
+    return make_repository
+
+
+def _default_material_repository_factory(database_url: str) -> RepositoryFactory:
+    def make_repository() -> MaterialRepository:
+        if not database_url:
+            raise HTTPException(status_code=503, detail="HXY_DATABASE_URL is not configured")
+        return MaterialRepository(database_url)
 
     return make_repository
 
@@ -3451,6 +3463,8 @@ def create_app(
     model_router: Any | None = None,
     product_identity_repository_factory: RepositoryFactory | None = None,
     conversation_repository_factory: RepositoryFactory | None = None,
+    material_repository_factory: RepositoryFactory | None = None,
+    material_understanding_builder: Callable[..., dict[str, Any]] | None = None,
     product_auth_settings: ProductAuthSettings | None = None,
 ) -> FastAPI:
     settings = get_settings()
@@ -3468,6 +3482,13 @@ def create_app(
     make_conversation_repository = (
         conversation_repository_factory
         or _default_conversation_repository_factory(settings.database_url)
+    )
+    make_material_repository = (
+        material_repository_factory
+        or _default_material_repository_factory(settings.database_url)
+    )
+    build_product_material_understanding = (
+        material_understanding_builder or build_material_understanding
     )
     resolved_product_auth_settings = product_auth_settings or ProductAuthSettings.from_environment()
     model_router = model_router or ModelRouter()
@@ -3534,6 +3555,18 @@ def create_app(
             make_product_identity_repository,
             make_conversation_repository,
             generate_product_answer,
+        )
+    )
+    app.include_router(
+        create_material_router(
+            make_product_identity_repository,
+            make_material_repository,
+            material_root=resolved_root / "data" / "product-materials",
+            max_upload_bytes=settings.max_upload_bytes,
+            max_assignment_storage_bytes=settings.max_material_storage_bytes,
+            min_material_free_bytes=settings.min_material_free_bytes,
+            allowed_extensions=allowed_upload_extensions,
+            understanding_builder=build_product_material_understanding,
         )
     )
 

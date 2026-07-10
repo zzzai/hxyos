@@ -35,6 +35,8 @@ ROLE_CAPABILITIES = MappingProxyType(
     {
         "founder": (
             "conversation:use",
+            "materials:create",
+            "materials:read",
             "organization:read",
             "stores:read",
             "tasks:manage",
@@ -42,6 +44,8 @@ ROLE_CAPABILITIES = MappingProxyType(
         ),
         "hq_operations": (
             "conversation:use",
+            "materials:create",
+            "materials:read",
             "operations:manage",
             "organization:read",
             "stores:read",
@@ -51,6 +55,8 @@ ROLE_CAPABILITIES = MappingProxyType(
         "store_manager": (
             "conversation:use",
             "issues:create",
+            "materials:create",
+            "materials:read",
             "store:operate",
             "store:read",
             "tasks:manage",
@@ -59,6 +65,8 @@ ROLE_CAPABILITIES = MappingProxyType(
         "store_employee": (
             "conversation:use",
             "issues:create",
+            "materials:create",
+            "materials:read",
             "store:read",
             "tasks:read",
             "training:practice",
@@ -70,6 +78,20 @@ ROLE_CAPABILITIES = MappingProxyType(
         ),
     }
 )
+
+
+def assignment_for_principal(principal: Principal, repository: Any) -> Any:
+    assignment = next(
+        (
+            item
+            for item in repository.list_assignments(principal.account_id)
+            if item.assignment_id == principal.assignment_id
+        ),
+        None,
+    )
+    if assignment is None:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return assignment
 
 
 def _assignment_context(record: Any) -> AssignmentContext:
@@ -229,18 +251,18 @@ def create_identity_router(
         if not assignments:
             raise HTTPException(status_code=403, detail="Forbidden")
 
-        active_assignment = assignments[0]
-        if assignment_id is not None:
-            active_assignment = next(
-                (
-                    assignment
-                    for assignment in assignments
-                    if assignment.assignment_id == assignment_id
-                ),
-                None,
-            )
-            if active_assignment is None:
-                raise HTTPException(status_code=403, detail="Forbidden")
+        active_assignment = next(
+            (
+                assignment
+                for assignment in assignments
+                if assignment.assignment_id == principal.assignment_id
+            ),
+            None,
+        )
+        if active_assignment is None:
+            raise HTTPException(status_code=403, detail="Forbidden")
+        if assignment_id is not None and assignment_id != active_assignment.assignment_id:
+            raise HTTPException(status_code=403, detail="Forbidden")
 
         return MeResponse(
             user=UserContext(

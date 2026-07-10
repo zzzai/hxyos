@@ -11,6 +11,7 @@ from fastapi import Cookie, Depends, Header, HTTPException
 class Principal:
     account_id: str
     display_name: str
+    assignment_id: str
 
 
 @dataclass(frozen=True)
