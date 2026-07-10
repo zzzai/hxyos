@@ -5,6 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "apps" / "hxy-web" / "src" / "App.tsx"
+ROOT_PACKAGE = ROOT / "package.json"
 JOURNEYS = (
     ROOT / "tests" / "fixtures" / "product-shell" / "role-journeys.json"
 )
@@ -70,6 +71,13 @@ class HxyProductShellContractTest(unittest.TestCase):
             "/root/",
         ]:
             self.assertNotIn(internal_term, fixture_text)
+
+    def test_root_test_command_includes_product_shell_tests(self):
+        package = json.loads(ROOT_PACKAGE.read_text(encoding="utf-8"))
+        scripts = package["scripts"]
+
+        self.assertIn("test:web", scripts)
+        self.assertIn("npm run test:web", scripts["test"])
 
 
 if __name__ == "__main__":

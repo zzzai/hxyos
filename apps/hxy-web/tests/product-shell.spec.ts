@@ -38,6 +38,14 @@ test.describe("HXYOS product shell viewport contract", () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/");
 
+    const expandRail = page.getByRole("button", { name: "展开导航栏" });
+    await expect(expandRail).toBeVisible();
+    await expandRail.click();
+    const collapseRail = page.getByRole("button", { name: "收起导航栏" });
+    await expect(collapseRail).toBeVisible();
+    await collapseRail.click();
+    await expect(expandRail).toBeVisible();
+
     const dimensions = await page.evaluate(() => ({
       documentWidth: document.documentElement.scrollWidth,
       viewportWidth: window.innerWidth,

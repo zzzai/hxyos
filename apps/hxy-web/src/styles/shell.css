@@ -124,13 +124,26 @@ button:disabled {
 
 .rail-compact .rail-header {
   grid-template-columns: 36px;
+  grid-template-rows: 36px 36px;
+  min-height: 100px;
+  align-content: start;
   justify-content: center;
   padding-inline: 20px;
 }
 
-.rail-compact .brand-name,
-.rail-compact .rail-toggle {
+.rail-compact .brand-name {
   display: none;
+}
+
+.rail-compact .brand-mark {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.rail-compact .rail-toggle {
+  display: inline-grid;
+  grid-column: 1;
+  grid-row: 2;
 }
 
 .primary-navigation {
