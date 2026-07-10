@@ -146,7 +146,12 @@ def _public_material(record: dict[str, Any]) -> dict[str, Any]:
         "file_name": str(record.get("file_name") or "未命名资料")[:180],
         "media_type": str(record.get("media_type") or "application/octet-stream")[:120],
         "size_bytes": int(record.get("size_bytes") or 0),
-        "status": str(record.get("status") or "received"),
+        "status": {
+            "understood": "ready",
+            "ready": "ready",
+            "understanding_failed": "needs_attention",
+            "needs_attention": "needs_attention",
+        }.get(str(record.get("status") or ""), "processing"),
         "receipt": {
             "status": "已收到",
             "message": "资料已安全保存，当前不会自动变成正式知识。",
@@ -268,7 +273,7 @@ def create_material_router(
             raise
 
         media_type = _derived_media_type(file_name)
-        material_status = "understood"
+        material_status = "processing"
         try:
             understanding = _safe_understanding(
                 understanding_builder(
@@ -280,12 +285,11 @@ def create_material_router(
                 )
             )
         except Exception:
-            material_status = "understanding_failed"
             understanding = _safe_understanding(
                 {
-                    "summary": f"已安全保存《{Path(file_name).stem}》，但本次系统理解没有完成。",
+                    "summary": f"已安全保存《{Path(file_name).stem}》，系统将在后台继续理解。",
                     "parse_status": "metadata_only",
-                    "warnings": ["系统理解暂时失败，原文件已保留，可稍后重试。"],
+                    "warnings": ["初步理解暂未完成，原文件已保留并进入后台处理。"],
                     "official_use_allowed": False,
                 }
             )
@@ -352,36 +356,9 @@ def create_material_router(
         if path is None or not path.is_file():
             raise _not_found()
 
-        material_status = "understood"
-        try:
-            understanding = _safe_understanding(
-                understanding_builder(
-                    path=path,
-                    file_name=str(record.get("file_name") or ""),
-                    media_type=str(record.get("media_type") or "application/octet-stream"),
-                    note=str(record.get("note") or ""),
-                    role=assignment.role,
-                )
-            )
-        except Exception:
-            material_status = "understanding_failed"
-            understanding = _safe_understanding(
-                {
-                    "summary": (
-                        f"已安全保存《{Path(str(record.get('file_name') or '')).stem}》，"
-                        "但本次系统理解没有完成。"
-                    ),
-                    "parse_status": "metadata_only",
-                    "warnings": ["系统理解暂时失败，原文件已保留，可稍后重试。"],
-                    "official_use_allowed": False,
-                }
-            )
-
-        updated = repository.update_understanding(
+        updated = repository.requeue_material(
             assignment.assignment_id,
             str(material_id),
-            status=material_status,
-            understanding=understanding,
         )
         if updated is None:
             raise _not_found()

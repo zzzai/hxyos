@@ -321,3 +321,37 @@ def test_reclaim_stale_leases_returns_expired_work_to_retryable_state() -> None:
     assert reclaimed == 1
     assert any("SKIP LOCKED" in sql for sql in calls)
     assert any("lost_lease" in sql for sql in calls)
+
+
+def test_requeue_material_extends_attempt_budget_without_deleting_history() -> None:
+    module = importlib.import_module("apps.api.hxy_product.material_repository")
+    repository = module.MaterialRepository("postgresql://materials.test/hxy")
+    calls: list[str] = []
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, sql: str, _params: tuple[Any, ...]):
+            normalized = " ".join(sql.split())
+            calls.append(normalized)
+            if "FROM hxy_product_materials" in normalized and "FOR UPDATE" in normalized:
+                return Result(_material_row() | {"status": "needs_attention"})
+            if "UPDATE hxy_material_parser_jobs" in normalized:
+                return Result({"job_id": JOB_ID})
+            if "UPDATE hxy_product_materials" in normalized:
+                return Result(_material_row() | {"status": "processing"})
+            raise AssertionError(normalized)
+
+    repository.connect = lambda: Connection()
+
+    material = repository.requeue_material(ASSIGNMENT_ID, MATERIAL_ID)
+
+    assert material is not None
+    assert material["status"] == "processing"
+    job_update = next(sql for sql in calls if "UPDATE hxy_material_parser_jobs" in sql)
+    assert "max_attempts = LEAST(max_attempts + 3, 100)" in job_update
+    assert not any("DELETE FROM hxy_material_job_attempts" in sql for sql in calls)

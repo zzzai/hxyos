@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS hxy_material_parser_jobs (
     status IN ('queued', 'running', 'retryable_failed', 'succeeded', 'permanent_failed')
   ),
   attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
-  max_attempts INTEGER NOT NULL DEFAULT 3 CHECK (max_attempts BETWEEN 1 AND 10),
+  max_attempts INTEGER NOT NULL DEFAULT 3 CHECK (max_attempts BETWEEN 1 AND 100),
   available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   lease_owner TEXT CHECK (
     lease_owner IS NULL OR char_length(btrim(lease_owner)) BETWEEN 1 AND 120

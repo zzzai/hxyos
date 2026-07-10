@@ -98,11 +98,14 @@ function conversationGateway(overrides: Record<string, unknown> = {}) {
 function materialGateway(overrides: Record<string, unknown> = {}) {
   return {
     listMaterials: vi.fn().mockResolvedValue({ items: [], count: 0 }),
-    retryUnderstanding: vi.fn().mockResolvedValue({
+    getMaterial: vi.fn().mockResolvedValue({
       material: UNDERSTOOD_MATERIAL,
     }),
+    retryUnderstanding: vi.fn().mockResolvedValue({
+      material: PROCESSING_MATERIAL,
+    }),
     uploadMaterial: vi.fn().mockResolvedValue({
-      material: UNDERSTOOD_MATERIAL,
+      material: PROCESSING_MATERIAL,
     }),
     ...overrides,
   };
@@ -113,7 +116,7 @@ const UNDERSTOOD_MATERIAL = {
   file_name: "首店接待流程.md",
   media_type: "text/markdown",
   size_bytes: 36,
-  status: "understood",
+  status: "ready",
   receipt: {
     status: "已收到",
     message: "资料已安全保存，当前不会自动变成正式知识。",
@@ -137,6 +140,17 @@ const UNDERSTOOD_MATERIAL = {
   },
   created_at: "2026-07-10T10:00:00Z",
   updated_at: "2026-07-10T10:00:00Z",
+} as const;
+
+const PROCESSING_MATERIAL = {
+  ...UNDERSTOOD_MATERIAL,
+  status: "processing",
+  understanding: {
+    ...UNDERSTOOD_MATERIAL.understanding,
+    summary: "资料已收到，系统正在继续理解。",
+    parse_status: "needs_deep_parse",
+    confidence: "low",
+  },
 } as const;
 
 const CLIENT_UPLOAD_ID = "80000000-0000-0000-0000-000000000001";
@@ -519,9 +533,9 @@ describe("HXYOS product shell", () => {
       ),
     ).toBeVisible();
     expect(screen.queryByLabelText("当前对话")).not.toBeInTheDocument();
-    expect(screen.getByText("已收到")).toBeVisible();
+    expect(screen.getByText("正在理解")).toBeVisible();
     expect(
-      screen.getByText("首店员工接待流程草稿，重点是先问顾客状态，再介绍服务。"),
+      screen.getByText("资料已收到，系统正在继续理解。"),
     ).toBeVisible();
     expect(screen.getByRole("link", { name: "查看原文" })).toHaveAttribute(
       "href",
@@ -567,7 +581,7 @@ describe("HXYOS product shell", () => {
         items: [
           {
             ...UNDERSTOOD_MATERIAL,
-            status: "understanding_failed",
+            status: "needs_attention",
             understanding: {
               ...UNDERSTOOD_MATERIAL.understanding,
               summary: "资料已保存，但本次系统理解没有完成。",
@@ -582,7 +596,7 @@ describe("HXYOS product shell", () => {
 
     render(<App initialSession={TEST_SESSION} materialClient={materials} />);
 
-    expect(await screen.findByText("已保存")).toBeVisible();
+    expect(await screen.findByText("需要关注")).toBeVisible();
     expect(
       screen.getByText("资料已保存，但本次系统理解没有完成。"),
     ).toBeVisible();
@@ -594,7 +608,7 @@ describe("HXYOS product shell", () => {
     const user = userEvent.setup();
     const failedMaterial = {
       ...UNDERSTOOD_MATERIAL,
-      status: "understanding_failed" as const,
+      status: "needs_attention" as const,
       understanding: {
         ...UNDERSTOOD_MATERIAL.understanding,
         summary: "资料已保存，但本次系统理解没有完成。",
@@ -608,7 +622,7 @@ describe("HXYOS product shell", () => {
         count: 1,
       }),
       retryUnderstanding: vi.fn().mockResolvedValue({
-        material: UNDERSTOOD_MATERIAL,
+        material: PROCESSING_MATERIAL,
       }),
     });
 
@@ -622,10 +636,41 @@ describe("HXYOS product shell", () => {
       UNDERSTOOD_MATERIAL.id,
     );
     expect(
-      await screen.findByText(
-        "首店员工接待流程草稿，重点是先问顾客状态，再介绍服务。",
-      ),
+      await screen.findByText("正在理解"),
     ).toBeVisible();
+  });
+
+  it("refreshes a processing material without asking the employee to act", async () => {
+    vi.useFakeTimers();
+    try {
+      const materials = materialGateway({
+        listMaterials: vi.fn().mockResolvedValue({
+          items: [PROCESSING_MATERIAL],
+          count: 1,
+        }),
+        getMaterial: vi.fn().mockResolvedValue({
+          material: UNDERSTOOD_MATERIAL,
+        }),
+      });
+
+      render(<App initialSession={TEST_SESSION} materialClient={materials} />);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(screen.getByText("正在理解")).toBeVisible();
+
+      await act(async () => {
+        vi.advanceTimersByTime(3000);
+        await Promise.resolve();
+      });
+
+      expect(materials.getMaterial).toHaveBeenCalledWith(
+        UNDERSTOOD_MATERIAL.id,
+      );
+      expect(screen.getByText("可以使用")).toBeVisible();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("announces material upload progress and prevents duplicate selection", async () => {

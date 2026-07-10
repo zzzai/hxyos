@@ -1,7 +1,7 @@
 export type MaterialStatus =
-  | "received"
-  | "understood"
-  | "understanding_failed";
+  | "processing"
+  | "ready"
+  | "needs_attention";
 
 export interface MaterialReceipt {
   status: "已收到";
@@ -69,6 +69,7 @@ export interface UploadMaterialResponse {
 
 export interface MaterialClient {
   listMaterials: () => Promise<MaterialListResponse>;
+  getMaterial: (materialId: string) => Promise<UploadMaterialResponse>;
   uploadMaterial: (
     file: File,
     note: string,
@@ -102,6 +103,10 @@ async function materialRequest<T>(path: string, init?: RequestInit): Promise<T> 
 export const productMaterialClient: MaterialClient = {
   listMaterials: () =>
     materialRequest<MaterialListResponse>("/api/v1/materials?limit=1"),
+  getMaterial: (materialId) =>
+    materialRequest<UploadMaterialResponse>(
+      `/api/v1/materials/${encodeURIComponent(materialId)}`,
+    ),
   uploadMaterial: (file, note, clientUploadId) => {
     const body = new FormData();
     body.set("file", file);

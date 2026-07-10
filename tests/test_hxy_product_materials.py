@@ -134,6 +134,19 @@ class FakeMaterialRepository:
         record["updated_at"] = NOW
         return dict(record)
 
+    def requeue_material(
+        self,
+        assignment_id: str,
+        material_id: str,
+    ) -> dict[str, Any] | None:
+        record = self.records.get((assignment_id, material_id))
+        if record is None:
+            return None
+        record["status"] = "processing"
+        record["updated_at"] = NOW
+        self.calls.append(("requeue", assignment_id))
+        return dict(record)
+
 
 class ASGIClient:
     def __init__(self, app) -> None:
@@ -219,6 +232,7 @@ def test_upload_returns_receipt_original_link_and_preliminary_understanding(mate
     assert response.status_code == 201
     material = response.json()["material"]
     assert material["file_name"] == "首店接待流程.md"
+    assert material["status"] == "processing"
     assert material["receipt"]["status"] == "已收到"
     assert material["original"]["url"] == f"/api/v1/materials/{material['id']}/content"
     assert material["original"]["can_preview"] is True
@@ -267,10 +281,10 @@ def test_understanding_failure_keeps_original_and_returns_retriable_receipt(
     assert response.status_code == 201
     material = response.json()["material"]
     assert material["receipt"]["status"] == "已收到"
-    assert material["status"] == "understanding_failed"
+    assert material["status"] == "processing"
     assert material["understanding"]["official_use_allowed"] is False
     assert material["understanding"]["parse_status"] == "metadata_only"
-    assert any("稍后重试" in item for item in material["understanding"]["warnings"])
+    assert any("后台处理" in item for item in material["understanding"]["warnings"])
     stored = [path for path in (tmp_path / "data" / "product-materials").rglob("*") if path.is_file()]
     assert len(stored) == 1
     assert stored[0].read_bytes() == "原始问题记录".encode()
@@ -306,7 +320,7 @@ def test_upload_retry_with_same_client_id_returns_one_material(material_context)
     assert len(stored) == 1
 
 
-def test_failed_understanding_can_retry_against_the_saved_original(
+def test_failed_understanding_retry_requeues_without_parsing_in_the_request(
     tmp_path: Path,
 ) -> None:
     identity_repository = FakeIdentityRepository()
@@ -356,14 +370,12 @@ def test_failed_understanding_can_retry_against_the_saved_original(
         headers=bearer(),
     )
 
-    assert uploaded.json()["material"]["status"] == "understanding_failed"
+    assert uploaded.json()["material"]["status"] == "processing"
     assert retried.status_code == 200
     assert retried.json()["material"]["id"] == material_id
-    assert retried.json()["material"]["status"] == "understood"
-    assert retried.json()["material"]["understanding"]["summary"] == (
-        "已重新理解门店问题记录。"
-    )
-    assert attempts == 2
+    assert retried.json()["material"]["status"] == "processing"
+    assert attempts == 1
+    assert ("requeue", ASSIGNMENT_ID) in material_repository.calls
     assert len(material_repository.records) == 1
 
 

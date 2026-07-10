@@ -234,6 +234,35 @@ function ProductShell({
   ]);
 
   useEffect(() => {
+    if (
+      !isAuthenticated ||
+      !canReadMaterials ||
+      latestMaterial?.status !== "processing"
+    ) {
+      return;
+    }
+    let active = true;
+    const interval = window.setInterval(() => {
+      void materialClient
+        .getMaterial(latestMaterial.id)
+        .then(({ material }) => {
+          if (active) setLatestMaterial(material);
+        })
+        .catch(() => undefined);
+    }, 2500);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [
+    canReadMaterials,
+    isAuthenticated,
+    latestMaterial?.id,
+    latestMaterial?.status,
+    materialClient,
+  ]);
+
+  useEffect(() => {
     if (isDetailsOpen) {
       detailsCloseRef.current?.focus();
     } else if (detailsWasOpen.current) {
@@ -586,9 +615,11 @@ function ProductShell({
                 <FileText aria-hidden="true" />
                 <strong>{latestMaterial.file_name}</strong>
                 <span>
-                  {latestMaterial.status === "understanding_failed"
-                    ? "已保存"
-                    : latestMaterial.receipt.status}
+                  {latestMaterial.status === "processing"
+                    ? "正在理解"
+                    : latestMaterial.status === "ready"
+                      ? "可以使用"
+                      : "需要关注"}
                 </span>
               </div>
               <p>{latestMaterial.understanding.summary}</p>
@@ -599,7 +630,7 @@ function ProductShell({
               >
                 查看原文
               </a>
-              {latestMaterial.status === "understanding_failed" ? (
+              {latestMaterial.status === "needs_attention" ? (
                 <button
                   className="material-retry-button"
                   type="button"

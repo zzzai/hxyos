@@ -61,7 +61,7 @@ class ProductMaterial(StrictMaterialModel):
     file_name: str
     media_type: str
     size_bytes: int = Field(gt=0)
-    status: Literal["received", "understood", "understanding_failed"]
+    status: Literal["processing", "ready", "needs_attention"]
     receipt: MaterialReceipt
     original: MaterialOriginal
     understanding: MaterialUnderstanding

@@ -600,6 +600,100 @@ class MaterialRepository:
             ).fetchall()
         return len(rows)
 
+    def requeue_material(
+        self,
+        assignment_id: str,
+        material_id: str,
+    ) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            material = connection.execute(
+                _MATERIAL_SELECT
+                + """
+                WHERE assignment_id = %s::uuid
+                  AND material_id = %s::uuid
+                  AND status <> 'archived'
+                FOR UPDATE
+                """,
+                (assignment_id, material_id),
+            ).fetchone()
+            if material is None:
+                return None
+
+            job = connection.execute(
+                """
+                UPDATE hxy_material_parser_jobs
+                SET status = 'queued',
+                    max_attempts = LEAST(max_attempts + 3, 100),
+                    available_at = NOW(),
+                    lease_owner = NULL,
+                    lease_expires_at = NULL,
+                    last_error_code = NULL,
+                    last_error_summary = NULL,
+                    completed_at = NULL,
+                    updated_at = NOW()
+                WHERE assignment_id = %s::uuid
+                  AND material_id = %s::uuid
+                  AND status IN ('retryable_failed', 'permanent_failed')
+                RETURNING job_id::text
+                """,
+                (assignment_id, material_id),
+            ).fetchone()
+            if job is None:
+                existing_job = connection.execute(
+                    """
+                    SELECT job_id::text, status
+                    FROM hxy_material_parser_jobs
+                    WHERE assignment_id = %s::uuid
+                      AND material_id = %s::uuid
+                    FOR UPDATE
+                    """,
+                    (assignment_id, material_id),
+                ).fetchone()
+                if existing_job is None:
+                    connection.execute(
+                        """
+                        INSERT INTO hxy_material_parser_jobs (
+                          assignment_id,
+                          material_id,
+                          parser_strategy,
+                          status
+                        )
+                        VALUES (%s::uuid, %s::uuid, 'markitdown', 'queued')
+                        RETURNING job_id::text
+                        """,
+                        (assignment_id, material_id),
+                    ).fetchone()
+                elif str(existing_job["status"]) == "succeeded":
+                    return _material_from_row(material)
+
+            row = connection.execute(
+                """
+                UPDATE hxy_product_materials
+                SET status = 'processing',
+                    updated_at = NOW()
+                WHERE assignment_id = %s::uuid
+                  AND material_id = %s::uuid
+                  AND status <> 'archived'
+                RETURNING material_id::text,
+                          assignment_id::text,
+                          client_upload_id::text,
+                          original_file_name,
+                          extension,
+                          media_type,
+                          size_bytes,
+                          sha256,
+                          storage_key,
+                          note,
+                          status,
+                          understanding_json,
+                          official_use_allowed,
+                          created_at,
+                          updated_at
+                """,
+                (assignment_id, material_id),
+            ).fetchone()
+        return _material_from_row(row) if row else None
+
     def get_by_client_upload_id(
         self,
         assignment_id: str,
