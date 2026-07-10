@@ -47,7 +47,7 @@ export class MeRequestError extends Error {
 
 export async function loadMe(): Promise<MeResponse> {
   const response = await fetch("/api/v1/me", {
-    credentials: "same-origin",
+    credentials: "include",
     headers: { Accept: "application/json" },
   });
   if (!response.ok) {

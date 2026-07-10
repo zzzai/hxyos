@@ -77,6 +77,7 @@ from hxy_knowledge.workspace_events import (
     list_workspace_events,
     redact_workspace_event,
 )
+from hxy_product.auth import ProductAuthSettings
 from hxy_product.repository import IdentityRepository
 from hxy_product.routes import create_identity_router
 
@@ -3437,6 +3438,7 @@ def create_app(
     repository_factory: RepositoryFactory | None = None,
     model_router: Any | None = None,
     product_identity_repository_factory: RepositoryFactory | None = None,
+    product_auth_settings: ProductAuthSettings | None = None,
 ) -> FastAPI:
     settings = get_settings()
     resolved_root = (root_dir or settings.root_dir).resolve()
@@ -3450,6 +3452,7 @@ def create_app(
         product_identity_repository_factory
         or _default_product_identity_repository_factory(settings.database_url)
     )
+    resolved_product_auth_settings = product_auth_settings or ProductAuthSettings.from_environment()
     model_router = model_router or ModelRouter()
     require_api_token = _require_api_token(settings.api_token)
     allowed_upload_extensions = {extension.lower() for extension in settings.allowed_upload_extensions}
@@ -3462,7 +3465,12 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.include_router(create_identity_router(make_product_identity_repository))
+    app.include_router(
+        create_identity_router(
+            make_product_identity_repository,
+            resolved_product_auth_settings,
+        )
+    )
 
     def _resolve_p0_run_dir(run_id: str) -> tuple[str, Path]:
         normalized_run_id = run_id.strip()

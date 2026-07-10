@@ -93,7 +93,7 @@ describe("SessionProvider", () => {
     );
   });
 
-  it("loads /api/v1/me with same-origin credentials and no browser token", async () => {
+  it("loads /api/v1/me with included credentials and no browser token", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify(TEST_SESSION), {
         status: 200,
@@ -116,7 +116,7 @@ describe("SessionProvider", () => {
     );
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/me",
-      expect.objectContaining({ credentials: "same-origin" }),
+      expect.objectContaining({ credentials: "include" }),
     );
     const requestOptions = fetchMock.mock.calls[0][1] as RequestInit;
     expect(new Headers(requestOptions.headers).has("Authorization")).toBe(false);
