@@ -8,6 +8,7 @@ from uuid import uuid4
 import psycopg
 import pytest
 
+from apps.api.hxy_product.conversation_repository import ConversationRepository
 from apps.api.hxy_product.material_repository import MaterialRepository
 
 
@@ -19,10 +20,13 @@ def test_postgres_material_queue_lease_reclaim_and_completion() -> None:
     repository = MaterialRepository(DATABASE_URL)
     organization_id = str(uuid4())
     account_id = str(uuid4())
+    foreign_account_id = str(uuid4())
     assignment_id = str(uuid4())
+    foreign_assignment_id = str(uuid4())
     material_id = str(uuid4())
     client_upload_id = str(uuid4())
     username = f"material-test-{uuid4().hex}"
+    foreign_username = f"material-foreign-test-{uuid4().hex}"
 
     with psycopg.connect(DATABASE_URL) as connection:
         connection.execute(
@@ -40,12 +44,35 @@ def test_postgres_material_queue_lease_reclaim_and_completion() -> None:
         )
         connection.execute(
             """
+            INSERT INTO staff_accounts (
+              id, username, display_name, password_hash, role
+            )
+            VALUES (%s, %s, %s, %s, 'hq_admin')
+            """,
+            (
+                foreign_account_id,
+                foreign_username,
+                "隔离材料测试",
+                "not-a-login-credential",
+            ),
+        )
+        connection.execute(
+            """
             INSERT INTO hxy_role_assignments (
               assignment_id, account_id, organization_id, role
             )
             VALUES (%s, %s, %s, 'founder')
             """,
             (assignment_id, account_id, organization_id),
+        )
+        connection.execute(
+            """
+            INSERT INTO hxy_role_assignments (
+              assignment_id, account_id, organization_id, role
+            )
+            VALUES (%s, %s, %s, 'founder')
+            """,
+            (foreign_assignment_id, foreign_account_id, organization_id),
         )
 
     try:
@@ -104,12 +131,13 @@ def test_postgres_material_queue_lease_reclaim_and_completion() -> None:
         assert second["job_id"] == first["job_id"]
         assert second["attempt_number"] == 2
 
+        normalized_artifact_id = str(uuid4())
         completed = repository.complete_job(
             second["job_id"],
             "worker-c",
             artifacts=[
                 {
-                    "artifact_id": str(uuid4()),
+                    "artifact_id": normalized_artifact_id,
                     "artifact_type": "normalized_markdown",
                     "storage_key": (
                         f"{assignment_id}/{material_id}/derived/"
@@ -131,8 +159,20 @@ def test_postgres_material_queue_lease_reclaim_and_completion() -> None:
                     "metadata": {"version": "hxy-source-card.v1"},
                 },
             ],
+            chunks=[
+                {
+                    "chunk_id": str(uuid4()),
+                    "artifact_id": normalized_artifact_id,
+                    "chunk_index": 0,
+                    "heading": "首店接待原则",
+                    "content": "首店接待先询问顾客当下感受，再介绍合适的体验项目。",
+                    "char_count": 27,
+                    "official_use_allowed": False,
+                }
+            ],
             understanding={
                 "summary": "真实数据库队列已完成。",
+                "domain": "operations",
                 "official_use_allowed": False,
             },
             parser_name="markitdown",
@@ -154,11 +194,141 @@ def test_postgres_material_queue_lease_reclaim_and_completion() -> None:
                 """,
                 (material_id,),
             ).fetchall()
+            chunks = connection.execute(
+                """
+                SELECT assignment_id::text, material_id::text, official_use_allowed
+                FROM hxy_material_chunks
+                WHERE material_id = %s
+                """,
+                (material_id,),
+            ).fetchall()
         assert job_status == "succeeded"
         assert artifacts == [
             ("normalized_markdown", False),
             ("source_card", False),
         ]
+        assert chunks == [(assignment_id, material_id, False)]
+
+        keyword_results = repository.search_material_chunks(
+            assignment_id,
+            "首店接待应该怎么做",
+            limit=5,
+        )
+        assert len(keyword_results) == 1
+        assert keyword_results[0]["material_id"] == material_id
+        assert keyword_results[0]["official_use_allowed"] is False
+        assert keyword_results[0]["source_path"] == f"material:{material_id}"
+        assert keyword_results[0]["source_url"] == f"/api/v1/materials/{material_id}/content"
+
+        latest_results = repository.search_material_chunks(
+            assignment_id,
+            "总结我刚上传的资料",
+            limit=5,
+        )
+        assert len(latest_results) == 1
+        assert latest_results[0]["material_id"] == material_id
+
+        foreign_results = repository.search_material_chunks(
+            foreign_assignment_id,
+            "首店接待应该怎么做",
+            limit=5,
+        )
+        assert foreign_results == []
+
+        conversation_repository = ConversationRepository(DATABASE_URL)
+        conversation = conversation_repository.create_conversation(assignment_id)
+        client_message_id = str(uuid4())
+        reservation = conversation_repository.reserve_user_message(
+            assignment_id,
+            conversation["id"],
+            client_message_id,
+            "首店接待应该怎么做？",
+        )
+        assert reservation is not None
+        assert reservation["state"] == "reserved"
+
+        trace_id = str(uuid4())
+        assistant = conversation_repository.complete_assistant_message(
+            assignment_id,
+            conversation["id"],
+            reservation["user_message"]["id"],
+            client_message_id,
+            {
+                "answer": "先询问顾客当下感受，再介绍合适的体验项目。",
+                "answer_status": "AI 草稿",
+                "confidence": "medium",
+                "needs_review": True,
+                "sources": [
+                    {
+                        "id": f"material:{material_id}",
+                        "title": "真实数据库资料.txt",
+                        "url": f"/api/v1/materials/{material_id}/content",
+                    }
+                ],
+                "next_actions": [],
+            },
+            trace_payload={
+                "trace_id": trace_id,
+                "role": "founder",
+                "intent": "knowledge_question",
+                "retrieval_count": 1,
+                "private_material_count": 1,
+                "authority_card_hit": False,
+                "model_name": "integration-test",
+                "input_tokens": 12,
+                "output_tokens": 18,
+                "latency_ms": 25,
+                "payload": {"source_types": ["private_material"]},
+            },
+        )
+        assert assistant is not None
+        assert assistant["answer_status"] == "AI 草稿"
+
+        repeated = conversation_repository.complete_assistant_message(
+            assignment_id,
+            conversation["id"],
+            reservation["user_message"]["id"],
+            client_message_id,
+            {
+                "answer": "重复完成不应产生第二条 Trace。",
+                "answer_status": "AI 草稿",
+            },
+            trace_payload={
+                "trace_id": str(uuid4()),
+                "role": "founder",
+                "intent": "knowledge_question",
+            },
+        )
+        assert repeated is not None
+        assert repeated["id"] == assistant["id"]
+
+        with psycopg.connect(DATABASE_URL) as connection:
+            traces = connection.execute(
+                """
+                SELECT trace_id::text,
+                       assignment_id::text,
+                       assistant_message_id::text,
+                       retrieval_count,
+                       private_material_count,
+                       authority_card_hit,
+                       outcome,
+                       payload_json
+                FROM hxy_product_answer_traces
+                WHERE conversation_id = %s
+                """,
+                (conversation["id"],),
+            ).fetchall()
+        assert len(traces) == 1
+        assert traces[0][:7] == (
+            trace_id,
+            assignment_id,
+            assistant["id"],
+            1,
+            1,
+            False,
+            "succeeded",
+        )
+        assert traces[0][7] == {"source_types": ["private_material"]}
     finally:
         with psycopg.connect(DATABASE_URL) as connection:
             connection.execute(
@@ -166,12 +336,12 @@ def test_postgres_material_queue_lease_reclaim_and_completion() -> None:
                 (material_id,),
             )
             connection.execute(
-                "DELETE FROM hxy_role_assignments WHERE assignment_id = %s",
-                (assignment_id,),
+                "DELETE FROM hxy_role_assignments WHERE assignment_id IN (%s, %s)",
+                (assignment_id, foreign_assignment_id),
             )
             connection.execute(
-                "DELETE FROM staff_accounts WHERE id = %s",
-                (account_id,),
+                "DELETE FROM staff_accounts WHERE id IN (%s, %s)",
+                (account_id, foreign_account_id),
             )
             connection.execute(
                 "DELETE FROM hxy_organizations WHERE organization_id = %s",

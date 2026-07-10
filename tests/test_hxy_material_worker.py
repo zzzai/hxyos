@@ -274,7 +274,7 @@ def test_material_intake_runbook_has_one_shot_and_recovery_commands() -> None:
     ).read_text(encoding="utf-8")
 
     assert "--once" in runbook
-    assert "013_hxy_material_intake_jobs.sql" in runbook
+    assert "014_hxy_knowledge_activation.sql" in runbook
     assert "systemctl status hxy-material-worker" in runbook
     assert "journalctl -u hxy-material-worker" in runbook
     assert "不得自动进入正式知识" in runbook
