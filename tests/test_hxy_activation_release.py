@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -9,14 +11,21 @@ import pytest
 
 from apps.api.hxy_release.activation_release import (
     ACTIVATION_MIGRATIONS,
+    APPLY_CONFIRMATION,
+    ReleaseAuthorizationError,
+    ReleaseBackupError,
     ReleaseBoundaryError,
+    ReleaseExecutionError,
+    apply_activation_migrations,
     build_argument_parser,
+    create_backup,
     database_identity,
     migration_inventory,
     render_result,
     run_postflight,
     run_preflight,
     validate_hxy_boundary,
+    validate_backup_manifest,
 )
 
 
@@ -310,3 +319,216 @@ def test_postflight_fails_without_private_chunk_governance() -> None:
     assert result["status"] == "failed"
     failed = {item["name"] for item in result["checks"] if item["status"] == "failed"}
     assert "private_chunk_non_authority" in failed
+
+
+class FakeCommandRunner:
+    def __init__(self, *, restore_returncode: int = 0, psql_returncode: int = 0) -> None:
+        self.restore_returncode = restore_returncode
+        self.psql_returncode = psql_returncode
+        self.calls: list[tuple[list[str], dict[str, str]]] = []
+
+    def __call__(self, command: list[str], env: dict[str, str]):
+        self.calls.append((list(command), dict(env)))
+        if command[0] == "pg_dump":
+            output = Path(command[command.index("--file") + 1])
+            output.write_bytes(b"PGDMP\x01verified-test-backup")
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command[0] == "pg_restore":
+            return subprocess.CompletedProcess(
+                command,
+                self.restore_returncode,
+                "archive listing" if self.restore_returncode == 0 else "",
+                "invalid archive" if self.restore_returncode else "",
+            )
+        if command[0] == "psql":
+            return subprocess.CompletedProcess(
+                command,
+                self.psql_returncode,
+                "migration applied" if self.psql_returncode == 0 else "",
+                "migration failed" if self.psql_returncode else "",
+            )
+        raise AssertionError(command)
+
+
+DATABASE_URL = (
+    "host=127.0.0.1 port=55433 dbname=hxy_release_test "
+    "user=hxy_app password=release-secret-value"
+)
+NOW = datetime(2026, 7, 11, 2, 0, tzinfo=timezone.utc)
+
+
+def _passed_preflight(_root: Path, _database_url: str):
+    return {"status": "passed", "phase": "preflight"}
+
+
+def _passed_postflight(_root: Path, _database_url: str):
+    return {"status": "passed", "phase": "postflight"}
+
+
+def _make_backup(tmp_path: Path, runner: FakeCommandRunner):
+    return create_backup(
+        ROOT,
+        DATABASE_URL,
+        output_root=tmp_path,
+        runner=runner,
+        now=NOW,
+        git_commit="a" * 40,
+        preflight_runner=_passed_preflight,
+    )
+
+
+def test_backup_uses_environment_credentials_and_writes_verified_manifest(
+    tmp_path: Path,
+) -> None:
+    runner = FakeCommandRunner()
+
+    result = _make_backup(tmp_path, runner)
+
+    assert result["status"] == "passed"
+    manifest_path = Path(result["manifest_path"])
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    dump_path = manifest_path.parent / manifest["dump"]["file"]
+    assert manifest["version"] == "hxy-activation-backup.v1"
+    assert manifest["database"] == database_identity(DATABASE_URL)
+    assert manifest["git_commit"] == "a" * 40
+    assert manifest["dump"]["verified"] is True
+    assert manifest["dump"]["size_bytes"] == dump_path.stat().st_size
+    assert len(manifest["dump"]["sha256"]) == 64
+    assert manifest["migrations"] == migration_inventory(ROOT)
+    assert manifest_path.parent.stat().st_mode & 0o777 == 0o700
+    assert manifest_path.stat().st_mode & 0o777 == 0o600
+    assert dump_path.stat().st_mode & 0o777 == 0o600
+
+    for command, env in runner.calls:
+        assert "release-secret-value" not in " ".join(command)
+        assert env["PGPASSWORD"] == "release-secret-value"
+        assert "HXY_DATABASE_URL" not in env
+    assert [call[0][0] for call in runner.calls] == ["pg_dump", "pg_restore"]
+
+
+def test_backup_rejects_an_unverifiable_archive(tmp_path: Path) -> None:
+    runner = FakeCommandRunner(restore_returncode=1)
+
+    with pytest.raises(ReleaseBackupError, match="verification"):
+        _make_backup(tmp_path, runner)
+
+    assert not list(tmp_path.rglob("manifest.json"))
+
+
+def test_backup_manifest_rejects_stale_database_or_changed_migrations(
+    tmp_path: Path,
+) -> None:
+    result = _make_backup(tmp_path, FakeCommandRunner())
+    manifest_path = Path(result["manifest_path"])
+
+    validated = validate_backup_manifest(ROOT, DATABASE_URL, manifest_path, now=NOW)
+    assert validated["status"] == "passed"
+
+    with pytest.raises(ReleaseBackupError, match="stale"):
+        validate_backup_manifest(
+            ROOT,
+            DATABASE_URL,
+            manifest_path,
+            now=NOW + timedelta(hours=25),
+        )
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["database"]["database"] = "hxy_other"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ReleaseBackupError, match="database"):
+        validate_backup_manifest(ROOT, DATABASE_URL, manifest_path, now=NOW)
+
+    manifest["database"] = database_identity(DATABASE_URL)
+    manifest["migrations"][0]["sha256"] = "0" * 64
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ReleaseBackupError, match="migration"):
+        validate_backup_manifest(ROOT, DATABASE_URL, manifest_path, now=NOW)
+
+
+def test_apply_requires_exact_confirmation_and_matching_backup(tmp_path: Path) -> None:
+    backup = _make_backup(tmp_path, FakeCommandRunner())
+    manifest_path = Path(backup["manifest_path"])
+
+    for confirmation in ("", "yes", "APPLY-HXY", "apply-hxy-009-014"):
+        with pytest.raises(ReleaseAuthorizationError, match="confirmation"):
+            apply_activation_migrations(
+                ROOT,
+                DATABASE_URL,
+                manifest_path=manifest_path,
+                confirmation=confirmation,
+                runner=FakeCommandRunner(),
+                now=NOW,
+                postflight_runner=_passed_postflight,
+            )
+
+
+def test_apply_runs_only_009_014_in_one_locked_transaction(tmp_path: Path) -> None:
+    backup = _make_backup(tmp_path, FakeCommandRunner())
+    runner = FakeCommandRunner()
+
+    result = apply_activation_migrations(
+        ROOT,
+        DATABASE_URL,
+        manifest_path=Path(backup["manifest_path"]),
+        confirmation=APPLY_CONFIRMATION,
+        runner=runner,
+        now=NOW,
+        postflight_runner=_passed_postflight,
+    )
+
+    assert result["status"] == "passed"
+    assert len(runner.calls) == 1
+    command, env = runner.calls[0]
+    command_text = " ".join(command)
+    assert command[0] == "psql"
+    assert "--single-transaction" in command
+    assert "ON_ERROR_STOP=1" in command_text
+    assert "pg_advisory_xact_lock" in command_text
+    assert [Path(command[index + 1]).name for index, value in enumerate(command) if value == "--file"] == list(
+        ACTIVATION_MIGRATIONS
+    )
+    assert not any("008_" in value or "015_" in value for value in command)
+    assert "systemctl" not in command_text
+    assert "release-secret-value" not in command_text
+    assert env["PGPASSWORD"] == "release-secret-value"
+    assert "HXY_DATABASE_URL" not in env
+
+
+def test_release_subprocesses_do_not_inherit_unrelated_secrets(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "unrelated-model-secret")
+    monkeypatch.setenv("HXY_API_TOKEN", "unrelated-api-secret")
+    runner = FakeCommandRunner()
+
+    _make_backup(tmp_path, runner)
+
+    for _command, env in runner.calls:
+        assert "DASHSCOPE_API_KEY" not in env
+        assert "HXY_API_TOKEN" not in env
+        assert "unrelated-model-secret" not in env.values()
+        assert "unrelated-api-secret" not in env.values()
+
+
+def test_apply_stops_when_the_migration_transaction_fails(tmp_path: Path) -> None:
+    backup = _make_backup(tmp_path, FakeCommandRunner())
+    runner = FakeCommandRunner(psql_returncode=1)
+    postflight_calls: list[str] = []
+
+    def postflight(_root: Path, _database_url: str):
+        postflight_calls.append("called")
+        return {"status": "passed"}
+
+    with pytest.raises(ReleaseExecutionError, match="transaction"):
+        apply_activation_migrations(
+            ROOT,
+            DATABASE_URL,
+            manifest_path=Path(backup["manifest_path"]),
+            confirmation=APPLY_CONFIRMATION,
+            runner=runner,
+            now=NOW,
+            postflight_runner=postflight,
+        )
+
+    assert postflight_calls == []
