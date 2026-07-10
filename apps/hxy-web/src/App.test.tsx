@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -29,6 +29,68 @@ const TEST_SESSION = {
 
 function renderApp() {
   return render(<App initialSession={TEST_SESSION} />);
+}
+
+function conversationGateway(overrides: Record<string, unknown> = {}) {
+  return {
+    listConversations: vi.fn().mockResolvedValue({ items: [] }),
+    getConversation: vi.fn(),
+    createConversation: vi.fn().mockResolvedValue({
+      conversation: {
+        id: "conversation-new",
+        title: "新对话",
+        created_at: "2026-07-10T09:00:00Z",
+        updated_at: "2026-07-10T09:00:00Z",
+        last_message_at: null,
+        message_count: 0,
+        last_message: null,
+      },
+    }),
+    sendMessage: vi.fn().mockResolvedValue({
+      conversation: {
+        id: "conversation-new",
+        title: "顾客问泡脚能不能治失眠",
+        created_at: "2026-07-10T09:00:00Z",
+        updated_at: "2026-07-10T09:00:02Z",
+        last_message_at: "2026-07-10T09:00:02Z",
+        message_count: 2,
+        last_message: null,
+      },
+      user_message: {
+        id: "message-user",
+        conversation_id: "conversation-new",
+        role: "user",
+        content: "顾客问泡脚能不能治失眠，我该怎么说？",
+        created_at: "2026-07-10T09:00:01Z",
+        answer_id: null,
+        answer_status: null,
+        confidence: null,
+        needs_review: null,
+        sources: [],
+        next_actions: [],
+      },
+      assistant_message: {
+        id: "message-assistant",
+        conversation_id: "conversation-new",
+        role: "assistant",
+        content: "可以说泡脚有助于放松，但不能替代医疗诊断或治疗。",
+        created_at: "2026-07-10T09:00:02Z",
+        answer_status: "已批准",
+        confidence: "high",
+        needs_review: false,
+        sources: [
+          {
+            title: "员工标准话术",
+            excerpt: "不承诺治疗效果",
+            strength: "high",
+          },
+        ],
+        next_actions: [],
+        answer_id: "50000000-0000-0000-0000-000000000010",
+      },
+    }),
+    ...overrides,
+  };
 }
 
 const FORBIDDEN_FRONTSTAGE_TERMS = [
@@ -150,9 +212,11 @@ describe("HXYOS product shell", () => {
       "inert",
     );
     expect(
-      within(details).getByText("回答服务尚未接入，当前没有可显示的回答详情"),
+      within(details).getByText("发送问题后，这里会显示回答状态和来源"),
     ).toBeVisible();
-    expect(within(details).queryByText(/来源/)).not.toBeInTheDocument();
+    expect(
+      within(details).queryByRole("heading", { name: "来源" }),
+    ).not.toBeInTheDocument();
 
     const closeButton = screen.getByRole("button", {
       name: "关闭当前对话详情",
@@ -193,5 +257,184 @@ describe("HXYOS product shell", () => {
 
     await user.click(screen.getByRole("button", { name: "我的" }));
     expect(screen.getByRole("heading", { name: "我的" })).toBeVisible();
+  });
+
+  it("creates a conversation on first send and renders the real assistant answer", async () => {
+    const user = userEvent.setup();
+    const gateway = conversationGateway();
+    render(
+      <App
+        initialSession={TEST_SESSION}
+        conversationClient={gateway}
+        clientMessageIdFactory={() => "50000000-0000-0000-0000-000000000001"}
+      />,
+    );
+
+    const composer = screen.getByRole("textbox", {
+      name: "告诉 HXYOS 你要做什么",
+    });
+    await user.type(composer, "顾客问泡脚能不能治失眠，我该怎么说？");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    expect(gateway.createConversation).toHaveBeenCalledTimes(1);
+    expect(gateway.sendMessage).toHaveBeenCalledWith("conversation-new", {
+      content: "顾客问泡脚能不能治失眠，我该怎么说？",
+      client_message_id: "50000000-0000-0000-0000-000000000001",
+    });
+    expect(
+      await screen.findByText("可以说泡脚有助于放松，但不能替代医疗诊断或治疗。"),
+    ).toBeVisible();
+    expect(
+      screen.queryByText("50000000-0000-0000-0000-000000000010"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("restores the most recent conversation for the authenticated assignment", async () => {
+    const gateway = conversationGateway({
+      listConversations: vi.fn().mockResolvedValue({
+        items: [
+          {
+            id: "conversation-recent",
+            title: "今天的门店问题",
+            created_at: "2026-07-10T08:00:00Z",
+            updated_at: "2026-07-10T08:05:00Z",
+            last_message_at: "2026-07-10T08:05:00Z",
+            message_count: 2,
+            last_message: null,
+          },
+        ],
+      }),
+      getConversation: vi.fn().mockResolvedValue({
+        conversation: {
+          id: "conversation-recent",
+          title: "今天的门店问题",
+          created_at: "2026-07-10T08:00:00Z",
+          updated_at: "2026-07-10T08:05:00Z",
+          last_message_at: "2026-07-10T08:05:00Z",
+          message_count: 2,
+          last_message: null,
+        },
+        messages: [
+          {
+            id: "message-restored-user",
+            conversation_id: "conversation-recent",
+            role: "user",
+            content: "新员工接待时总是先推项目，怎么纠正？",
+            created_at: "2026-07-10T08:04:00Z",
+            answer_id: null,
+            answer_status: null,
+            confidence: null,
+            needs_review: null,
+            sources: [],
+            next_actions: [],
+          },
+          {
+            id: "message-restored-assistant",
+            conversation_id: "conversation-recent",
+            role: "assistant",
+            content: "先训练员工问顾客当下状态，再给出克制的服务建议。",
+            created_at: "2026-07-10T08:05:00Z",
+            answer_id: null,
+            answer_status: null,
+            confidence: null,
+            needs_review: null,
+            sources: [],
+            next_actions: [],
+          },
+        ],
+      }),
+    });
+
+    render(
+      <App
+        initialSession={TEST_SESSION}
+        conversationClient={gateway}
+      />,
+    );
+
+    expect(
+      await screen.findByText("新员工接待时总是先推项目，怎么纠正？"),
+    ).toBeVisible();
+    expect(
+      screen.getByText("先训练员工问顾客当下状态，再给出克制的服务建议。"),
+    ).toBeVisible();
+    expect(gateway.getConversation).toHaveBeenCalledWith("conversation-recent");
+  });
+
+  it("does not let a late history response replace a newly started conversation", async () => {
+    const user = userEvent.setup();
+    let resolveList: (value: Record<string, unknown>) => void = () => undefined;
+    const gateway = conversationGateway({
+      listConversations: vi.fn(
+        () =>
+          new Promise<Record<string, unknown>>((resolve) => {
+            resolveList = resolve;
+          }),
+      ),
+      getConversation: vi.fn().mockResolvedValue({
+        conversation: {
+          id: "conversation-old",
+          title: "旧对话",
+          created_at: "2026-07-10T07:00:00Z",
+          updated_at: "2026-07-10T07:05:00Z",
+          last_message_at: "2026-07-10T07:05:00Z",
+          message_count: 1,
+          last_message: null,
+        },
+        messages: [
+          {
+            id: "message-old",
+            conversation_id: "conversation-old",
+            role: "assistant",
+            content: "这是一条旧回答",
+            created_at: "2026-07-10T07:05:00Z",
+            answer_id: null,
+            answer_status: null,
+            confidence: null,
+            needs_review: null,
+            sources: [],
+            next_actions: [],
+          },
+        ],
+      }),
+    });
+    render(
+      <App
+        initialSession={TEST_SESSION}
+        conversationClient={gateway}
+        clientMessageIdFactory={() => "50000000-0000-0000-0000-000000000002"}
+      />,
+    );
+
+    await user.type(
+      screen.getByRole("textbox", { name: "告诉 HXYOS 你要做什么" }),
+      "这是刚发出的新问题",
+    );
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() =>
+      expect(gateway.sendMessage).toHaveBeenCalledTimes(1),
+    );
+
+    act(() =>
+      resolveList({
+        items: [
+          {
+            id: "conversation-old",
+            title: "旧对话",
+            created_at: "2026-07-10T07:00:00Z",
+            updated_at: "2026-07-10T07:05:00Z",
+            last_message_at: "2026-07-10T07:05:00Z",
+            message_count: 1,
+            last_message: null,
+          },
+        ],
+      }),
+    );
+
+    expect(
+      await screen.findByText("可以说泡脚有助于放松，但不能替代医疗诊断或治疗。"),
+    ).toBeVisible();
+    await act(async () => Promise.resolve());
+    expect(screen.queryByText("这是一条旧回答")).not.toBeInTheDocument();
   });
 });
