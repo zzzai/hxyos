@@ -19,6 +19,37 @@ const TEST_SESSION = {
   available_assignments: [],
 };
 
+const PROCESSING_MATERIAL = {
+  id: "70000000-0000-0000-0000-000000000001",
+  file_name: "首店接待流程.md",
+  media_type: "text/markdown",
+  size_bytes: 42,
+  status: "processing",
+  receipt: {
+    status: "已收到",
+    message: "资料已安全保存，当前不会自动变成正式知识。",
+  },
+  original: {
+    url: "/api/v1/materials/70000000-0000-0000-0000-000000000001/content",
+    can_preview: true,
+  },
+  understanding: {
+    summary: "资料已收到，系统正在继续理解。",
+    document_type: "门店流程资料",
+    source_origin: "internal",
+    authority_level: "working_material",
+    knowledge_scale: "micro",
+    domain: "operations",
+    parse_status: "needs_deep_parse",
+    confidence: "low",
+    warnings: [],
+    official_use_allowed: false,
+    use_boundary: "可用于整理候选流程，不能直接作为正式 SOP。",
+  },
+  created_at: "2026-07-10T10:00:00Z",
+  updated_at: "2026-07-10T10:00:00Z",
+};
+
 async function mockProductApi(page: Page) {
   await page.route("**/api/v1/me", (route) =>
     route.fulfill({ status: 200, json: TEST_SESSION }),
@@ -94,44 +125,19 @@ async function mockProductApi(page: Page) {
   });
   await page.route("**/api/v1/materials*", async (route) => {
     if (route.request().method() === "GET") {
+      if (new URL(route.request().url()).pathname !== "/api/v1/materials") {
+        await route.fulfill({
+          status: 200,
+          json: { material: PROCESSING_MATERIAL },
+        });
+        return;
+      }
       await route.fulfill({ status: 200, json: { items: [], count: 0 } });
       return;
     }
     await route.fulfill({
       status: 201,
-      json: {
-        material: {
-          id: "70000000-0000-0000-0000-000000000001",
-          file_name: "首店接待流程.md",
-          media_type: "text/markdown",
-          size_bytes: 42,
-          status: "understood",
-          receipt: {
-            status: "已收到",
-            message: "资料已安全保存，当前不会自动变成正式知识。",
-          },
-          original: {
-            url: "/api/v1/materials/70000000-0000-0000-0000-000000000001/content",
-            can_preview: true,
-          },
-          understanding: {
-            summary:
-              "首店员工接待流程草稿，重点是先问顾客状态，再介绍服务。",
-            document_type: "门店流程资料",
-            source_origin: "internal",
-            authority_level: "working_material",
-            knowledge_scale: "micro",
-            domain: "operations",
-            parse_status: "extracted",
-            confidence: "medium",
-            warnings: [],
-            official_use_allowed: false,
-            use_boundary: "可用于整理候选流程，不能直接作为正式 SOP。",
-          },
-          created_at: "2026-07-10T10:00:00Z",
-          updated_at: "2026-07-10T10:00:00Z",
-        },
-      },
+      json: { material: PROCESSING_MATERIAL },
     });
   });
 }
@@ -232,10 +238,8 @@ test.describe("HXYOS product shell viewport contract", () => {
     });
 
     await expect(page.getByText("首店接待流程.md")).toBeVisible();
-    await expect(page.getByText("已收到")).toBeVisible();
-    await expect(
-      page.getByText("首店员工接待流程草稿，重点是先问顾客状态，再介绍服务。"),
-    ).toBeVisible();
+    await expect(page.getByText("正在理解")).toBeVisible();
+    await expect(page.getByText("资料已收到，系统正在继续理解。")).toBeVisible();
     await expect(page.getByRole("link", { name: "查看原文" })).toBeVisible();
 
     const composerBox = await page.getByTestId("composer").boundingBox();
