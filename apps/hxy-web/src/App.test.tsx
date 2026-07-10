@@ -1,8 +1,9 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import App from "./App";
+import { MeRequestError } from "./api/client";
 
 const TEST_SESSION = {
   user: {
@@ -43,7 +44,7 @@ describe("HXYOS product shell", () => {
 
     expect(
       screen.getByRole("textbox", { name: "告诉 HXYOS 你要做什么" }),
-    ).toBeVisible();
+    ).toBeEnabled();
     expect(screen.getAllByTestId("composer")).toHaveLength(1);
     expect(
       screen.getByRole("button", { name: "添加附件（即将开放）" }),
@@ -90,6 +91,41 @@ describe("HXYOS product shell", () => {
     expect(screen.getByRole("button", { name: "询问该怎么说" })).toBeVisible();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   });
+
+  it("gates composer and role actions while identity is loading", () => {
+    render(<App sessionLoader={() => new Promise(() => undefined)} />);
+
+    expect(screen.getByRole("status")).toHaveTextContent("正在加载身份");
+    expect(
+      screen.getByRole("textbox", { name: "告诉 HXYOS 你要做什么" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "查看当前对话详情" })).toBeDisabled();
+    for (const label of ["对话", "待办", "我的"]) {
+      expect(screen.getByRole("button", { name: label })).toBeDisabled();
+    }
+    expect(screen.queryByTestId("suggestions")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["unauthorized", new MeRequestError(401, "Unauthorized"), "登录已失效"],
+    ["error", new Error("network unavailable"), "身份加载失败"],
+  ])(
+    "gates actions, announces %s, and keeps retry available",
+    async (_state, failure, message) => {
+      const loader = vi.fn().mockRejectedValue(failure);
+      render(<App sessionLoader={loader} />);
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(message);
+      expect(
+        screen.getByRole("textbox", { name: "告诉 HXYOS 你要做什么" }),
+      ).toBeDisabled();
+      expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: "重试身份加载" }),
+      ).toBeEnabled();
+    },
+  );
 
   it("opens and closes truthful current-conversation details on demand", async () => {
     const user = userEvent.setup();

@@ -46,6 +46,7 @@ export class MeRequestError extends Error {
 }
 
 export async function loadMe(): Promise<MeResponse> {
+  // The relative URL intentionally keeps credentialed requests same-origin.
   const response = await fetch("/api/v1/me", {
     credentials: "include",
     headers: { Accept: "application/json" },

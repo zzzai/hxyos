@@ -60,6 +60,7 @@ function ProductShell() {
   const detailsCloseRef = useRef<HTMLButtonElement>(null);
   const detailsWasOpen = useRef(false);
   const assignment = session?.active_assignment;
+  const isAuthenticated = status === "authenticated" && assignment !== undefined;
   const suggestions = assignment
     ? roleSuggestions[assignment.role].slice(0, 3)
     : [];
@@ -86,6 +87,7 @@ function ProductShell() {
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!isAuthenticated) return;
     const message = draft.trim();
     if (!message) return;
 
@@ -158,6 +160,7 @@ function ProductShell() {
               key={id}
               aria-current={activeView === id ? "page" : undefined}
               title={label}
+              disabled={!isAuthenticated}
               onClick={() => setActiveView(id)}
             >
               <Icon aria-hidden="true" />
@@ -169,7 +172,17 @@ function ProductShell() {
 
       <main className="conversation-stage" inert={isDetailsOpen}>
         <header className="stage-header">
-          <div className="context-line" aria-label="当前身份和门店">
+          <div
+            className="context-line"
+            aria-label="当前身份和门店"
+            role={
+              status === "loading"
+                ? "status"
+                : status === "unauthorized" || status === "error"
+                  ? "alert"
+                  : undefined
+            }
+          >
             <Store aria-hidden="true" />
             <span>{roleLabel}</span>
             <span className="context-separator" aria-hidden="true">
@@ -193,6 +206,7 @@ function ProductShell() {
             className="source-button"
             type="button"
             aria-label="查看当前对话详情"
+            disabled={!isAuthenticated}
             onClick={() => setIsDetailsOpen(true)}
           >
             <Info aria-hidden="true" />
@@ -217,17 +231,19 @@ function ProductShell() {
                 <MessageSquare />
               </div>
               <h1>{viewHeadings.conversation}</h1>
-              <div className="suggestions" data-testid="suggestions">
-                {suggestions.map((suggestion) => (
-                  <button
-                    type="button"
-                    key={suggestion}
-                    onClick={() => setDraft(suggestion)}
-                  >
-                    {suggestion}
-                  </button>
-                ))}
-              </div>
+              {isAuthenticated ? (
+                <div className="suggestions" data-testid="suggestions">
+                  {suggestions.map((suggestion) => (
+                    <button
+                      type="button"
+                      key={suggestion}
+                      onClick={() => setDraft(suggestion)}
+                    >
+                      {suggestion}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
           ) : (
             <div className="message-list" aria-label="当前对话">
@@ -252,6 +268,7 @@ function ProductShell() {
               rows={2}
               aria-label="告诉 HXYOS 你要做什么"
               placeholder="告诉 HXYOS 你要做什么"
+              disabled={!isAuthenticated}
               onChange={(event) => setDraft(event.target.value)}
             />
             <div className="composer-actions">
@@ -269,7 +286,7 @@ function ProductShell() {
                 type="submit"
                 aria-label="发送"
                 title="发送"
-                disabled={!draft.trim()}
+                disabled={!isAuthenticated || !draft.trim()}
               >
                 <ArrowUp aria-hidden="true" />
               </button>

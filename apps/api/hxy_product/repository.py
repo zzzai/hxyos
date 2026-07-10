@@ -5,9 +5,11 @@ from dataclasses import dataclass
 
 try:
     import psycopg
+    from psycopg.errors import UniqueViolation
     from psycopg.rows import dict_row
 except Exception:  # pragma: no cover - deployment dependency may be installed later
     psycopg = None
+    UniqueViolation = Exception
     dict_row = None
 
 from .auth import Principal
@@ -75,21 +77,49 @@ class IdentityRepository:
             display_name=str(row["display_name"]),
         )
 
-    def create_session(
+    def exchange_gateway_assertion(
         self,
         account_id: str,
+        assertion_id: str,
+        assertion_expires_at: int,
         raw_token: str,
         ttl_seconds: int,
-    ) -> None:
+    ) -> Principal | None:
         token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
-        with self.connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO staff_sessions (token_hash, account_id, expires_at)
-                VALUES (%s, %s::uuid, NOW() + (%s * INTERVAL '1 second'))
-                """,
-                (token_hash, account_id, ttl_seconds),
-            )
+        try:
+            with self.connect() as connection:
+                row = connection.execute(
+                    """
+                    SELECT id::text AS account_id, display_name
+                    FROM staff_accounts
+                    WHERE id = %s::uuid
+                      AND status = 'active'
+                    LIMIT 1
+                    """,
+                    (account_id,),
+                ).fetchone()
+                if row is None:
+                    return None
+                connection.execute(
+                    """
+                    INSERT INTO hxy_consumed_gateway_assertions (assertion_id, expires_at)
+                    VALUES (%s::uuid, to_timestamp(%s))
+                    """,
+                    (assertion_id, assertion_expires_at),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO staff_sessions (token_hash, account_id, expires_at)
+                    VALUES (%s, %s::uuid, NOW() + (%s * INTERVAL '1 second'))
+                    """,
+                    (token_hash, account_id, ttl_seconds),
+                )
+        except UniqueViolation:
+            return None
+        return Principal(
+            account_id=str(row["account_id"]),
+            display_name=str(row["display_name"]),
+        )
 
     def delete_session(self, raw_token: str) -> None:
         token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()

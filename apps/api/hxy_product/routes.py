@@ -8,10 +8,16 @@ from types import MappingProxyType
 from typing import Any, Callable
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
-from .auth import ProductAuthSettings, Principal, build_principal_resolver, require_session_token
+from .auth import (
+    ProductAuthSettings,
+    Principal,
+    build_principal_resolver,
+    gateway_secret_is_strong,
+    select_session_token,
+)
 from .schemas import AssignmentContext, MeResponse, OrganizationContext, StoreContext, UserContext
 
 
@@ -89,28 +95,31 @@ def _unauthorized() -> HTTPException:
     return HTTPException(status_code=401, detail="Unauthorized")
 
 
-def _verified_gateway_account_id(
+def _verified_gateway_assertion(
     payload: Any,
     settings: ProductAuthSettings,
-) -> str:
+) -> tuple[str, str, int]:
     if not isinstance(payload, dict) or set(payload) != {
         "account_id",
         "timestamp",
+        "assertion_id",
         "signature",
     }:
         raise _unauthorized()
     account_id = payload.get("account_id")
     timestamp = payload.get("timestamp")
+    assertion_id = payload.get("assertion_id")
     signature = payload.get("signature")
     if (
         not isinstance(account_id, str)
         or not isinstance(timestamp, int)
         or isinstance(timestamp, bool)
+        or not isinstance(assertion_id, str)
         or not isinstance(signature, str)
     ):
         raise _unauthorized()
 
-    message = f"{account_id}:{timestamp}".encode("utf-8")
+    message = f"{account_id}:{timestamp}:{assertion_id}".encode("utf-8")
     expected_signature = hmac.new(
         settings.gateway_secret.encode("utf-8"),
         message,
@@ -121,9 +130,22 @@ def _verified_gateway_account_id(
     if abs(int(time.time()) - timestamp) > settings.assertion_max_age_seconds:
         raise _unauthorized()
     try:
-        return str(UUID(account_id))
+        return str(UUID(account_id)), str(UUID(assertion_id)), timestamp
     except (ValueError, AttributeError):
         raise _unauthorized() from None
+
+
+def _expire_session_cookie(
+    response: JSONResponse,
+    settings: ProductAuthSettings,
+) -> None:
+    response.delete_cookie(
+        key="hxy_session",
+        path="/api/v1",
+        secure=settings.secure_cookie,
+        httponly=True,
+        samesite="lax",
+    )
 
 
 def create_identity_router(
@@ -139,24 +161,27 @@ def create_identity_router(
 
     @router.post("/api/v1/auth/session")
     async def trusted_gateway_session_exchange(request: Request) -> JSONResponse:
-        if not auth_settings.gateway_secret:
+        if not gateway_secret_is_strong(auth_settings.gateway_secret):
             raise HTTPException(status_code=503, detail="Service Unavailable")
         try:
             payload = await request.json()
         except ValueError:
             raise _unauthorized() from None
-        account_id = _verified_gateway_account_id(payload, auth_settings)
+        account_id, assertion_id, assertion_timestamp = _verified_gateway_assertion(
+            payload,
+            auth_settings,
+        )
         repository = get_repository()
-        principal = repository.find_active_principal(account_id)
-        if principal is None:
-            raise _unauthorized()
-
         raw_token = secrets.token_urlsafe(32)
-        repository.create_session(
-            principal.account_id,
+        principal = repository.exchange_gateway_assertion(
+            account_id,
+            assertion_id,
+            assertion_timestamp + auth_settings.assertion_max_age_seconds,
             raw_token,
             auth_settings.session_ttl_seconds,
         )
+        if principal is None:
+            raise _unauthorized()
         response = JSONResponse({"status": "authenticated"})
         response.set_cookie(
             key="hxy_session",
@@ -171,20 +196,24 @@ def create_identity_router(
 
     @router.post("/api/v1/auth/logout")
     def logout(
-        raw_token: str = Depends(require_session_token),
-        principal: Principal = Depends(resolve_principal),
+        authorization: str | None = Header(default=None),
+        hxy_session: str | None = Cookie(default=None, alias="hxy_session"),
         repository: Any = Depends(get_repository),
     ) -> JSONResponse:
-        del principal
-        repository.delete_session(raw_token)
+        try:
+            raw_token = select_session_token(
+                authorization,
+                hxy_session,
+                required=False,
+            )
+        except HTTPException:
+            response = JSONResponse({"detail": "Unauthorized"}, status_code=401)
+            _expire_session_cookie(response, auth_settings)
+            return response
+        if raw_token is not None:
+            repository.delete_session(raw_token)
         response = JSONResponse({"status": "ok"})
-        response.delete_cookie(
-            key="hxy_session",
-            path="/api/v1",
-            secure=auth_settings.secure_cookie,
-            httponly=True,
-            samesite="lax",
-        )
+        _expire_session_cookie(response, auth_settings)
         return response
 
     @router.get("/api/v1/me", response_model=MeResponse)

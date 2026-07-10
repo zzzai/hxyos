@@ -29,16 +29,31 @@ class ProductAuthSettings:
     @classmethod
     def from_environment(cls) -> ProductAuthSettings:
         secure_value = os.environ.get("HXY_AUTH_SECURE_COOKIE", "true").strip().lower()
+        # Rotate this deployment-managed secret regularly; rotation invalidates outstanding assertions.
         return cls(
             gateway_secret=os.environ.get("HXY_AUTH_PROXY_SECRET", ""),
             secure_cookie=secure_value not in {"0", "false", "no", "off"},
         )
 
 
-def require_session_token(
-    authorization: str | None = Header(default=None),
-    hxy_session: str | None = Cookie(default=None, alias="hxy_session"),
-) -> str:
+def gateway_secret_is_strong(secret: str) -> bool:
+    secret_bytes = secret.encode("utf-8")
+    if len(secret_bytes) < 32:
+        return False
+    for pattern_length in range(1, min(8, len(secret_bytes) // 2) + 1):
+        if len(secret_bytes) % pattern_length == 0:
+            pattern = secret_bytes[:pattern_length]
+            if pattern * (len(secret_bytes) // pattern_length) == secret_bytes:
+                return False
+    return True
+
+
+def select_session_token(
+    authorization: str | None,
+    hxy_session: str | None,
+    *,
+    required: bool,
+) -> str | None:
     if authorization is not None:
         parts = authorization.split(" ")
         if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1]:
@@ -46,7 +61,22 @@ def require_session_token(
         return parts[1]
     if hxy_session:
         return hxy_session
-    raise HTTPException(status_code=401, detail="Unauthorized")
+    if required:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return None
+
+
+def require_session_token(
+    authorization: str | None = Header(default=None),
+    hxy_session: str | None = Cookie(default=None, alias="hxy_session"),
+) -> str:
+    token = select_session_token(
+        authorization,
+        hxy_session,
+        required=True,
+    )
+    assert token is not None
+    return token
 
 
 def build_principal_resolver(

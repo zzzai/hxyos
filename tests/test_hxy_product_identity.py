@@ -10,6 +10,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from psycopg.errors import UniqueViolation
 
 from apps.api.hxy_knowledge_api import create_app
 
@@ -42,7 +43,9 @@ FOUNDER_OPERATIONS_ASSIGNMENT_ID = "20000000-0000-0000-0000-000000000003"
 FOREIGN_ASSIGNMENT_ID = "20000000-0000-0000-0000-000000000099"
 ORGANIZATION_ID = "30000000-0000-0000-0000-000000000001"
 UNKNOWN_ACCOUNT_ID = "10000000-0000-0000-0000-000000000099"
-GATEWAY_SECRET = "gateway-unit-test-key"
+GATEWAY_ASSERTION_ID = "40000000-0000-0000-0000-000000000001"
+TAMPERED_ASSERTION_ID = "40000000-0000-0000-0000-000000000002"
+GATEWAY_SECRET = "gateway-unit-test-key-with-32-bytes"
 
 
 @dataclass(frozen=True)
@@ -60,6 +63,7 @@ class FakeIdentityRepository:
         self.active_account_ids: list[str] = []
         self.created_sessions: list[tuple[str, str, int]] = []
         self.deleted_sessions: list[str] = []
+        self.consumed_assertion_ids: set[str] = set()
         self.principals = {
             "employee-session": FakePrincipal(EMPLOYEE_ID, "测试店员"),
             "founder-session": FakePrincipal(FOUNDER_ID, "测试创始人"),
@@ -110,11 +114,25 @@ class FakeIdentityRepository:
         self.active_account_ids.append(account_id)
         return self.principals_by_account.get(account_id)
 
-    def create_session(self, account_id: str, raw_token: str, ttl_seconds: int) -> None:
-        self.created_sessions.append((account_id, raw_token, ttl_seconds))
+    def exchange_gateway_assertion(
+        self,
+        account_id: str,
+        assertion_id: str,
+        assertion_expires_at: int,
+        raw_token: str,
+        ttl_seconds: int,
+    ) -> FakePrincipal | None:
+        del assertion_expires_at
+        self.active_account_ids.append(account_id)
+        if assertion_id in self.consumed_assertion_ids:
+            return None
         principal = self.principals_by_account.get(account_id)
-        if principal is not None:
-            self.principals[raw_token] = principal
+        if principal is None:
+            return None
+        self.consumed_assertion_ids.add(assertion_id)
+        self.created_sessions.append((account_id, raw_token, ttl_seconds))
+        self.principals[raw_token] = principal
+        return principal
 
     def delete_session(self, raw_token: str) -> None:
         self.deleted_sessions.append(raw_token)
@@ -181,9 +199,10 @@ def session_cookie(token: str) -> dict[str, str]:
 def gateway_assertion(
     account_id: str,
     timestamp: int,
+    assertion_id: str = GATEWAY_ASSERTION_ID,
     secret: str = GATEWAY_SECRET,
 ) -> dict[str, object]:
-    message = f"{account_id}:{timestamp}".encode("utf-8")
+    message = f"{account_id}:{timestamp}:{assertion_id}".encode("utf-8")
     signature = hmac.new(
         secret.encode("utf-8"),
         message,
@@ -192,6 +211,7 @@ def gateway_assertion(
     return {
         "account_id": account_id,
         "timestamp": timestamp,
+        "assertion_id": assertion_id,
         "signature": signature,
     }
 
@@ -217,6 +237,33 @@ def test_trusted_gateway_exchange_issues_secure_http_only_cookie(auth_session_cl
     assert ttl_seconds == settings.session_ttl_seconds
     assert raw_token not in response.text
     assert "token" not in response.json()
+
+
+def test_trusted_gateway_exchange_rejects_replayed_assertion(auth_session_client) -> None:
+    client, repository, _ = auth_session_client
+    assertion = gateway_assertion(EMPLOYEE_ID, int(time.time()))
+
+    first = client.request("POST", "/api/v1/auth/session", json=assertion)
+    replay = client.request("POST", "/api/v1/auth/session", json=assertion)
+
+    assert first.status_code == 200
+    assert replay.status_code == 401
+    assert replay.json() == {"detail": "Unauthorized"}
+    assert "set-cookie" not in replay.headers
+    assert len(repository.created_sessions) == 1
+
+
+def test_trusted_gateway_exchange_rejects_tampered_assertion_id(auth_session_client) -> None:
+    client, repository, _ = auth_session_client
+    assertion = gateway_assertion(EMPLOYEE_ID, int(time.time()))
+    assertion["assertion_id"] = TAMPERED_ASSERTION_ID
+
+    response = client.request("POST", "/api/v1/auth/session", json=assertion)
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Unauthorized"}
+    assert "set-cookie" not in response.headers
+    assert repository.created_sessions == []
 
 
 def test_trusted_gateway_exchange_allows_injected_insecure_dev_cookie(tmp_path: Path) -> None:
@@ -247,6 +294,7 @@ def test_trusted_gateway_exchange_allows_injected_insecure_dev_cookie(tmp_path: 
         {
             "account_id": EMPLOYEE_ID,
             "timestamp": int(time.time()),
+            "assertion_id": GATEWAY_ASSERTION_ID,
             "signature": "0" * 64,
         },
         gateway_assertion(EMPLOYEE_ID, int(time.time()) - 61),
@@ -269,12 +317,20 @@ def test_trusted_gateway_exchange_rejects_invalid_assertions_generically(
     assert repository.created_sessions == []
 
 
-def test_trusted_gateway_exchange_requires_server_secret(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "weak_secret",
+    ["", "too-short", "x" * 32, "ab" * 16],
+    ids=["empty", "short", "single-byte-repeat", "short-pattern-repeat"],
+)
+def test_trusted_gateway_exchange_requires_strong_server_secret(
+    tmp_path: Path,
+    weak_secret: str,
+) -> None:
     repository = FakeIdentityRepository()
     app = create_app(
         root_dir=tmp_path,
         product_identity_repository_factory=lambda: repository,
-        product_auth_settings=FakeProductAuthSettings(gateway_secret=""),
+        product_auth_settings=FakeProductAuthSettings(gateway_secret=weak_secret),
     )
 
     response = ASGIClient(app).request(
@@ -290,7 +346,9 @@ def test_trusted_gateway_exchange_requires_server_secret(tmp_path: Path) -> None
     assert repository.created_sessions == []
 
 
-def test_logout_deletes_session_and_expires_matching_cookie(auth_session_client) -> None:
+def test_logout_deletes_session_without_principal_lookup_and_expires_cookie(
+    auth_session_client,
+) -> None:
     client, repository, _ = auth_session_client
     exchange = client.request(
         "POST",
@@ -308,7 +366,7 @@ def test_logout_deletes_session_and_expires_matching_cookie(auth_session_client)
     assert exchange.status_code == 200
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
-    assert repository.resolver_tokens[-1] == raw_token
+    assert repository.resolver_tokens == []
     assert repository.deleted_sessions == [raw_token]
     cookie = response.headers["set-cookie"].lower()
     assert "hxy_session=" in cookie
@@ -317,6 +375,46 @@ def test_logout_deletes_session_and_expires_matching_cookie(auth_session_client)
     assert "secure" in cookie
     assert "samesite=lax" in cookie
     assert "path=/api/v1" in cookie
+
+
+def test_logout_is_idempotent_for_unknown_or_missing_session(auth_session_client) -> None:
+    client, repository, _ = auth_session_client
+
+    unknown = client.request(
+        "POST",
+        "/api/v1/auth/logout",
+        headers=session_cookie("unknown-session-token"),
+    )
+    missing = client.request("POST", "/api/v1/auth/logout")
+
+    assert unknown.status_code == 200
+    assert missing.status_code == 200
+    assert repository.deleted_sessions == ["unknown-session-token"]
+    assert repository.resolver_tokens == []
+    for response in (unknown, missing):
+        assert response.json() == {"status": "ok"}
+        cookie = response.headers["set-cookie"].lower()
+        assert "hxy_session=" in cookie
+        assert "max-age=0" in cookie
+        assert "path=/api/v1" in cookie
+
+
+def test_logout_rejects_malformed_bearer_without_using_cookie(auth_session_client) -> None:
+    client, repository, _ = auth_session_client
+
+    response = client.request(
+        "POST",
+        "/api/v1/auth/logout",
+        headers={
+            "Authorization": "Basic invalid-session",
+            **session_cookie("employee-session"),
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Unauthorized"}
+    assert repository.deleted_sessions == []
+    assert "max-age=0" in response.headers["set-cookie"].lower()
 
 
 def test_employee_session_returns_only_its_assignment_and_capabilities(identity_client) -> None:
@@ -530,10 +628,19 @@ def test_migration_defines_identity_ownership_without_business_seed_data() -> No
     normalized = " ".join(sql.split())
 
     assert "CREATE TABLE IF NOT EXISTS hxy_organizations" in sql
+    assert "CREATE TABLE IF NOT EXISTS hxy_organization_stores" in sql
     assert "CREATE TABLE IF NOT EXISTS hxy_role_assignments" in sql
+    assert "CREATE TABLE IF NOT EXISTS hxy_consumed_gateway_assertions" in sql
     assert "REFERENCES staff_accounts(id)" in normalized
     assert "REFERENCES hxy_organizations(organization_id)" in normalized
     assert "REFERENCES stores(store_id)" in normalized
+    assert "PRIMARY KEY (organization_id, store_id)" in normalized
+    assert (
+        "FOREIGN KEY (organization_id, store_id) REFERENCES "
+        "hxy_organization_stores(organization_id, store_id)" in normalized
+    )
+    assert "assertion_id UUID PRIMARY KEY" in normalized
+    assert "expires_at TIMESTAMPTZ NOT NULL" in normalized
     assert all(
         f"'{role}'" in sql
         for role in (
@@ -545,6 +652,16 @@ def test_migration_defines_identity_ownership_without_business_seed_data() -> No
         )
     )
     assert "CHECK (role IN" in normalized
+    assert (
+        "role IN ('store_manager', 'store_employee') AND store_id IS NOT NULL"
+        in normalized
+    )
+    assert (
+        "role IN ('founder', 'hq_operations', 'system_admin') AND store_id IS NULL"
+        in normalized
+    )
+    assert "ADD CONSTRAINT fk_hxy_role_assignments_organization_store" in normalized
+    assert "ADD CONSTRAINT chk_hxy_role_assignments_store_scope" in normalized
     assert "CREATE UNIQUE INDEX IF NOT EXISTS" in normalized
     assert "CREATE INDEX IF NOT EXISTS" in normalized
     assert "INSERT INTO" not in sql.upper()
@@ -576,6 +693,32 @@ class FakeConnection:
     def execute(self, sql: str, params: tuple[object, ...]):
         self.calls.append((sql, params))
         return self.results.pop(0)
+
+
+class GatewayExchangeConnection:
+    def __init__(self, *, duplicate: bool = False) -> None:
+        self.duplicate = duplicate
+        self.calls: list[tuple[str, tuple[object, ...]]] = []
+        self.committed = False
+        self.rolled_back = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, *_args) -> None:
+        self.committed = exc_type is None
+        self.rolled_back = exc_type is not None
+        return None
+
+    def execute(self, sql: str, params: tuple[object, ...]):
+        self.calls.append((sql, params))
+        if "FROM staff_accounts" in sql:
+            return FakeQueryResult(
+                row={"account_id": EMPLOYEE_ID, "display_name": "测试店员"},
+            )
+        if "INSERT INTO hxy_consumed_gateway_assertions" in sql and self.duplicate:
+            raise UniqueViolation("assertion already consumed")
+        return FakeQueryResult()
 
 
 def test_postgres_repository_hashes_raw_token_and_requires_active_identity(monkeypatch) -> None:
@@ -665,25 +808,73 @@ def test_postgres_repository_finds_only_active_asserted_account(monkeypatch) -> 
     assert params == (EMPLOYEE_ID,)
 
 
-def test_postgres_repository_creates_and_deletes_only_hashed_session_tokens(monkeypatch) -> None:
+def test_postgres_repository_atomically_consumes_assertion_and_creates_hashed_session(
+    monkeypatch,
+) -> None:
     from apps.api.hxy_product.repository import IdentityRepository
 
-    connection = FakeConnection([FakeQueryResult(), FakeQueryResult()])
+    connection = GatewayExchangeConnection()
     repository = IdentityRepository("postgresql://identity.test/hxy")
     monkeypatch.setattr(repository, "connect", lambda: connection)
 
-    repository.create_session(EMPLOYEE_ID, "new-raw-session", 1800)
-    repository.delete_session("new-raw-session")
+    principal = repository.exchange_gateway_assertion(
+        EMPLOYEE_ID,
+        GATEWAY_ASSERTION_ID,
+        2_000_000_000,
+        "new-raw-session",
+        1800,
+    )
 
     expected_hash = hashlib.sha256(b"new-raw-session").hexdigest()
-    create_sql, create_params = connection.calls[0]
-    delete_sql, delete_params = connection.calls[1]
-    assert "INSERT INTO staff_sessions" in create_sql
-    assert create_params == (expected_hash, EMPLOYEE_ID, 1800)
-    assert "DELETE FROM staff_sessions" in delete_sql
-    assert delete_params == (expected_hash,)
+    assert principal is not None
+    assert connection.committed is True
+    assert connection.rolled_back is False
+    assert len(connection.calls) == 3
+    assertion_sql, assertion_params = connection.calls[1]
+    session_sql, session_params = connection.calls[2]
+    assert "INSERT INTO hxy_consumed_gateway_assertions" in assertion_sql
+    assert assertion_params == (GATEWAY_ASSERTION_ID, 2_000_000_000)
+    assert "INSERT INTO staff_sessions" in session_sql
+    assert session_params == (expected_hash, EMPLOYEE_ID, 1800)
     assert all("new-raw-session" not in sql for sql, _ in connection.calls)
     assert all("new-raw-session" not in params for _, params in connection.calls)
+
+
+def test_postgres_repository_rolls_back_duplicate_assertion_without_session(
+    monkeypatch,
+) -> None:
+    from apps.api.hxy_product.repository import IdentityRepository
+
+    connection = GatewayExchangeConnection(duplicate=True)
+    repository = IdentityRepository("postgresql://identity.test/hxy")
+    monkeypatch.setattr(repository, "connect", lambda: connection)
+
+    principal = repository.exchange_gateway_assertion(
+        EMPLOYEE_ID,
+        GATEWAY_ASSERTION_ID,
+        2_000_000_000,
+        "new-raw-session",
+        1800,
+    )
+
+    assert principal is None
+    assert connection.committed is False
+    assert connection.rolled_back is True
+    assert not any("INSERT INTO staff_sessions" in sql for sql, _ in connection.calls)
+
+
+def test_postgres_repository_hash_deletes_unknown_session(monkeypatch) -> None:
+    from apps.api.hxy_product.repository import IdentityRepository
+
+    connection = FakeConnection([FakeQueryResult()])
+    repository = IdentityRepository("postgresql://identity.test/hxy")
+    monkeypatch.setattr(repository, "connect", lambda: connection)
+
+    repository.delete_session("unknown-raw-session")
+
+    sql, params = connection.calls[0]
+    assert "DELETE FROM staff_sessions" in sql
+    assert params == (hashlib.sha256(b"unknown-raw-session").hexdigest(),)
 
 
 def test_production_identity_code_contains_no_fixture_token_backdoor() -> None:
