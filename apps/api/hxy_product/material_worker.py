@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
 
+from .material_chunker import chunk_markdown
 from .material_parser import (
     MaterialParseError,
     MaterialParseResult,
@@ -229,10 +230,26 @@ def process_one_material_job(
             },
         )
         written_paths.append(source_card_path)
+        chunk_records = [
+            {
+                "chunk_id": str(uuid4()),
+                "artifact_id": markdown_artifact["artifact_id"],
+                "chunk_index": chunk.chunk_index,
+                "heading": chunk.heading,
+                "content": chunk.content,
+                "char_count": len(chunk.content),
+                "official_use_allowed": False,
+            }
+            for chunk in chunk_markdown(
+                parsed.text_content,
+                default_heading=parsed.title or str(job.get("file_name") or ""),
+            )
+        ]
         repository.complete_job(
             job["job_id"],
             worker_id,
             artifacts=[markdown_artifact, source_card_artifact],
+            chunks=chunk_records,
             understanding=_deep_understanding(job.get("understanding") or {}, parsed),
             parser_name=parsed.parser_name,
             parser_version=parsed.parser_version,

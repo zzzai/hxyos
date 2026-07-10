@@ -105,6 +105,10 @@ def test_worker_parses_one_job_and_writes_governed_artifacts(tmp_path: Path) -> 
     assert completion["job_id"] == JOB_ID
     assert completion["understanding"]["parse_status"] == "extracted"
     assert completion["understanding"]["official_use_allowed"] is False
+    assert completion["chunks"]
+    assert completion["chunks"][0]["heading"] == "首店接待"
+    assert "先问顾客状态" in completion["chunks"][0]["content"]
+    assert completion["chunks"][0]["official_use_allowed"] is False
     artifact_by_type = {item["artifact_type"]: item for item in completion["artifacts"]}
     assert set(artifact_by_type) == {"normalized_markdown", "source_card"}
     normalized = tmp_path / artifact_by_type["normalized_markdown"]["storage_key"]
@@ -113,6 +117,54 @@ def test_worker_parses_one_job_and_writes_governed_artifacts(tmp_path: Path) -> 
     source_card = json.loads(source_card_path.read_text(encoding="utf-8"))
     assert source_card["official_use_allowed"] is False
     assert "official_answer" in source_card["blocked_use"]
+
+
+def test_markdown_chunker_preserves_headings_paragraphs_and_overlap() -> None:
+    module = importlib.import_module("apps.api.hxy_product.material_chunker")
+    text = """# 首店运营
+
+这是第一段，说明首店每天开门前需要检查环境与物料。
+
+这是第二段，店长需要确认排班和预约情况，并处理当天异常。
+
+## 顾客接待
+
+接待时先询问顾客当下状态，再介绍适合的服务，不做治疗承诺。
+
+服务结束后记录顾客反馈，并说明下次到店建议。
+"""
+
+    chunks = module.chunk_markdown(
+        text,
+        target_chars=45,
+        overlap_chars=30,
+        max_chunks=10,
+    )
+
+    assert len(chunks) >= 3
+    assert chunks[0].chunk_index == 0
+    assert chunks[0].heading == "首店运营"
+    assert chunks[-1].heading == "顾客接待"
+    assert all(chunk.content.strip() for chunk in chunks)
+    assert all(len(chunk.content) <= 200 for chunk in chunks)
+    assert [chunk.chunk_index for chunk in chunks] == list(range(len(chunks)))
+    assert any("第二段" in chunk.content for chunk in chunks[:2])
+
+
+def test_markdown_chunker_splits_long_paragraphs_and_caps_output() -> None:
+    module = importlib.import_module("apps.api.hxy_product.material_chunker")
+    text = "# 长文\n\n" + "顾客状态需要先询问。" * 200
+
+    chunks = module.chunk_markdown(
+        text,
+        target_chars=120,
+        overlap_chars=20,
+        max_chunks=4,
+    )
+
+    assert len(chunks) == 4
+    assert all(chunk.heading == "长文" for chunk in chunks)
+    assert all(1 <= len(chunk.content) <= 160 for chunk in chunks)
 
 
 def test_worker_records_retryable_parser_failure_without_writing_artifacts(

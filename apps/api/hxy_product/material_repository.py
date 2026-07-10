@@ -335,6 +335,7 @@ class MaterialRepository:
         worker_id: str,
         *,
         artifacts: list[dict[str, Any]],
+        chunks: list[dict[str, Any]] | None = None,
         understanding: dict[str, Any],
         parser_name: str,
         parser_version: str,
@@ -380,6 +381,47 @@ class MaterialRepository:
                         artifact["sha256"],
                         int(artifact["size_bytes"]),
                         json.dumps(artifact.get("metadata") or {}, ensure_ascii=False),
+                    ),
+                ).fetchone()
+
+            for chunk in chunks or []:
+                connection.execute(
+                    """
+                    INSERT INTO hxy_material_chunks (
+                      chunk_id,
+                      assignment_id,
+                      material_id,
+                      artifact_id,
+                      artifact_type,
+                      chunk_index,
+                      heading,
+                      content,
+                      char_count,
+                      official_use_allowed
+                    )
+                    VALUES (
+                      %s::uuid,
+                      %s::uuid,
+                      %s::uuid,
+                      %s::uuid,
+                      'normalized_markdown',
+                      %s,
+                      %s,
+                      %s,
+                      %s,
+                      FALSE
+                    )
+                    RETURNING chunk_id::text
+                    """,
+                    (
+                        chunk["chunk_id"],
+                        job["assignment_id"],
+                        job["material_id"],
+                        chunk["artifact_id"],
+                        int(chunk["chunk_index"]),
+                        str(chunk.get("heading") or "")[:300],
+                        str(chunk["content"]),
+                        int(chunk["char_count"]),
                     ),
                 ).fetchone()
 

@@ -205,6 +205,8 @@ def test_complete_job_requires_the_current_lease_owner_and_records_artifacts() -
                 return Result(lease_row)
             if "INSERT INTO hxy_material_artifacts" in normalized:
                 return Result({"artifact_id": str(uuid4())})
+            if "INSERT INTO hxy_material_chunks" in normalized:
+                return Result({"chunk_id": str(uuid4())})
             if "UPDATE hxy_material_job_attempts" in normalized:
                 return Result(rowcount=1)
             if "UPDATE hxy_material_parser_jobs" in normalized:
@@ -232,11 +234,23 @@ def test_complete_job_requires_the_current_lease_owner_and_records_artifacts() -
             "metadata": {"version": "hxy-source-card.v1"},
         },
     ]
+    chunks = [
+        {
+            "chunk_id": str(uuid4()),
+            "artifact_id": artifacts[0]["artifact_id"],
+            "chunk_index": 0,
+            "heading": "首店接待",
+            "content": "先问顾客状态，再介绍服务。",
+            "char_count": 14,
+            "official_use_allowed": False,
+        }
+    ]
 
     material = repository.complete_job(
         JOB_ID,
         "worker-a",
         artifacts=artifacts,
+        chunks=chunks,
         understanding={"summary": "已完成深度理解。"},
         parser_name="markitdown",
         parser_version="0.1.6",
@@ -244,6 +258,7 @@ def test_complete_job_requires_the_current_lease_owner_and_records_artifacts() -
 
     assert material["status"] == "ready"
     assert sum("INSERT INTO hxy_material_artifacts" in sql for sql in calls) == 2
+    assert sum("INSERT INTO hxy_material_chunks" in sql for sql in calls) == 1
     assert any("status = 'succeeded'" in sql for sql in calls)
     assert any("status = 'ready'" in sql for sql in calls)
 
