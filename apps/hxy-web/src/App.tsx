@@ -123,7 +123,11 @@ export default function App() {
         isDetailsOpen ? " has-details" : ""
       }`}
     >
-      <aside className="left-rail" aria-label="HXYOS 导航栏">
+      <aside
+        className="left-rail"
+        aria-label="HXYOS 导航栏"
+        inert={isDetailsOpen}
+      >
         <div className="rail-header">
           <span className="brand-mark" aria-hidden="true">
             H
@@ -157,7 +161,7 @@ export default function App() {
         </nav>
       </aside>
 
-      <main className="conversation-stage">
+      <main className="conversation-stage" inert={isDetailsOpen}>
         <header className="stage-header">
           <div className="context-line" aria-label="当前身份和门店">
             <Store aria-hidden="true" />

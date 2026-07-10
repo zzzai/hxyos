@@ -58,7 +58,7 @@ describe("HXYOS product shell", () => {
 
   it("opens and closes truthful current-conversation details on demand", async () => {
     const user = userEvent.setup();
-    render(<App />);
+    const { container } = render(<App />);
 
     expect(
       screen.queryByRole("complementary", { name: "当前对话详情" }),
@@ -74,6 +74,10 @@ describe("HXYOS product shell", () => {
       name: "当前对话详情",
     });
     expect(details).toBeVisible();
+    expect(container.querySelector(".left-rail")).toHaveAttribute("inert");
+    expect(container.querySelector(".conversation-stage")).toHaveAttribute(
+      "inert",
+    );
     expect(
       within(details).getByText("回答服务尚未接入，当前没有可显示的回答详情"),
     ).toBeVisible();
@@ -93,6 +97,10 @@ describe("HXYOS product shell", () => {
     expect(
       screen.getByRole("button", { name: "查看当前对话详情" }),
     ).toHaveFocus();
+    expect(container.querySelector(".left-rail")).not.toHaveAttribute("inert");
+    expect(container.querySelector(".conversation-stage")).not.toHaveAttribute(
+      "inert",
+    );
   });
 
   it("keeps non-conversation views independent after a message is sent", async () => {
