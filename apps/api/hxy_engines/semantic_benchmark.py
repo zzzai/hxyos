@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import random
 import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping
@@ -135,7 +136,7 @@ class HumanSemanticReview:
         )
 
 
-def _canonical_sha256(payload: Any) -> str:
+def canonical_payload_sha256(payload: Any) -> str:
     serialized = json.dumps(
         payload,
         ensure_ascii=False,
@@ -350,8 +351,8 @@ def evaluate_deterministic_semantics(
     return {
         "version": "hxy-semantic-benchmark-report.v1",
         "mode": "deterministic_semantic_baseline",
-        "benchmark_sha256": _canonical_sha256(dict(benchmark)),
-        "rubric_sha256": _canonical_sha256(dict(rubric)),
+        "benchmark_sha256": canonical_payload_sha256(dict(benchmark)),
+        "rubric_sha256": canonical_payload_sha256(dict(rubric)),
         "case_count": case_count,
         "answer_run_count": len(answer_runs),
         "deterministic_pass_count": pass_count,
@@ -455,3 +456,122 @@ def apply_human_calibration(
         "case_ids": safe_judge_ids,
     }
     return report
+
+
+def semantic_answer_runs_from_payload(
+    payload: Mapping[str, Any],
+) -> dict[str, SemanticAnswerRun]:
+    if payload.get("version") != "hxy-semantic-answer-run.v1":
+        raise ValueError("unsupported semantic answer run version")
+    raw_answers = payload.get("answers")
+    if not isinstance(raw_answers, list):
+        raise ValueError("semantic answers must be an array")
+    runs: dict[str, SemanticAnswerRun] = {}
+    for raw in raw_answers:
+        if not isinstance(raw, Mapping):
+            raise ValueError("semantic answer must be an object")
+        run = SemanticAnswerRun(
+            case_id=str(raw.get("case_id") or ""),
+            provider_name=str(raw.get("provider_name") or ""),
+            provider_version=str(raw.get("provider_version") or ""),
+            answer=str(raw.get("answer") or ""),
+            answer_authority=str(raw.get("answer_authority") or ""),
+            evidence_ids=tuple(str(item) for item in raw.get("evidence_ids") or []),
+            evidence_authorities=tuple(
+                str(item) for item in raw.get("evidence_authorities") or []
+            ),
+            citations=tuple(str(item) for item in raw.get("citations") or []),
+            declared_outcomes=tuple(
+                str(item) for item in raw.get("declared_outcomes") or []
+            ),
+            policy_action=str(raw.get("policy_action") or ""),
+            guardrail_action=str(raw.get("guardrail_action") or ""),
+            latency_ms=int(raw.get("latency_ms") or 0),
+            input_tokens=int(raw.get("input_tokens") or 0),
+            output_tokens=int(raw.get("output_tokens") or 0),
+            cost_microunits=int(raw.get("cost_microunits") or 0),
+            safe_trace=(
+                raw.get("safe_trace")
+                if isinstance(raw.get("safe_trace"), Mapping)
+                else {}
+            ),
+        )
+        if run.case_id in runs:
+            raise ValueError(f"duplicate semantic answer case: {run.case_id}")
+        runs[run.case_id] = run
+    return runs
+
+
+def human_reviews_from_payload(
+    payload: Mapping[str, Any],
+) -> list[HumanSemanticReview]:
+    if payload.get("version") != "hxy-semantic-review.v1":
+        raise ValueError("unsupported semantic review version")
+    raw_reviews = payload.get("reviews")
+    if not isinstance(raw_reviews, list):
+        raise ValueError("semantic reviews must be an array")
+    return [
+        HumanSemanticReview(
+            case_id=str(raw.get("case_id") or ""),
+            reviewer_id=str(raw.get("reviewer_id") or ""),
+            scores=(raw.get("scores") if isinstance(raw.get("scores"), Mapping) else {}),
+            reason_codes=tuple(
+                str(item) for item in raw.get("reason_codes") or []
+            ),
+        )
+        for raw in raw_reviews
+        if isinstance(raw, Mapping)
+    ]
+
+
+def build_blind_review_pack(
+    benchmark: Mapping[str, Any],
+    rubric: Mapping[str, Any],
+    calibration: Mapping[str, Any],
+    answer_runs: Mapping[str, SemanticAnswerRun],
+    *,
+    seed: int,
+) -> dict[str, Any]:
+    cases = {
+        str(case.get("case_id") or ""): case
+        for case in benchmark.get("cases") or []
+        if isinstance(case, Mapping)
+    }
+    rubric_cases = {
+        str(case.get("case_id") or ""): case
+        for case in rubric.get("cases") or []
+        if isinstance(case, Mapping)
+    }
+    items: list[dict[str, Any]] = []
+    for case_id in calibration.get("case_ids") or []:
+        case_id = str(case_id)
+        case = cases.get(case_id)
+        rubric_case = rubric_cases.get(case_id)
+        run = answer_runs.get(case_id)
+        if case is None or rubric_case is None or run is None:
+            raise ValueError(f"review pack case is incomplete: {case_id}")
+        allowed_ids = {str(item) for item in case.get("allowed_evidence_ids") or []}
+        items.append(
+            {
+                "case_id": _safe_label(case_id),
+                "role": _safe_label(str(case.get("role") or "")),
+                "question": str((case.get("task") or {}).get("input") or ""),
+                "answer": run.answer,
+                "answer_authority": run.answer_authority,
+                "evidence_ids": _safe_known_ids(run.evidence_ids, allowed_ids),
+                "evidence_authorities": list(run.evidence_authorities),
+                "citations": _safe_known_ids(run.citations, allowed_ids),
+                "required_outcomes": list(
+                    rubric_case.get("required_outcomes") or []
+                ),
+                "dimensions": list(rubric_case.get("dimensions") or []),
+            }
+        )
+    random.Random(seed).shuffle(items)
+    return {
+        "version": "hxy-semantic-blind-review-pack.v1",
+        "blind": True,
+        "seed": seed,
+        "case_count": len(items),
+        "items": items,
+    }
