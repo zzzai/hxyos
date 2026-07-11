@@ -54,6 +54,7 @@
 | `../operations/hxy-p0-manual-review-template.md` | HXY P0 Manual Review Template，给人工 reviewer 填写 P0 决策、元数据和风险边界 |
 | `architecture/01-target-architecture.md` | 超智大脑目标架构 |
 | `architecture/04-hxyos-execution-surface-design-skill.md` | Huashu Design 外部参考资料的 Execution Surface 映射，限定为 HXY UI Prototype Skill，不作为权威知识 |
+| `architecture/05-hxyos-2-reference-architecture.md` | HXYOS 2.0 控制平面、五层架构、七类可替换 Adapter 与技术演进边界 |
 | `knowledge/01-knowledge-base-design.md` | 知识库设计 |
 | `semantic/01-ontos-lite.md` | 轻量本体设计 |
 | `data/01-data-agent-design.md` | 数据智能体设计 |
@@ -62,6 +63,7 @@
 | `agents/03-claude-code-workflow.md` | Claude Code harness / loop / handoff |
 | `agents/04-ai-native-dev-harness.md` | AI Native Dev Harness，吸收 Code is cheap 文章为 HXYOS 开发 Loop 纪律，定义 spec、codemap、checkpoint、minimum chaos unit 和 safety net |
 | `roadmap/01-stage-roadmap.md` | 从筹备期到万店规模路线图 |
+| `roadmap/02-hxyos-2-component-benchmark-and-migration.md` | 外部组件接入门禁、50 项岗位 Benchmark、灰度与回滚顺序 |
 | `governance/01-quality-and-safety.md` | 质量、安全、审计治理 |
 | `assets/01-current-asset-register.md` | 当前资产清单与事实/假设边界 |
 | `schemas/knowledge-asset.schema.json` | 知识资产结构 |
@@ -81,6 +83,7 @@
 | `samples/pilot-real-parameter-intake.md` | 样板店真实参数采集表 |
 | `samples/pilot-feedback-intake.md` | 样板店试跑反馈采集表 |
 | `decisions/ADR-001-project-boundary.md` | 项目边界架构决策 |
+| `decisions/ADR-002-control-plane-and-pluggable-engines.md` | HXYOS 作为唯一控制平面、通用产品仅通过 Adapter 接入的架构决策 |
 
 ## 下一步执行清单
 
