@@ -137,6 +137,8 @@ function ProductShell({
     assignment?.store?.name ??
     assignment?.organization.name ??
     (status === "loading" ? "HXYOS" : "请重试");
+  const isConversationEmpty =
+    activeView === "conversation" && messages.length === 0;
 
   const latestAnswer = [...messages]
     .reverse()
@@ -471,7 +473,12 @@ function ProductShell({
         </nav>
       </aside>
 
-      <main className="conversation-stage" inert={isDetailsOpen}>
+      <main
+        className={`conversation-stage${
+          isConversationEmpty ? " is-conversation-empty" : ""
+        }`}
+        inert={isDetailsOpen}
+      >
         <header className="stage-header">
           <div
             className="context-line"

@@ -105,3 +105,21 @@ no default password exists
 ```
 
 之后 Hermes/飞书只需要安全签发或传递同类一次性入口，不需要在移动端增加登录表单。
+
+## Reissue An Expired Founder Link
+
+Founder 已存在后不得重新运行 bootstrap。首次链接丢失、过期或已消费时，使用独立重签发命令：
+
+```bash
+cd /root/hxy/releases/current
+set -a
+source /root/hxy/ops/env/hxy-knowledge-api.env
+set +a
+
+python3 scripts/reissue-hxy-session-link.py \
+  --username founder \
+  --app-url "https://hxyos.hexiaoyue.com/" \
+  --confirm REISSUE-HXY-SESSION-LINK
+```
+
+该命令只解析已有的 active Founder assignment，并新增一个最长 10 分钟有效的单次 grant。它不创建或修改身份，不创建密码，也不清除已登录设备。数据库只保存 grant 的 SHA-256；原始链接仍然只在 stdout 返回一次，不得写入日志、截图、仓库或群聊。

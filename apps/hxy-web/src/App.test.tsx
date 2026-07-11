@@ -176,6 +176,30 @@ describe("HXYOS product shell", () => {
     ).toBeEnabled();
   });
 
+  it("uses the centered empty-conversation state only before work starts", async () => {
+    const user = userEvent.setup();
+    const gateway = conversationGateway();
+    const { container } = render(
+      <App initialSession={TEST_SESSION} conversationClient={gateway} />,
+    );
+
+    expect(container.querySelector(".conversation-stage")).toHaveClass(
+      "is-conversation-empty",
+    );
+
+    await user.type(
+      screen.getByRole("textbox", { name: "告诉 HXYOS 你要做什么" }),
+      "检查今天的开业任务",
+    );
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() =>
+      expect(container.querySelector(".conversation-stage")).not.toHaveClass(
+        "is-conversation-empty",
+      ),
+    );
+  });
+
   it("limits primary navigation to conversation, tasks, and profile", () => {
     renderApp();
 

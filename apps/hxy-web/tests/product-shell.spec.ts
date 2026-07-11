@@ -144,6 +144,49 @@ async function mockProductApi(page: Page) {
 }
 
 test.describe("HXYOS product shell viewport contract", () => {
+  test("centers the empty composer and docks it after the first message", async ({
+    page,
+  }) => {
+    await mockProductApi(page);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/");
+
+    const stage = page.locator(".conversation-stage");
+    const composer = page.getByTestId("composer");
+    const textbox = page.getByRole("textbox", {
+      name: "告诉 HXYOS 你要做什么",
+    });
+    await expect(textbox).toBeEnabled();
+
+    const emptyStageBox = await stage.boundingBox();
+    const emptyComposerBox = await composer.boundingBox();
+    expect(emptyStageBox).not.toBeNull();
+    expect(emptyComposerBox).not.toBeNull();
+    expect(
+      Math.abs(
+        emptyComposerBox!.x + emptyComposerBox!.width / 2 -
+          (emptyStageBox!.x + emptyStageBox!.width / 2),
+      ),
+    ).toBeLessThanOrEqual(2);
+    expect(
+      Math.abs(
+        emptyComposerBox!.y + emptyComposerBox!.height / 2 -
+          (emptyStageBox!.y + emptyStageBox!.height / 2),
+      ),
+    ).toBeLessThanOrEqual(150);
+
+    await textbox.fill("检查今天的开业任务");
+    await page.getByRole("button", { name: "发送" }).click();
+    await expect(page.getByText("检查今天的开业任务")).toBeVisible();
+
+    const activeComposerBox = await composer.boundingBox();
+    expect(activeComposerBox).not.toBeNull();
+    expect(activeComposerBox!.y).toBeGreaterThan(emptyComposerBox!.y + 100);
+    expect(activeComposerBox!.y + activeComposerBox!.height).toBeLessThanOrEqual(
+      emptyStageBox!.y + emptyStageBox!.height,
+    );
+  });
+
   test("opens the mobile conversation from a one-time fragment link", async ({
     page,
   }) => {
