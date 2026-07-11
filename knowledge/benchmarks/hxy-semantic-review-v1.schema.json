@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hxyos.local/schemas/hxy-semantic-review-v1.schema.json",
+  "title": "HXYOS Human Semantic Review V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "reviews"],
+  "properties": {
+    "version": { "const": "hxy-semantic-review.v1" },
+    "reviews": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["case_id", "reviewer_id", "scores", "reason_codes"],
+        "properties": {
+          "case_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+          "reviewer_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+          "scores": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "factual_correctness",
+              "role_usefulness",
+              "evidence_alignment",
+              "expression_fitness",
+              "actionability"
+            ],
+            "properties": {
+              "factual_correctness": { "$ref": "#/$defs/score" },
+              "role_usefulness": { "$ref": "#/$defs/score" },
+              "evidence_alignment": { "$ref": "#/$defs/score" },
+              "expression_fitness": { "$ref": "#/$defs/score" },
+              "actionability": { "$ref": "#/$defs/score" }
+            }
+          },
+          "reason_codes": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1, "maxLength": 160 }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "score": { "type": "integer", "minimum": 1, "maximum": 5 }
+  }
+}

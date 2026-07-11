@@ -20,6 +20,13 @@ _EVIDENCE_AUTHORITIES = {
 }
 _POLICY_ACTIONS = {"answer", "needs_review", "deny"}
 _GUARDRAIL_ACTIONS = {"send", "revise_or_review", "deny"}
+_SEMANTIC_DIMENSIONS = (
+    "factual_correctness",
+    "role_usefulness",
+    "evidence_alignment",
+    "expression_fitness",
+    "actionability",
+)
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$")
 _PRIVATE_MARKERS = (
     "/root/",
@@ -89,6 +96,43 @@ class SemanticAnswerRun:
         for name in ("latency_ms", "input_tokens", "output_tokens", "cost_microunits"):
             if getattr(self, name) < 0:
                 raise ValueError(f"{name} is invalid")
+
+
+@dataclass(frozen=True)
+class HumanSemanticReview:
+    case_id: str
+    reviewer_id: str
+    scores: Mapping[str, int]
+    reason_codes: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        for name in ("case_id", "reviewer_id"):
+            object.__setattr__(
+                self,
+                name,
+                _bounded_text(name, str(getattr(self, name))),
+            )
+        if set(self.scores) != set(_SEMANTIC_DIMENSIONS):
+            raise ValueError("scores must contain the five semantic dimensions")
+        normalized_scores: dict[str, int] = {}
+        for dimension in _SEMANTIC_DIMENSIONS:
+            score = self.scores[dimension]
+            if isinstance(score, bool) or not isinstance(score, int) or not 1 <= score <= 5:
+                raise ValueError(f"score for {dimension} is invalid")
+            normalized_scores[dimension] = score
+        object.__setattr__(self, "scores", normalized_scores)
+        object.__setattr__(
+            self,
+            "reason_codes",
+            tuple(
+                sorted(
+                    {
+                        _bounded_text("reason_code", str(item))
+                        for item in self.reason_codes
+                    }
+                )
+            ),
+        )
 
 
 def _canonical_sha256(payload: Any) -> str:
@@ -320,3 +364,94 @@ def evaluate_deterministic_semantics(
         "quality_claim_allowed": False,
         "cases": results,
     }
+
+
+def apply_human_calibration(
+    deterministic_report: Mapping[str, Any],
+    calibration: Mapping[str, Any],
+    reviews: list[HumanSemanticReview],
+    *,
+    judge_results: Mapping[str, Mapping[str, int]] | None = None,
+) -> dict[str, Any]:
+    calibration_ids = [
+        str(item) for item in calibration.get("case_ids") or []
+    ]
+    calibration_set = set(calibration_ids)
+    reviews_by_case: dict[str, list[HumanSemanticReview]] = {
+        case_id: [] for case_id in calibration_ids
+    }
+    for review in reviews:
+        if review.case_id in calibration_set:
+            reviews_by_case[review.case_id].append(review)
+
+    missing_case_ids: list[str] = []
+    needs_adjudication_case_ids: list[str] = []
+    invalid_review_case_ids: list[str] = []
+    case_scores: list[dict[str, Any]] = []
+    for case_id in calibration_ids:
+        case_reviews = reviews_by_case[case_id]
+        reviewer_ids = {review.reviewer_id for review in case_reviews}
+        if len(case_reviews) < 2 or len(reviewer_ids) < 2:
+            missing_case_ids.append(case_id)
+            continue
+        if len(case_reviews) != 2 or len(reviewer_ids) != 2:
+            invalid_review_case_ids.append(case_id)
+            continue
+        first, second = case_reviews
+        disagreements = [
+            dimension
+            for dimension in _SEMANTIC_DIMENSIONS
+            if abs(first.scores[dimension] - second.scores[dimension]) > 1
+        ]
+        if disagreements:
+            needs_adjudication_case_ids.append(case_id)
+            continue
+        case_scores.append(
+            {
+                "case_id": _safe_label(case_id),
+                "scores": {
+                    dimension: round(
+                        (first.scores[dimension] + second.scores[dimension]) / 2,
+                        2,
+                    )
+                    for dimension in _SEMANTIC_DIMENSIONS
+                },
+            }
+        )
+
+    accepted_count = len(case_scores)
+    calibrated = (
+        bool(calibration_ids)
+        and accepted_count == len(calibration_ids)
+        and not missing_case_ids
+        and not needs_adjudication_case_ids
+        and not invalid_review_case_ids
+    )
+    safe_judge_ids = sorted(
+        case_id
+        for case_id in (judge_results or {})
+        if case_id in calibration_set and _SAFE_ID.fullmatch(case_id)
+    )
+    report = dict(deterministic_report)
+    report["semantic_status"] = (
+        "human_calibrated" if calibrated else "awaiting_human_calibration"
+    )
+    report["semantic_evaluated_count"] = accepted_count
+    report["quality_claim_allowed"] = False
+    report["human_calibration"] = {
+        "version": "hxy-human-semantic-calibration.v1",
+        "required_case_count": len(calibration_ids),
+        "reviews_required_per_case": 2,
+        "accepted_case_count": accepted_count,
+        "missing_case_ids": missing_case_ids,
+        "needs_adjudication_case_ids": needs_adjudication_case_ids,
+        "invalid_review_case_ids": invalid_review_case_ids,
+        "case_scores": case_scores,
+    }
+    report["advisory_judge"] = {
+        "version": "hxy-advisory-semantic-judge.v1",
+        "authoritative": False,
+        "evaluated_case_count": len(safe_judge_ids),
+        "case_ids": safe_judge_ids,
+    }
+    return report
