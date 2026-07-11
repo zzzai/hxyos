@@ -1,0 +1,19 @@
+{
+  "benchmark_id": "hxy-engine-benchmark-v1-current-baseline",
+  "benchmark_sha256": "a836127b33b2e4c07a0641e71a522d4758d3398d2106a8b27b65168df9239eb8",
+  "case_ids": [
+    "founder-01",
+    "founder-10",
+    "brand-operations-01",
+    "brand-operations-10",
+    "store-manager-01",
+    "store-manager-10",
+    "store-employee-01",
+    "store-employee-10",
+    "knowledge-data-admin-01",
+    "knowledge-data-admin-10"
+  ],
+  "reviews_required_per_case": 2,
+  "selection": "first_and_last_case_per_role",
+  "version": "hxy-semantic-calibration.v1"
+}
