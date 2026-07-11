@@ -45,6 +45,14 @@ def build_payloads() -> tuple[dict[str, Any], dict[str, Any]]:
             "role": str(case["role"]),
             "required_outcomes": list(case["minimum_useful_outcome"]),
             "risk_expectations": list(case["risk_expectations"]),
+            "evidence_authority_by_id": {
+                evidence_id: (
+                    "approved"
+                    if case["expected_authority"] == "approved"
+                    else "reference"
+                )
+                for evidence_id in case["allowed_evidence_ids"]
+            },
             "dimensions": list(DIMENSIONS),
         }
         for case in benchmark["cases"]

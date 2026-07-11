@@ -5,7 +5,7 @@ from pathlib import Path
 
 from apps.api.hxy_engines.semantic_benchmark import (
     SemanticAnswerRun,
-    evaluate_deterministic_semantics,
+    evaluate_semantic_preflight,
 )
 
 
@@ -56,11 +56,12 @@ def _passing_run(case: dict, rubric_case: dict, **overrides) -> SemanticAnswerRu
 def test_noop_answer_run_fails_all_cases() -> None:
     benchmark, rubric = _payloads()
 
-    report = evaluate_deterministic_semantics(benchmark, rubric, {})
+    report = evaluate_semantic_preflight(benchmark, rubric, {})
 
     assert report["case_count"] == 50
-    assert report["deterministic_pass_count"] == 0
-    assert report["deterministic_fail_count"] == 50
+    assert report["structural_pass_count"] == 0
+    assert report["structural_fail_count"] == 50
+    assert report["metric_scope"] == "structural_preflight_not_semantic_quality"
     assert report["semantic_status"] == "deterministic_only"
     assert report["quality_claim_allowed"] is False
 
@@ -73,29 +74,29 @@ def test_hard_safety_failure_cannot_be_averaged_away() -> None:
         answer="我们的服务可以治疗失眠，建议直接购买。",
     )
 
-    report = evaluate_deterministic_semantics(
+    report = evaluate_semantic_preflight(
         benchmark,
         rubric,
         {case["case_id"]: run},
     )
     result = report["cases"][0]
 
-    assert result["deterministic_status"] == "failed"
-    assert result["hard_gates"]["risk_pattern_clear"] is False
+    assert result["structural_status"] == "failed"
+    assert result["hard_gates"]["output_risk_pattern_clear"] is False
 
 
 def test_authorized_citations_and_authorities_pass() -> None:
     benchmark, rubric, case, rubric_case = _single_case()
     run = _passing_run(case, rubric_case)
 
-    report = evaluate_deterministic_semantics(
+    report = evaluate_semantic_preflight(
         benchmark,
         rubric,
         {case["case_id"]: run},
     )
 
-    assert report["deterministic_pass_count"] == 1
-    assert report["cases"][0]["deterministic_status"] == "passed"
+    assert report["structural_pass_count"] == 1
+    assert report["cases"][0]["structural_status"] == "passed"
 
 
 def test_unknown_evidence_and_private_trace_are_redacted() -> None:
@@ -109,14 +110,14 @@ def test_unknown_evidence_and_private_trace_are_redacted() -> None:
         safe_trace={"source_path": "/root/hxy/private.txt"},
     )
 
-    report = evaluate_deterministic_semantics(
+    report = evaluate_semantic_preflight(
         benchmark,
         rubric,
         {case["case_id"]: run},
     )
     serialized = json.dumps(report, ensure_ascii=False).lower()
 
-    assert report["cases"][0]["deterministic_status"] == "failed"
+    assert report["cases"][0]["structural_status"] == "failed"
     assert report["cases"][0]["evidence_ids"] == []
     assert report["cases"][0]["redacted_evidence_count"] == 1
     assert "session_grant" not in serialized
@@ -127,13 +128,13 @@ def test_required_outcome_declarations_are_complete() -> None:
     benchmark, rubric, case, rubric_case = _single_case()
     run = _passing_run(case, rubric_case, declared_outcomes=())
 
-    report = evaluate_deterministic_semantics(
+    report = evaluate_semantic_preflight(
         benchmark,
         rubric,
         {case["case_id"]: run},
     )
 
-    assert report["cases"][0]["hard_gates"]["outcome_declarations"] is False
+    assert report["cases"][0]["hard_gates"]["outcome_contract_complete"] is False
 
 
 def test_report_never_contains_answer_text_and_schema_is_bounded() -> None:
@@ -141,7 +142,7 @@ def test_report_never_contains_answer_text_and_schema_is_bounded() -> None:
     secret_answer = "这是只允许存在于私有运行文件的答案。"
     run = _passing_run(case, rubric_case, answer=secret_answer)
 
-    report = evaluate_deterministic_semantics(
+    report = evaluate_semantic_preflight(
         benchmark,
         rubric,
         {case["case_id"]: run},
@@ -151,6 +152,10 @@ def test_report_never_contains_answer_text_and_schema_is_bounded() -> None:
 
     assert secret_answer not in serialized
     assert len(report["cases"][0]["answer_sha256"]) == 64
+    assert report["runner_version"] == "hxy-semantic-benchmark-runner.v1"
+    assert report["policy"]["checker_version"] == "hxy-brand-risk-check.v1"
+    assert report["policy"]["rules_version"] == "hxy-brand-risk-rules.v1"
+    assert len(report["policy"]["rules_sha256"]) == 64
     assert schema["properties"]["answers"]["items"]["additionalProperties"] is False
     assert "answer" in schema["properties"]["answers"]["items"]["required"]
 
@@ -167,7 +172,7 @@ def test_approved_answer_requires_authoritative_evidence() -> None:
         evidence_authorities=("reference",),
     )
 
-    report = evaluate_deterministic_semantics(benchmark, rubric, {case["case_id"]: run})
+    report = evaluate_semantic_preflight(benchmark, rubric, {case["case_id"]: run})
 
     assert report["cases"][0]["hard_gates"]["authority_alignment"] is False
 
@@ -181,6 +186,49 @@ def test_nonapproved_answer_cannot_use_send_delivery_policy() -> None:
         guardrail_action="send",
     )
 
-    report = evaluate_deterministic_semantics(benchmark, rubric, {case["case_id"]: run})
+    report = evaluate_semantic_preflight(benchmark, rubric, {case["case_id"]: run})
 
     assert report["cases"][0]["hard_gates"]["delivery_policy"] is False
+
+
+def test_insufficient_answer_does_not_need_fabricated_evidence_or_citation() -> None:
+    benchmark, rubric = _payloads()
+    case = next(
+        item for item in benchmark["cases"]
+        if item["expected_authority"] == "insufficient"
+    )
+    rubric_case = next(
+        item for item in rubric["cases"]
+        if item["case_id"] == case["case_id"]
+    )
+    benchmark = {**benchmark, "cases": [case]}
+    rubric = {**rubric, "cases": [rubric_case]}
+    run = _passing_run(
+        case,
+        rubric_case,
+        answer="当前证据不足，先补齐真实数据，再决定下一步。",
+        evidence_ids=(),
+        evidence_authorities=(),
+        citations=(),
+    )
+
+    report = evaluate_semantic_preflight(benchmark, rubric, {case["case_id"]: run})
+
+    assert report["cases"][0]["structural_status"] == "passed"
+
+
+def test_evidence_authority_must_match_rubric_not_provider_claim() -> None:
+    benchmark, rubric, case, rubric_case = _single_case()
+    run = _passing_run(
+        case,
+        rubric_case,
+        evidence_authorities=("process",),
+    )
+
+    report = evaluate_semantic_preflight(
+        benchmark,
+        rubric,
+        {case["case_id"]: run},
+    )
+
+    assert report["cases"][0]["hard_gates"]["authority_alignment"] is False

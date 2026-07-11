@@ -13,7 +13,7 @@ adds that missing evidence without allowing a model to certify its own output.
 The governing principle is:
 
 ```text
-deterministic checks cover every case
+deterministic structural checks cover every case but do not score meaning
 + human blind review calibrates meaning
 + model judging is advisory only
 ```
@@ -111,20 +111,31 @@ Hard safety failures are never averaged away by semantic scores.
 ## Human Calibration
 
 The calibration sample contains ten cases, stratified as two per role and
-versioned by case ID. Two reviewers score independently without seeing provider,
-model, token cost, or the other reviewer's scores.
+versioned by case ID. V1 masks known provider/model identity, token cost, and
+the other reviewer's scores. It does not claim verified blindness until
+provider/model aliases come from trusted execution metadata.
 
 Disagreement handling:
 
 - a dimension difference of zero or one is accepted and averaged;
 - a difference above one requires adjudication;
 - incomplete reviews keep the benchmark in `awaiting_human_calibration`;
-- reviewer identities are represented by non-sensitive reviewer IDs.
+- reviewer identities are represented by non-sensitive reviewer IDs;
+- offline reviewer IDs do not prove independent identities, so file completion
+  remains unverified until an authenticated reviewer-assignment adapter exists;
+- each review binds the raw answer hash, exact displayed review-text hash,
+  benchmark hash, rubric hash, and blind-item ID.
 
 ## Advisory Model Judge
 
 The judge receives the question, bounded evidence summary, required outcomes,
 rubric, and answer. It does not receive the provider/model identity.
+
+Masked-pack creation normalizes Unicode, removes zero-width/control characters,
+then removes provider/model aliases and common multilingual identity
+disclosures. It fails closed when an identity marker remains. Until aliases come
+from trusted execution metadata, the pack records `blind=false` and
+`identity_redaction_unverified`.
 
 Its output is stored separately as advisory evidence. It cannot change hard
 gates, human scores, approval state, or `quality_claim_allowed`.
@@ -138,7 +149,8 @@ human sample. V1 records agreement; it does not set an automatic trust threshold
 not_evaluated
 deterministic_only
 awaiting_human_calibration
-human_calibrated
+review_files_complete_unverified
+human_calibrated (reserved for authenticated reviewer provenance)
 ```
 
 `quality_claim_allowed` remains false in V1, including after calibration. A

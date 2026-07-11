@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Add governed semantic evaluation for the 50 role cases using deterministic checks, a ten-case human blind-review calibration pack, and strictly advisory model-judge results.
+**Goal:** Add governed semantic evaluation for the 50 role cases using deterministic structural preflight, a ten-case identity-masked review pack, and strictly advisory model-judge results.
 
 **Architecture:** Keep the contract runner unchanged and add a separate semantic evaluator. Private answer text and completed reviews live under ignored `knowledge/runs/`; tracked artifacts contain only bounded IDs, hashes, scores, reason codes, and safe metadata. Hard gates and human reviews are authoritative; model-judge output cannot change benchmark state or quality claims.
 
@@ -132,7 +132,7 @@ git add apps/api/hxy_engines/semantic_benchmark.py knowledge/benchmarks/hxy-sema
 git commit -m "feat: add deterministic semantic evaluator"
 ```
 
-### Task 3: Add Human Blind-Review Calibration
+### Task 3: Add Human Masked-Review Calibration
 
 **Files:**
 - Create: `knowledge/benchmarks/hxy-semantic-review-v1.schema.json`
@@ -157,13 +157,14 @@ def test_advisory_judge_cannot_change_human_or_hard_gates(): ...
 
 **Step 3: Implement validation and agreement**
 
-Each review has bounded reviewer/case IDs, five integer scores from 1 to 5, and
-optional reason codes. Two independent reviewer IDs are mandatory. A dimension
-difference above one requires adjudication.
+Each review has bounded reviewer/case IDs, answer and displayed-text hashes,
+five integer scores from 1 to 5, and optional reason codes. Two distinct review
+files are mandatory. A dimension difference above one requires adjudication;
+offline reviewer IDs do not prove identity independence.
 
 ```text
 missing or disagreeing reviews -> awaiting_human_calibration
-two accepted reviews for all ten cases -> human_calibrated
+two accepted files for all ten cases -> review_files_complete_unverified
 ```
 
 Judge scores remain a separate advisory section.
@@ -176,7 +177,7 @@ git add knowledge/benchmarks/hxy-semantic-review-v1.schema.json apps/api/hxy_eng
 git commit -m "feat: add blind review calibration"
 ```
 
-### Task 4: Add Private Review Pack And Semantic CLI
+### Task 4: Add Private Masked Review Pack And Semantic CLI
 
 **Files:**
 - Create: `scripts/build-hxy-semantic-review-pack.py`

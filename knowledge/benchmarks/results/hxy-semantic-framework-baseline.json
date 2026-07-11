@@ -1,0 +1,2002 @@
+{
+  "advisory_judge": {
+    "authoritative": false,
+    "case_ids": [],
+    "evaluated_case_count": 0,
+    "version": "hxy-advisory-semantic-judge.v1"
+  },
+  "answer_run_count": 0,
+  "benchmark_sha256": "a836127b33b2e4c07a0641e71a522d4758d3398d2106a8b27b65168df9239eb8",
+  "case_count": 50,
+  "cases": [
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "founder-01",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "founder",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "founder-02",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "founder",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "founder-03",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "founder",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "founder-04",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "founder",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "founder-05",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "founder",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "founder-06",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "founder",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "founder-07",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "founder",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "founder-08",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "founder",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "founder-09",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "founder",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "founder-10",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "founder",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "brand-operations-01",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "brand_operations",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "brand-operations-02",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "brand_operations",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "brand-operations-03",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "brand_operations",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "brand-operations-04",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "brand_operations",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "brand-operations-05",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "brand_operations",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "brand-operations-06",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "brand_operations",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "brand-operations-07",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "brand_operations",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "brand-operations-08",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "brand_operations",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "brand-operations-09",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "brand_operations",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "brand-operations-10",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "brand_operations",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "store-manager-01",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "store_manager",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "store-manager-02",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "store_manager",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "store-manager-03",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "store_manager",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "store-manager-04",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "store_manager",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "store-manager-05",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "store_manager",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "store-manager-06",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "store_manager",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "store-manager-07",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "store_manager",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "store-manager-08",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "store_manager",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "store-manager-09",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "store_manager",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "store-manager-10",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "store_manager",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "store-employee-01",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "store_employee",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "store-employee-02",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "store_employee",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "store-employee-03",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "store_employee",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "store-employee-04",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "store_employee",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "store-employee-05",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "store_employee",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "store-employee-06",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "store_employee",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "store-employee-07",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "store_employee",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "store-employee-08",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "store_employee",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "store-employee-09",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "store_employee",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "store-employee-10",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "store_employee",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "knowledge-data-admin-01",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "knowledge_data_admin",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "knowledge-data-admin-02",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "knowledge_data_admin",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "knowledge-data-admin-03",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "knowledge_data_admin",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "knowledge-data-admin-04",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "knowledge_data_admin",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "knowledge-data-admin-05",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "knowledge_data_admin",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "knowledge-data-admin-06",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "knowledge_data_admin",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "knowledge-data-admin-07",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "knowledge_data_admin",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "knowledge-data-admin-08",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "knowledge_data_admin",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "knowledge-data-admin-09",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "knowledge_data_admin",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "answer_authority": "insufficient",
+      "answer_sha256": null,
+      "budget_checks": {
+        "cost": false,
+        "latency": false,
+        "tokens": false
+      },
+      "case_id": "knowledge-data-admin-10",
+      "evidence_ids": [],
+      "hard_gates": {
+        "answer_present": false,
+        "authority_alignment": false,
+        "citation_coverage": false,
+        "delivery_policy": false,
+        "evidence_scope": false,
+        "outcome_contract_complete": false,
+        "output_risk_pattern_clear": false,
+        "trace_privacy": false
+      },
+      "provider": {
+        "name": "missing",
+        "version": "missing"
+      },
+      "reason_codes": [
+        "missing_answer_run"
+      ],
+      "redacted_evidence_count": 0,
+      "review_text_sha256": null,
+      "role": "knowledge_data_admin",
+      "structural_status": "failed",
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    }
+  ],
+  "human_calibration": {
+    "accepted_case_count": 0,
+    "case_scores": [],
+    "invalid_review_case_ids": [],
+    "missing_case_ids": [
+      "founder-01",
+      "founder-10",
+      "brand-operations-01",
+      "brand-operations-10",
+      "store-manager-01",
+      "store-manager-10",
+      "store-employee-01",
+      "store-employee-10",
+      "knowledge-data-admin-01",
+      "knowledge-data-admin-10"
+    ],
+    "needs_adjudication_case_ids": [],
+    "required_case_count": 10,
+    "reviewer_provenance_verified": false,
+    "reviews_required_per_case": 2,
+    "version": "hxy-human-semantic-calibration.v1"
+  },
+  "metric_scope": "structural_preflight_not_semantic_quality",
+  "mode": "structural_semantic_preflight",
+  "policy": {
+    "checker_version": "hxy-brand-risk-check.v1",
+    "rules_sha256": "dc1563d17dd2a25b2f432a7f6b5293bcc62ce8f60aa1c678ee94269cba3dce5c",
+    "rules_status": "candidate_rules",
+    "rules_version": "hxy-brand-risk-rules.v1"
+  },
+  "quality_claim_allowed": false,
+  "rubric_sha256": "49d6b16b9e840c1e555ed07f3151520a6b4274e2710cdf343ee2cd5583c93e78",
+  "runner_version": "hxy-semantic-benchmark-runner.v1",
+  "semantic_evaluated_count": 0,
+  "semantic_status": "awaiting_human_calibration",
+  "structural_fail_count": 50,
+  "structural_pass_count": 0,
+  "structural_pass_rate": 0.0,
+  "version": "hxy-semantic-benchmark-report.v1"
+}

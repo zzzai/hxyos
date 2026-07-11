@@ -15,10 +15,11 @@ for import_root in (ROOT, ROOT / "apps" / "api"):
 from apps.api.hxy_engines.semantic_benchmark import (  # noqa: E402
     build_blind_review_pack,
     semantic_answer_runs_from_payload,
+    validate_semantic_catalogs,
 )
 
 
-TRACKED_BENCHMARK_DIR = (ROOT / "knowledge" / "benchmarks").resolve()
+PRIVATE_RUN_DIR = (ROOT / "knowledge" / "runs").resolve()
 
 
 def _load(path: Path) -> dict:
@@ -39,17 +40,21 @@ def main() -> int:
     args = parser.parse_args()
 
     output = args.output.resolve()
-    if output.is_relative_to(TRACKED_BENCHMARK_DIR):
+    if output.is_relative_to(ROOT) and not output.is_relative_to(PRIVATE_RUN_DIR):
         print(
             "private review packs cannot be written under knowledge/benchmarks",
             file=sys.stderr,
         )
         return 2
     try:
+        benchmark = _load(args.benchmark)
+        rubric = _load(args.rubric)
+        calibration = _load(args.calibration)
+        validate_semantic_catalogs(benchmark, rubric, calibration)
         pack = build_blind_review_pack(
-            _load(args.benchmark),
-            _load(args.rubric),
-            _load(args.calibration),
+            benchmark,
+            rubric,
+            calibration,
             semantic_answer_runs_from_payload(_load(args.answers)),
             seed=args.seed,
         )

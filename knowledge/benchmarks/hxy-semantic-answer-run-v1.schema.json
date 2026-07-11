@@ -18,6 +18,7 @@
           "provider_name",
           "provider_version",
           "answer",
+          "identity_aliases",
           "answer_authority",
           "evidence_ids",
           "evidence_authorities",
@@ -36,6 +37,7 @@
           "provider_name": { "type": "string", "minLength": 1, "maxLength": 160 },
           "provider_version": { "type": "string", "minLength": 1, "maxLength": 160 },
           "answer": { "type": "string", "maxLength": 50000 },
+          "identity_aliases": { "$ref": "#/$defs/stringArray" },
           "answer_authority": { "enum": ["approved", "candidate", "reference", "insufficient"] },
           "evidence_ids": { "$ref": "#/$defs/stringArray" },
           "evidence_authorities": {

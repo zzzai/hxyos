@@ -31,6 +31,11 @@ def test_semantic_catalogs_cover_all_cases_and_two_per_role() -> None:
     assert len(rubric["cases"]) == 50
     assert {item["case_id"] for item in rubric["cases"]} == set(case_roles)
     assert all(len(item["dimensions"]) == 5 for item in rubric["cases"])
+    benchmark_by_id = {case["case_id"]: case for case in benchmark["cases"]}
+    for item in rubric["cases"]:
+        assert set(item["evidence_authority_by_id"]) == set(
+            benchmark_by_id[item["case_id"]]["allowed_evidence_ids"]
+        )
 
     assert calibration["version"] == "hxy-semantic-calibration.v1"
     assert len(calibration["case_ids"]) == 10

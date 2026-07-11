@@ -11,6 +11,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-founder-01": "reference"
+      },
       "required_outcomes": [
         "state_verified_evidence",
         "state_unverified_assumptions"
@@ -30,6 +33,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-founder-02": "reference"
+      },
       "required_outcomes": [
         "state_current_blocker",
         "state_owner_and_acceptance"
@@ -49,6 +55,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-founder-03": "reference"
+      },
       "required_outcomes": [
         "show_tradeoffs",
         "request_validation_data"
@@ -68,6 +77,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-founder-04": "approved"
+      },
       "required_outcomes": [
         "identify_unsupported_statement",
         "provide_bounded_response"
@@ -87,6 +99,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-founder-05": "reference"
+      },
       "required_outcomes": [
         "list_missing_evidence",
         "define_go_no_go_test"
@@ -106,6 +121,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-founder-06": "reference"
+      },
       "required_outcomes": [
         "separate_assumptions_and_facts",
         "state_sensitivity_inputs"
@@ -125,6 +143,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-founder-07": "reference"
+      },
       "required_outcomes": [
         "rank_current_risks",
         "state_mitigation_owner"
@@ -144,6 +165,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-founder-08": "reference"
+      },
       "required_outcomes": [
         "provide_report_structure",
         "mark_missing_metrics"
@@ -163,6 +187,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-founder-09": "reference"
+      },
       "required_outcomes": [
         "deny_unauthorized_comparison",
         "explain_required_scope"
@@ -182,6 +209,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-founder-10": "reference"
+      },
       "required_outcomes": [
         "produce_candidate_record",
         "require_explicit_approval"
@@ -201,6 +231,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-brand-operations-01": "approved"
+      },
       "required_outcomes": [
         "identify_medical_risk",
         "provide_safe_rewrite"
@@ -220,6 +253,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-brand-operations-02": "approved"
+      },
       "required_outcomes": [
         "identify_guarantee",
         "provide_non_promissory_rewrite"
@@ -239,6 +275,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-brand-operations-03": "approved"
+      },
       "required_outcomes": [
         "identify_absolute_claim",
         "rewrite_with_specific_difference"
@@ -258,6 +297,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-brand-operations-04": "approved"
+      },
       "required_outcomes": [
         "state_consistency_result",
         "identify_conflicting_phrase"
@@ -277,6 +319,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-brand-operations-05": "reference"
+      },
       "required_outcomes": [
         "score_candidate_name",
         "state_review_requirement"
@@ -296,6 +341,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-brand-operations-06": "reference"
+      },
       "required_outcomes": [
         "state_owned_difference",
         "remove_attack_language"
@@ -315,6 +363,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-brand-operations-07": "approved"
+      },
       "required_outcomes": [
         "return_pass_or_block",
         "provide_bounded_revision"
@@ -334,6 +385,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-brand-operations-08": "approved"
+      },
       "required_outcomes": [
         "answer_in_customer_language",
         "retain_service_boundary"
@@ -353,6 +407,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-brand-operations-09": "reference"
+      },
       "required_outcomes": [
         "remove_outcome_promise",
         "retain_verifiable_offer"
@@ -372,6 +429,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-brand-operations-10": "reference"
+      },
       "required_outcomes": [
         "produce_testable_candidate",
         "state_local_validation"
@@ -391,6 +451,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-store-manager-01": "reference"
+      },
       "required_outcomes": [
         "state_next_task",
         "state_owner_and_acceptance"
@@ -410,6 +473,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-store-manager-02": "reference"
+      },
       "required_outcomes": [
         "state_observed_signal",
         "propose_validation_checks"
@@ -429,6 +495,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-store-manager-03": "approved"
+      },
       "required_outcomes": [
         "state_immediate_service_action",
         "state_escalation_path"
@@ -448,6 +517,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-store-manager-04": "approved"
+      },
       "required_outcomes": [
         "return_ordered_steps",
         "state_exception_action"
@@ -467,6 +539,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-store-manager-05": "reference"
+      },
       "required_outcomes": [
         "list_required_inputs",
         "provide_non_binding_template"
@@ -486,6 +561,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-store-manager-06": "reference"
+      },
       "required_outcomes": [
         "state_observed_gap",
         "recommend_training_action"
@@ -505,6 +583,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-store-manager-07": "reference"
+      },
       "required_outcomes": [
         "state_exception",
         "state_confirmation_step"
@@ -524,6 +605,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-store-manager-08": "reference"
+      },
       "required_outcomes": [
         "summarize_anonymous_themes",
         "state_follow_up_action"
@@ -543,6 +627,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-store-manager-09": "reference"
+      },
       "required_outcomes": [
         "report_available_metrics",
         "mark_missing_source"
@@ -562,6 +649,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-store-manager-10": "reference"
+      },
       "required_outcomes": [
         "deny_foreign_store_data",
         "explain_scope_boundary"
@@ -581,6 +671,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-store-employee-01": "approved"
+      },
       "required_outcomes": [
         "use_relaxation_language",
         "state_medical_boundary"
@@ -600,6 +693,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-store-employee-02": "approved"
+      },
       "required_outcomes": [
         "avoid_fixed_promise",
         "describe_service_experience"
@@ -619,6 +715,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-store-employee-03": "approved"
+      },
       "required_outcomes": [
         "identify_diagnosis_language",
         "replace_with_observation_question"
@@ -638,6 +737,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-store-employee-04": "approved"
+      },
       "required_outcomes": [
         "ask_current_needs",
         "explain_service_without_pressure"
@@ -657,6 +759,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-store-employee-05": "reference"
+      },
       "required_outcomes": [
         "ask_clarifying_question",
         "offer_bounded_choice"
@@ -676,6 +781,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-store-employee-06": "reference"
+      },
       "required_outcomes": [
         "pause_recommendation",
         "recommend_professional_guidance"
@@ -695,6 +803,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-store-employee-07": "approved"
+      },
       "required_outcomes": [
         "acknowledge_experience",
         "escalate_with_facts"
@@ -714,6 +825,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-store-employee-08": "reference"
+      },
       "required_outcomes": [
         "identify_gap",
         "provide_retry_prompt"
@@ -733,6 +847,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-store-employee-09": "reference"
+      },
       "required_outcomes": [
         "confirm_receipt",
         "label_working_context"
@@ -752,6 +869,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-store-employee-10": "reference"
+      },
       "required_outcomes": [
         "deny_private_material",
         "offer_allowed_help"
@@ -771,6 +891,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-knowledge-data-admin-01": "reference"
+      },
       "required_outcomes": [
         "assign_source_class",
         "state_allowed_usage"
@@ -790,6 +913,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-knowledge-data-admin-02": "reference"
+      },
       "required_outcomes": [
         "report_quality_warnings",
         "recommend_reparse_or_review"
@@ -809,6 +935,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-knowledge-data-admin-03": "reference"
+      },
       "required_outcomes": [
         "identify_conflict",
         "create_review_proposal"
@@ -828,6 +957,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-knowledge-data-admin-04": "reference"
+      },
       "required_outcomes": [
         "block_direct_promotion",
         "create_candidate_review_input"
@@ -847,6 +979,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-knowledge-data-admin-05": "reference"
+      },
       "required_outcomes": [
         "create_new_version_proposal",
         "retain_previous_version"
@@ -866,6 +1001,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-knowledge-data-admin-06": "reference"
+      },
       "required_outcomes": [
         "separate_hint_from_evidence",
         "retain_memory_provenance"
@@ -885,6 +1023,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-knowledge-data-admin-07": "reference"
+      },
       "required_outcomes": [
         "block_foreign_evidence",
         "record_policy_decision"
@@ -904,6 +1045,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-knowledge-data-admin-08": "reference"
+      },
       "required_outcomes": [
         "show_engine_version",
         "show_usage_without_private_output"
@@ -923,6 +1067,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-knowledge-data-admin-09": "reference"
+      },
       "required_outcomes": [
         "request_metric_definition",
         "block_unguarded_sql"
@@ -942,6 +1089,9 @@
         "expression_fitness",
         "actionability"
       ],
+      "evidence_authority_by_id": {
+        "allowed-knowledge-data-admin-10": "reference"
+      },
       "required_outcomes": [
         "propose_archive_transition",
         "retain_audit_record"

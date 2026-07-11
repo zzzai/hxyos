@@ -16,10 +16,10 @@ for import_root in (ROOT, ROOT / "apps" / "api"):
 
 from apps.api.hxy_engines.semantic_benchmark import (  # noqa: E402
     apply_human_calibration,
-    canonical_payload_sha256,
-    evaluate_deterministic_semantics,
+    evaluate_semantic_preflight,
     human_reviews_from_payload,
     semantic_answer_runs_from_payload,
+    validate_semantic_catalogs,
 )
 
 
@@ -75,20 +75,23 @@ def main() -> int:
         benchmark = _load_json(args.benchmark)
         rubric = _load_json(args.rubric)
         calibration = _load_json(args.calibration)
-        benchmark_sha256 = canonical_payload_sha256(benchmark)
-        if (
-            rubric.get("benchmark_sha256") != benchmark_sha256
-            or calibration.get("benchmark_sha256") != benchmark_sha256
-        ):
-            raise ValueError("catalog benchmark digest mismatch")
+        validate_semantic_catalogs(benchmark, rubric, calibration)
         answer_runs = semantic_answer_runs_from_payload(_load_json(args.answers))
+        benchmark_case_ids = {
+            str(case.get("case_id") or "") for case in benchmark.get("cases") or []
+        }
+        if not set(answer_runs) <= benchmark_case_ids:
+            raise ValueError("answer run contains unknown case")
         reviews = (
             human_reviews_from_payload(_load_json(args.reviews))
             if args.reviews
             else []
         )
+        calibration_ids = set(calibration.get("case_ids") or [])
+        if any(review.case_id not in calibration_ids for review in reviews):
+            raise ValueError("review contains unknown calibration case")
         judge_results = _load_json(args.judge_results) if args.judge_results else {}
-        report = evaluate_deterministic_semantics(
+        report = evaluate_semantic_preflight(
             benchmark,
             rubric,
             answer_runs,
@@ -110,7 +113,7 @@ def main() -> int:
                 "version": "hxy-semantic-benchmark-cli.v1",
                 "report_name": args.output.name,
                 "case_count": report["case_count"],
-                "deterministic_pass_count": report["deterministic_pass_count"],
+                "structural_pass_count": report["structural_pass_count"],
                 "semantic_status": report["semantic_status"],
             },
             ensure_ascii=False,

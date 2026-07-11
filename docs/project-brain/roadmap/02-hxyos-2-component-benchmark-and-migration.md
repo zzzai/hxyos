@@ -185,7 +185,7 @@ Implemented:
 Verification evidence:
 
 ```text
-Python: 744 passed, 2 skipped
+Python: 774 passed, 2 skipped
 TypeScript: 52 passed
 Web: 33 passed
 Playwright: 6 passed
@@ -243,3 +243,54 @@ Interpretation:
 - no external engine may be promoted from this result alone;
 - the next benchmark increment must independently score real role answers
   before LiteLLM, RAGFlow, DataAgent, or another candidate is compared.
+
+## Semantic Benchmark V1 Framework
+
+Recorded on 2026-07-11 from branch `feature/hxyos-engine-ports-v1`.
+
+Implemented:
+
+- a 50-case semantic rubric derived from the versioned role corpus;
+- a ten-case calibration set with two cases per role;
+- a private answer-run contract whose answer text is never emitted in tracked
+  reports;
+- structural preflight checks for evidence scope, rubric-owned authority,
+  citations, lifecycle-aware delivery policy, required outcome declarations,
+  compliance patterns, trace privacy, and budgets;
+- two-review-file identity-masked calibration with answer/review-text hashes,
+  explicit disagreement/adjudication state, unverified identity redaction, and
+  unverified reviewer provenance;
+- advisory judge isolation: judge scores cannot change hard gates, human state,
+  or `quality_claim_allowed`;
+- a private identity-masked review-pack builder and complete-corpus semantic CLI.
+
+The public-safe framework report is:
+
+```text
+knowledge/benchmarks/results/hxy-semantic-framework-baseline.json
+```
+
+Framework no-op result:
+
+```text
+cases: 50
+answer runs: 0
+structural preflight passed: 0
+structural preflight failed: 50
+semantic status: awaiting_human_calibration
+verified human calibrated cases: 0 / 10
+quality claim allowed: false
+```
+
+Interpretation:
+
+- this proves that an empty provider cannot obtain a semantic pass;
+- structural preflight is explicitly not a semantic-quality metric; generic or
+  weak answers can only be judged by the bound human review stage;
+- this is a framework verification result, not current HXYOS answer quality;
+- the current product semantic baseline remains pending until a governed,
+  read-only export of 50 real role answers exists;
+- review-file completion requires two submissions for all ten selected cases;
+- `human_calibrated` remains reserved until reviewer identities and assignments
+  come from an authenticated organization boundary;
+- no external engine may be compared or promoted on semantic quality yet.

@@ -13,10 +13,25 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["case_id", "reviewer_id", "scores", "reason_codes"],
+        "required": [
+          "case_id",
+          "reviewer_id",
+          "answer_sha256",
+          "review_text_sha256",
+          "benchmark_sha256",
+          "rubric_sha256",
+          "blind_item_id",
+          "scores",
+          "reason_codes"
+        ],
         "properties": {
           "case_id": { "type": "string", "minLength": 1, "maxLength": 160 },
           "reviewer_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+          "answer_sha256": { "$ref": "#/$defs/sha256" },
+          "review_text_sha256": { "$ref": "#/$defs/sha256" },
+          "benchmark_sha256": { "$ref": "#/$defs/sha256" },
+          "rubric_sha256": { "$ref": "#/$defs/sha256" },
+          "blind_item_id": { "$ref": "#/$defs/sha256" },
           "scores": {
             "type": "object",
             "additionalProperties": false,
@@ -45,6 +60,7 @@
     }
   },
   "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "score": { "type": "integer", "minimum": 1, "maximum": 5 }
   }
 }
