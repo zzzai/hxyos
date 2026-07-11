@@ -16,6 +16,7 @@ class RetrievalRequest:
     domain: str | None = None
     stage: str | None = None
     domain_hint: str | None = None
+    aggregate_scope: bool = False
 
     def __post_init__(self) -> None:
         for name in ("query", "assignment_id", "organization_id"):
@@ -30,6 +31,8 @@ class RetrievalRequest:
             object.__setattr__(self, "store_id", store_id)
         if not 1 <= self.limit <= 50:
             raise ValueError("limit is invalid")
+        if not isinstance(self.aggregate_scope, bool):
+            raise ValueError("aggregate_scope is invalid")
 
 
 class RetrievalEngine(Protocol):

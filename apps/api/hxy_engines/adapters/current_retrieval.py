@@ -17,6 +17,10 @@ def _scope_matches(context: EngineContext, request: RetrievalRequest) -> bool:
         context.assignment_id == request.assignment_id
         and context.organization_id == request.organization_id
         and context.store_id == request.store_id
+        and (
+            not request.aggregate_scope
+            or "aggregate_store_read" in context.permissions
+        )
     )
 
 

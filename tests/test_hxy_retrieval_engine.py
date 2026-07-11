@@ -96,6 +96,25 @@ def test_retrieval_scope_is_checked_before_any_repository_call() -> None:
     assert materials.calls == []
 
 
+def test_aggregate_retrieval_requires_explicit_permission_before_repository_call() -> None:
+    formal = FormalRepository()
+    materials = MaterialRepository()
+    engine = CurrentRetrievalEngine(formal, materials)
+    aggregate_request = _request(aggregate_scope=True)
+
+    with pytest.raises(PermissionError, match="scope"):
+        engine.execute(_context(), aggregate_request)
+
+    assert formal.calls == []
+    assert materials.calls == []
+
+    result = engine.execute(
+        _context(permissions=("aggregate_store_read",)),
+        aggregate_request,
+    )
+    assert result.status == "succeeded"
+
+
 def test_current_retrieval_uses_only_context_assignment_and_bounds_results() -> None:
     formal = FormalRepository()
     materials = MaterialRepository()

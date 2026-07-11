@@ -53,6 +53,7 @@ class EngineContext:
     purpose: str
     authority_policy: str
     budget: EngineBudget
+    permissions: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for name in (
@@ -72,6 +73,18 @@ class EngineContext:
             )
         if self.authority_policy not in _AUTHORITY_POLICIES:
             raise ValueError("authority_policy is invalid")
+        object.__setattr__(
+            self,
+            "permissions",
+            tuple(
+                sorted(
+                    {
+                        _required_text("permission", item)
+                        for item in self.permissions
+                    }
+                )
+            ),
+        )
 
 
 @dataclass(frozen=True)

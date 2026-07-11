@@ -185,14 +185,15 @@ Implemented:
 Verification evidence:
 
 ```text
-Python: 732 passed, 2 skipped
+Python: 744 passed, 2 skipped
 TypeScript: 52 passed
 Web: 33 passed
 Playwright: 6 passed
 Web production build: passed
 secret scan: passed
 public-release scan: passed
-five-role benchmark sample: passed
+complete 50-case benchmark validation: passed
+current contract baseline: 50 passed, 0 failed
 ```
 
 Interpretation:
@@ -201,5 +202,44 @@ Interpretation:
 - No external engine has been promoted.
 - The sample proves contract validation, not engine quality.
 - The 50-case, five-role corpus and complete-mode structural validation are now
-  present. Executable baseline run results are still required before comparing
-  LiteLLM, RAGFlow, DataAgent, or another candidate.
+  present.
+
+## Executable Contract Baseline
+
+The deterministic current-engine contract baseline is recorded at:
+
+```text
+knowledge/benchmarks/results/hxy-current-contract-baseline.json
+```
+
+Result on 2026-07-11:
+
+```text
+cases: 50
+contract passed: 50
+contract failed: 0
+contract pass rate: 1.0
+semantic status: not_evaluated
+quality claim allowed: false
+```
+
+The runner executes the current permission-first retrieval adapter and the
+current compliance rules. It verifies assignment/store scope and aggregate-read
+permission denial before a repository containing forbidden probe IDs can be
+accessed, engine authority boundaries, prohibited-expression pattern detection,
+absence of writes in the tested retrieval path, trace privacy, and case budgets.
+The report records the benchmark digest, checker/rules versions, and the loaded
+rules digest. It does not call a model, verify the full external-publication
+blocking path, or score the usefulness, correctness, or citation quality of
+generated role answers.
+
+Interpretation:
+
+- the current adapters have a reproducible governance-contract baseline;
+- the loaded compliance rules still report `candidate_rules`, which is visible
+  in the baseline report and is not promoted by this run;
+- semantic product quality remains unmeasured by this result;
+- this result cannot be presented as a product-quality pass rate;
+- no external engine may be promoted from this result alone;
+- the next benchmark increment must independently score real role answers
+  before LiteLLM, RAGFlow, DataAgent, or another candidate is compared.

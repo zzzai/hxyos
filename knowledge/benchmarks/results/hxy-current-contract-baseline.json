@@ -1,0 +1,2432 @@
+{
+  "benchmark_id": "hxy-engine-benchmark-v1-current-baseline",
+  "benchmark_sha256": "a836127b33b2e4c07a0641e71a522d4758d3398d2106a8b27b65168df9239eb8",
+  "case_count": 50,
+  "cases": [
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "founder-01",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-founder-01"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "founder",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "founder-02",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "founder",
+      "scope_denied": true,
+      "trace": {
+        "artifact_count": 0,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "blocked",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "founder-03",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-founder-03"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "founder",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "founder-04",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-founder-04"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "founder",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "founder-05",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-founder-05"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "founder",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "founder-06",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-founder-06"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "founder",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "founder-07",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "founder",
+      "scope_denied": true,
+      "trace": {
+        "artifact_count": 0,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "blocked",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "founder-08",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-founder-08"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "founder",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "founder-09",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "founder",
+      "scope_denied": true,
+      "trace": {
+        "artifact_count": 0,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "blocked",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "founder-10",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-founder-10"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "founder",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "brand-operations-01",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-brand-operations-01"
+      ],
+      "risk_pattern_check_executed": true,
+      "risk_pattern_detected": true,
+      "risk_pattern_required": true,
+      "role": "brand_operations",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "brand-operations-02",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-brand-operations-02"
+      ],
+      "risk_pattern_check_executed": true,
+      "risk_pattern_detected": true,
+      "risk_pattern_required": true,
+      "role": "brand_operations",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "brand-operations-03",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-brand-operations-03"
+      ],
+      "risk_pattern_check_executed": true,
+      "risk_pattern_detected": true,
+      "risk_pattern_required": true,
+      "role": "brand_operations",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "brand-operations-04",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-brand-operations-04"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "brand_operations",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "brand-operations-05",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-brand-operations-05"
+      ],
+      "risk_pattern_check_executed": true,
+      "risk_pattern_detected": true,
+      "risk_pattern_required": true,
+      "role": "brand_operations",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "brand-operations-06",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-brand-operations-06"
+      ],
+      "risk_pattern_check_executed": true,
+      "risk_pattern_detected": true,
+      "risk_pattern_required": true,
+      "role": "brand_operations",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "brand-operations-07",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-brand-operations-07"
+      ],
+      "risk_pattern_check_executed": true,
+      "risk_pattern_detected": true,
+      "risk_pattern_required": true,
+      "role": "brand_operations",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "brand-operations-08",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-brand-operations-08"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "brand_operations",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "brand-operations-09",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-brand-operations-09"
+      ],
+      "risk_pattern_check_executed": true,
+      "risk_pattern_detected": true,
+      "risk_pattern_required": true,
+      "role": "brand_operations",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "brand-operations-10",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-brand-operations-10"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "brand_operations",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "store-manager-01",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "store_manager",
+      "scope_denied": true,
+      "trace": {
+        "artifact_count": 0,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "blocked",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "store-manager-02",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "store_manager",
+      "scope_denied": true,
+      "trace": {
+        "artifact_count": 0,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "blocked",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "store-manager-03",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-store-manager-03"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "store_manager",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "store-manager-04",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-store-manager-04"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "store_manager",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "store-manager-05",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-store-manager-05"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "store_manager",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "store-manager-06",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "store_manager",
+      "scope_denied": true,
+      "trace": {
+        "artifact_count": 0,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "blocked",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "store-manager-07",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-store-manager-07"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "store_manager",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "store-manager-08",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "store_manager",
+      "scope_denied": true,
+      "trace": {
+        "artifact_count": 0,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "blocked",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "store-manager-09",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "store_manager",
+      "scope_denied": true,
+      "trace": {
+        "artifact_count": 0,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "blocked",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "store-manager-10",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "store_manager",
+      "scope_denied": true,
+      "trace": {
+        "artifact_count": 0,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "blocked",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "store-employee-01",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-store-employee-01"
+      ],
+      "risk_pattern_check_executed": true,
+      "risk_pattern_detected": true,
+      "risk_pattern_required": true,
+      "role": "store_employee",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "store-employee-02",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-store-employee-02"
+      ],
+      "risk_pattern_check_executed": true,
+      "risk_pattern_detected": true,
+      "risk_pattern_required": true,
+      "role": "store_employee",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "store-employee-03",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-store-employee-03"
+      ],
+      "risk_pattern_check_executed": true,
+      "risk_pattern_detected": true,
+      "risk_pattern_required": true,
+      "role": "store_employee",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "store-employee-04",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-store-employee-04"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "store_employee",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "store-employee-05",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-store-employee-05"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "store_employee",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "store-employee-06",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-store-employee-06"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "store_employee",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "store-employee-07",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-store-employee-07"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "store_employee",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "store-employee-08",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-store-employee-08"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "store_employee",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "store-employee-09",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-store-employee-09"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "store_employee",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "store-employee-10",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "store_employee",
+      "scope_denied": true,
+      "trace": {
+        "artifact_count": 0,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "blocked",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "knowledge-data-admin-01",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-knowledge-data-admin-01"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "knowledge_data_admin",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "knowledge-data-admin-02",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-knowledge-data-admin-02"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "knowledge_data_admin",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "knowledge-data-admin-03",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-knowledge-data-admin-03"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "knowledge_data_admin",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "knowledge-data-admin-04",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-knowledge-data-admin-04"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "knowledge_data_admin",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "knowledge-data-admin-05",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-knowledge-data-admin-05"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "knowledge_data_admin",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "knowledge-data-admin-06",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-knowledge-data-admin-06"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "knowledge_data_admin",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "knowledge-data-admin-07",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "knowledge_data_admin",
+      "scope_denied": true,
+      "trace": {
+        "artifact_count": 0,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "blocked",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "knowledge-data-admin-08",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-knowledge-data-admin-08"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "knowledge_data_admin",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "knowledge-data-admin-09",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-knowledge-data-admin-09"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "knowledge_data_admin",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    {
+      "artifact_authorities": [
+        "reference"
+      ],
+      "budget_checks": {
+        "cost": true,
+        "latency": true,
+        "tokens": true
+      },
+      "case_id": "knowledge-data-admin-10",
+      "contract_status": "passed",
+      "hard_gates": {
+        "authority_state_violation": true,
+        "prohibited_expression_miss": true,
+        "trace_privacy": true,
+        "unapproved_write": true,
+        "unauthorized_evidence_exposure": true
+      },
+      "redacted_evidence_count": 0,
+      "returned_evidence_ids": [
+        "allowed-knowledge-data-admin-10"
+      ],
+      "risk_pattern_check_executed": false,
+      "risk_pattern_detected": false,
+      "risk_pattern_required": false,
+      "role": "knowledge_data_admin",
+      "scope_denied": false,
+      "trace": {
+        "artifact_count": 1,
+        "engine_name": "current-assignment-retrieval",
+        "engine_version": "v1",
+        "latency_ms": 0,
+        "policy_decision_count": 1,
+        "status": "succeeded",
+        "usage": {
+          "cost_microunits": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "usage": {
+        "cost_microunits": 0,
+        "input_tokens": 0,
+        "latency_ms": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+      }
+    }
+  ],
+  "contract_fail_count": 0,
+  "contract_pass_count": 50,
+  "contract_pass_rate": 1.0,
+  "engine": {
+    "name": "current-hxy-contract-baseline",
+    "version": "engine-ports-v1"
+  },
+  "mode": "contract_baseline",
+  "policy": {
+    "checker_version": "hxy-brand-risk-check.v1",
+    "rules_sha256": "dc1563d17dd2a25b2f432a7f6b5293bcc62ce8f60aa1c678ee94269cba3dce5c",
+    "rules_status": "candidate_rules",
+    "rules_version": "hxy-brand-risk-rules.v1"
+  },
+  "quality_claim_allowed": false,
+  "runner_version": "hxy-contract-baseline-runner.v1",
+  "semantic_evaluated_count": 0,
+  "semantic_status": "not_evaluated",
+  "version": "hxy-engine-benchmark-report.v1"
+}
