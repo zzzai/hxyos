@@ -185,7 +185,7 @@ Implemented:
 Verification evidence:
 
 ```text
-Python: 728 passed, 2 skipped
+Python: 732 passed, 2 skipped
 TypeScript: 52 passed
 Web: 33 passed
 Playwright: 6 passed
@@ -200,5 +200,6 @@ Interpretation:
 - Product behavior has a tested baseline behind replaceable ports.
 - No external engine has been promoted.
 - The sample proves contract validation, not engine quality.
-- A 50-case corpus and baseline run results are still required before comparing
+- The 50-case, five-role corpus and complete-mode structural validation are now
+  present. Executable baseline run results are still required before comparing
   LiteLLM, RAGFlow, DataAgent, or another candidate.

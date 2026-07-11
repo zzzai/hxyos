@@ -12,11 +12,21 @@ from apps.api.hxy_engines.descriptor import EngineDescriptor
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = ROOT / "knowledge" / "benchmarks" / "hxy-engine-benchmark-v1.schema.json"
 SAMPLE_PATH = ROOT / "knowledge" / "benchmarks" / "hxy-engine-benchmark-v1.sample.json"
+FULL_PATH = ROOT / "knowledge" / "benchmarks" / "hxy-engine-benchmark-v1.json"
 VALIDATOR_PATH = ROOT / "scripts" / "validate-hxy-engine-benchmark.py"
+BUILDER_PATH = ROOT / "scripts" / "build-hxy-engine-benchmark-v1.py"
 
 
 def _load_validator():
     spec = importlib.util.spec_from_file_location("hxy_engine_benchmark_validator", VALIDATOR_PATH)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_builder():
+    spec = importlib.util.spec_from_file_location("hxy_engine_benchmark_builder", BUILDER_PATH)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -131,3 +141,77 @@ def test_validator_rejects_scope_leakage_and_unbounded_budget(tmp_path: Path) ->
     assert report["status"] == "failed"
     assert any("evidence sets overlap" in item for item in report["errors"])
     assert any("max_latency_ms" in item for item in report["errors"])
+
+
+def test_complete_benchmark_has_ten_unique_cases_per_role() -> None:
+    payload = json.loads(FULL_PATH.read_text(encoding="utf-8"))
+    cases = payload["cases"]
+
+    assert len(cases) == 50
+    assert len({item["case_id"] for item in cases}) == 50
+    role_counts = {
+        role: sum(1 for item in cases if item["role"] == role)
+        for role in {
+            "founder",
+            "brand_operations",
+            "store_manager",
+            "store_employee",
+            "knowledge_data_admin",
+        }
+    }
+    assert role_counts == {
+        "founder": 10,
+        "brand_operations": 10,
+        "store_manager": 10,
+        "store_employee": 10,
+        "knowledge_data_admin": 10,
+    }
+    for item in cases:
+        assert not set(item["allowed_evidence_ids"]) & set(
+            item["forbidden_evidence_ids"]
+        )
+
+
+def test_complete_benchmark_covers_engine_hard_risk_matrix() -> None:
+    payload = json.loads(FULL_PATH.read_text(encoding="utf-8"))
+    risks = {
+        risk
+        for item in payload["cases"]
+        for risk in item["risk_expectations"]
+    }
+
+    assert risks >= {
+        "prevent_cross_assignment_leakage",
+        "prevent_authority_promotion",
+        "block_medical_claim",
+        "block_guaranteed_effect",
+        "block_exaggerated_marketing",
+        "hide_internal_paths",
+        "prevent_unapproved_write",
+    }
+
+
+def test_complete_benchmark_passes_complete_validator() -> None:
+    module = _load_validator()
+
+    report = module.validate_benchmark_file(FULL_PATH, require_complete=True)
+
+    assert report == {
+        "version": "hxy-engine-benchmark-validation.v1",
+        "status": "passed",
+        "case_count": 50,
+        "role_counts": {
+            "brand_operations": 10,
+            "founder": 10,
+            "knowledge_data_admin": 10,
+            "store_employee": 10,
+            "store_manager": 10,
+        },
+        "errors": [],
+    }
+
+
+def test_complete_benchmark_is_reproducible_from_versioned_catalog() -> None:
+    module = _load_builder()
+
+    assert module.build_payload() == json.loads(FULL_PATH.read_text(encoding="utf-8"))
