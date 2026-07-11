@@ -12,6 +12,7 @@ from urllib.parse import quote, urlsplit, urlunsplit
 from uuid import uuid4
 
 import psycopg
+from psycopg.conninfo import conninfo_to_dict
 from psycopg.rows import dict_row
 
 
@@ -114,6 +115,9 @@ def bootstrap_founder(
         raise FounderBootstrapValidationError("grant TTL is invalid")
     if not database_url.strip():
         raise FounderBootstrapValidationError("database URL is required")
+    database_name = str(conninfo_to_dict(database_url).get("dbname") or "").lower()
+    if not database_name.startswith("hxy") or "htops" in database_name:
+        raise FounderBootstrapValidationError("database must be HXY-owned")
 
     session_grant = (token_factory or (lambda: secrets.token_urlsafe(32)))()
     if not 43 <= len(session_grant) <= 256:
@@ -234,11 +238,17 @@ def main(argv: list[str] | None = None) -> int:
         result["one_time_link"] = build_session_link(args.app_url, session_grant)
         output = result
         exit_code = 0
+    except psycopg.Error as exc:
+        output = {
+            "status": "failed",
+            "error_type": type(exc).__name__,
+            "error": "database operation failed",
+        }
+        exit_code = 2
     except (
         FounderBootstrapAuthorizationError,
         FounderBootstrapConflict,
         FounderBootstrapValidationError,
-        psycopg.Error,
     ) as exc:
         output = {
             "status": "failed",
@@ -248,4 +258,3 @@ def main(argv: list[str] | None = None) -> int:
         exit_code = 2
     print(json.dumps(output, ensure_ascii=False, sort_keys=True))
     return exit_code
-

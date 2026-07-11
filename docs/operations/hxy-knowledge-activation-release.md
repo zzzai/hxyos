@@ -217,3 +217,6 @@ rollback decision
 ```
 
 上传资料仍然是 `working_context/reference`；本次启用不改变知识权威边界。
+
+首次 identity canary 使用 `docs/operations/hxy-founder-bootstrap.md`。在 founder assignment 和
+`/api/v1/me` 验证通过前，不得启动 material worker。

@@ -1086,8 +1086,8 @@ def test_postgres_repository_atomically_rotates_one_time_session_grant(
     select_sql, select_params = connection.calls[0]
     delete_sql, delete_params = connection.calls[1]
     insert_sql, insert_params = connection.calls[2]
-    assert "FROM staff_sessions AS grant" in select_sql
-    assert "grant.expires_at > NOW()" in select_sql
+    assert "FROM staff_sessions AS session_grant" in select_sql
+    assert "session_grant.expires_at > NOW()" in select_sql
     assert "account.status = 'active'" in select_sql
     assert "assignment.status = 'active'" in select_sql
     assert "organization.status = 'active'" in select_sql

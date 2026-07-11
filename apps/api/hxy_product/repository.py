@@ -184,19 +184,19 @@ class IdentityRepository:
                     SELECT account.id::text AS account_id,
                            account.display_name,
                            assignment.assignment_id::text AS assignment_id
-                    FROM staff_sessions AS grant
-                    JOIN staff_accounts AS account ON account.id = grant.account_id
+                    FROM staff_sessions AS session_grant
+                    JOIN staff_accounts AS account ON account.id = session_grant.account_id
                     JOIN hxy_role_assignments AS assignment
-                      ON assignment.assignment_id = grant.assignment_id
-                     AND assignment.account_id = grant.account_id
+                      ON assignment.assignment_id = session_grant.assignment_id
+                     AND assignment.account_id = session_grant.account_id
                     JOIN hxy_organizations AS organization
                       ON organization.organization_id = assignment.organization_id
-                    WHERE grant.token_hash = %s
-                      AND grant.expires_at > NOW()
+                    WHERE session_grant.token_hash = %s
+                      AND session_grant.expires_at > NOW()
                       AND account.status = 'active'
                       AND assignment.status = 'active'
                       AND organization.status = 'active'
-                    FOR UPDATE OF grant
+                    FOR UPDATE OF session_grant
                     """,
                     (grant_hash,),
                 ).fetchone()

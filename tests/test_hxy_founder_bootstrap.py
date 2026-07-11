@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
+import json
 from pathlib import Path
 from typing import Any
 
 import pytest
+import psycopg
 
 from apps.api.hxy_product.founder_bootstrap import (
     BOOTSTRAP_CONFIRMATION,
@@ -18,6 +21,7 @@ from apps.api.hxy_product.founder_bootstrap import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
+RUNBOOK = ROOT / "docs" / "operations" / "hxy-founder-bootstrap.md"
 DATABASE_URL = "host=127.0.0.1 dbname=hxy_bootstrap_test user=hxy_app"
 RAW_GRANT = "founder-grant-" + "a" * 48
 
@@ -112,6 +116,18 @@ def test_founder_bootstrap_validates_bounded_identity_metadata() -> None:
     for overrides in invalid:
         with pytest.raises(FounderBootstrapValidationError):
             _bootstrap(connection, **overrides)
+
+    assert connection.calls == []
+
+
+def test_founder_bootstrap_rejects_non_hxy_database_before_connecting() -> None:
+    connection = FakeBootstrapConnection()
+
+    with pytest.raises(FounderBootstrapValidationError, match="HXY-owned"):
+        _bootstrap(
+            connection,
+            database_url="host=127.0.0.1 dbname=htops user=hxy_app",
+        )
 
     assert connection.calls == []
 
@@ -214,3 +230,58 @@ def test_bootstrap_cli_requires_all_founder_metadata() -> None:
     script = (ROOT / "scripts" / "bootstrap-hxy-founder.py").read_text(encoding="utf-8")
     assert "founder_bootstrap" in script
     assert "htops" not in script.lower()
+
+
+def test_bootstrap_cli_does_not_expose_database_errors_or_dsn_secrets(
+    monkeypatch,
+    capsys,
+) -> None:
+    module = importlib.import_module("apps.api.hxy_product.founder_bootstrap")
+    secret = "database-secret-value"
+    monkeypatch.setenv(
+        "HXY_DATABASE_URL",
+        f"host=127.0.0.1 dbname=hxy user=hxy_app password={secret}",
+    )
+
+    def fail(**_kwargs):
+        raise psycopg.OperationalError(f"connection failed password={secret}")
+
+    monkeypatch.setattr(module, "bootstrap_founder", fail)
+    exit_code = module.main(
+        [
+            "--username",
+            "founder",
+            "--display-name",
+            "荷小悦创始人",
+            "--organization-slug",
+            "hxy",
+            "--organization-name",
+            "荷小悦",
+            "--app-url",
+            "https://hxy.example.com",
+            "--confirm",
+            BOOTSTRAP_CONFIRMATION,
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 2
+    assert secret not in output
+    assert "password=" not in output
+    assert json.loads(output)["error"] == "database operation failed"
+
+
+def test_founder_bootstrap_runbook_preserves_release_and_identity_gates() -> None:
+    runbook = RUNBOOK.read_text(encoding="utf-8")
+
+    assert "BOOTSTRAP-HXY-FOUNDER" in runbook
+    assert "bootstrap-hxy-founder.py" in runbook
+    assert "生产备份" in runbook
+    assert "--app-url" in runbook
+    assert "HTTPS" in runbook
+    assert "URL fragment" in runbook
+    assert "10 分钟" in runbook
+    assert "不创建默认密码" in runbook
+    assert "API 先于 worker" in runbook
+    assert "本手册不自动执行 founder 初始化" in runbook
+    assert "/root/htops" not in runbook
