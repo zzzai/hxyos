@@ -30,7 +30,6 @@ _BASELINE_TABLES = ("staff_accounts", "stores")
 _ACTIVATION_TABLES = (
     "hxy_organizations",
     "hxy_role_assignments",
-    "hxy_assignment_sessions",
     "hxy_product_conversations",
     "hxy_product_messages",
     "hxy_product_materials",
@@ -89,6 +88,12 @@ def validate_hxy_boundary(root_dir: Path, identity: dict[str, str]) -> None:
     database = str(identity.get("database") or "").strip().lower()
     if not database.startswith("hxy") or "htops" in database:
         raise ReleaseBoundaryError("release database must be HXY-owned")
+
+
+def _validate_backup_path(path: Path) -> None:
+    parts = {part.lower() for part in path.resolve().parts}
+    if "htops" in parts:
+        raise ReleaseBoundaryError("backup path must be HXY-owned")
 
 
 def _bounded_value(value: Any, sensitive_values: tuple[str, ...]) -> Any:
@@ -160,7 +165,18 @@ def _inspect_database(
         ).fetchall()
         constraints: list[dict[str, Any]] = []
         indexes: list[dict[str, Any]] = []
+        columns: list[dict[str, Any]] = []
         if phase == "postflight":
+            columns = connection.execute(
+                """
+                /* hxy_release:columns */
+                SELECT table_name, column_name
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'staff_sessions'
+                  AND column_name = 'assignment_id'
+                """
+            ).fetchall()
             constraints = connection.execute(
                 """
                 /* hxy_release:constraints */
@@ -174,7 +190,7 @@ def _inspect_database(
                   AND relation.relname = ANY(%s::text[])
                 ORDER BY relation.relname, constraint_row.contype, constraint_row.conname
                 """,
-                (list(_ACTIVATION_TABLES),),
+                (list(_ACTIVATION_TABLES + ("staff_sessions",)),),
             ).fetchall()
             indexes = connection.execute(
                 """
@@ -185,7 +201,7 @@ def _inspect_database(
                   AND tablename = ANY(%s::text[])
                 ORDER BY indexname
                 """,
-                (list(_ACTIVATION_TABLES),),
+                (list(_ACTIVATION_TABLES + ("staff_sessions",)),),
             ).fetchall()
 
     server_version = str(server.get("server_version_num") or "0")
@@ -209,7 +225,7 @@ def _inspect_database(
     ]
 
     if phase == "postflight":
-        checks.extend(_postflight_checks(pending_tables, constraints, indexes))
+        checks.extend(_postflight_checks(pending_tables, columns, constraints, indexes))
 
     status = "passed" if all(check["status"] == "passed" for check in checks) else "failed"
     return {
@@ -225,6 +241,7 @@ def _inspect_database(
 
 def _postflight_checks(
     pending_tables: list[str],
+    columns: list[dict[str, Any]],
     constraints: list[dict[str, Any]],
     indexes: list[dict[str, Any]],
 ) -> list[dict[str, str]]:
@@ -282,6 +299,20 @@ def _postflight_checks(
         ("unique (assistant_message_id)",),
     )
     index_names = {str(row.get("index_name") or "") for row in indexes}
+    assignment_session_column = any(
+        str(row.get("table_name") or "") == "staff_sessions"
+        and str(row.get("column_name") or "") == "assignment_id"
+        for row in columns
+    )
+    assignment_session_fk = has_constraint(
+        "staff_sessions",
+        "f",
+        ("foreign key (assignment_id)", "hxy_role_assignments(assignment_id)"),
+    )
+    assignment_session_index = "idx_staff_sessions_assignment_expires" in index_names
+    assignment_session_scope = (
+        assignment_session_column and assignment_session_fk and assignment_session_index
+    )
     return [
         _check(
             "activation_tables",
@@ -292,6 +323,13 @@ def _postflight_checks(
             _check(name, passed, "constraint present" if passed else "constraint missing")
             for name, passed in official_checks
         ],
+        _check(
+            "assignment_session_scope",
+            assignment_session_scope,
+            "column, constraint and index present"
+            if assignment_session_scope
+            else "column, constraint or index missing",
+        ),
         _check(
             "private_chunk_assignment_owner",
             chunk_owner,
@@ -432,6 +470,7 @@ def create_backup(
         raise ReleaseBackupError("preflight must pass before backup")
 
     created_at = now or _utc_now()
+    _validate_backup_path(output_root)
     timestamp = created_at.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup_dir = output_root.resolve() / timestamp
     if backup_dir.exists():
@@ -505,6 +544,7 @@ def validate_backup_manifest(
     now: datetime | None = None,
     max_age: timedelta = timedelta(hours=24),
 ) -> dict[str, Any]:
+    _validate_backup_path(manifest_path)
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
@@ -571,6 +611,14 @@ def apply_activation_migrations(
         manifest_path,
         now=now,
     )
+    command_runner = runner or _default_command_runner
+    command_env = _postgres_environment(database_url)
+    restore_result = command_runner(
+        ["pg_restore", "--list", str(validated_backup["dump_path"])],
+        command_env,
+    )
+    if restore_result.returncode != 0:
+        raise ReleaseBackupError("database backup verification failed before migration")
     command = [
         "psql",
         "--no-psqlrc",
@@ -586,8 +634,7 @@ def apply_activation_migrations(
     ]
     for migration in ACTIVATION_MIGRATIONS:
         command.extend(["--file", str(root_dir.resolve() / "data" / "migrations" / migration)])
-    command_runner = runner or _default_command_runner
-    result = command_runner(command, _postgres_environment(database_url))
+    result = command_runner(command, command_env)
     if result.returncode != 0:
         raise ReleaseExecutionError("activation migration transaction failed")
 

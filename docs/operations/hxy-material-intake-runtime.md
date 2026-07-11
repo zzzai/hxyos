@@ -33,6 +33,9 @@ HXY_ENV_FILE=/root/hxy/ops/env/hxy-knowledge-api.env \
   bash scripts/apply-db-migrations.sh
 ```
 
+该命令仅用于开发/全新数据库初始化。生产启用 Knowledge Activation Loop V1 必须使用
+`docs/operations/hxy-knowledge-activation-release.md` 中的预检、备份、限定迁移与灰度 Gate。
+
 ## One-Shot Check
 
 Run one claim cycle without installing systemd:

@@ -30,6 +30,7 @@ from apps.api.hxy_release.activation_release import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
+RUNBOOK = ROOT / "docs" / "operations" / "hxy-knowledge-activation-release.md"
 
 
 def test_activation_release_allows_only_migrations_009_through_014() -> None:
@@ -160,7 +161,6 @@ class FakeInspectionConnection:
             activated = {
                 "hxy_organizations",
                 "hxy_role_assignments",
-                "hxy_assignment_sessions",
                 "hxy_product_conversations",
                 "hxy_product_messages",
                 "hxy_product_materials",
@@ -171,9 +171,28 @@ class FakeInspectionConnection:
             }
             names = baseline | (activated if self.activated else set())
             return FakeResult(rows=[{"name": name} for name in sorted(names)])
+        if "hxy_release:columns" in sql:
+            return FakeResult(
+                rows=[
+                    {
+                        "table_name": "staff_sessions",
+                        "column_name": "assignment_id",
+                    }
+                ]
+                if self.activated
+                else []
+            )
         if "hxy_release:constraints" in sql:
             return FakeResult(
                 rows=[
+                    {
+                        "table_name": "staff_sessions",
+                        "constraint_type": "f",
+                        "definition": (
+                            "FOREIGN KEY (assignment_id) "
+                            "REFERENCES hxy_role_assignments(assignment_id)"
+                        ),
+                    },
                     {
                         "table_name": "hxy_product_materials",
                         "constraint_type": "c",
@@ -206,7 +225,10 @@ class FakeInspectionConnection:
             )
         if "hxy_release:indexes" in sql:
             return FakeResult(
-                rows=[{"index_name": "idx_hxy_material_chunks_content_trgm"}]
+                rows=[
+                    {"index_name": "idx_hxy_material_chunks_content_trgm"},
+                    {"index_name": "idx_staff_sessions_assignment_expires"},
+                ]
             )
         raise AssertionError(normalized)
 
@@ -237,7 +259,6 @@ def test_preflight_is_read_only_and_reports_activation_as_pending() -> None:
     assert result["database"]["database"] == "hxy_release_test"
     assert result["server_major"] == 16
     assert result["pending_tables"] == [
-        "hxy_assignment_sessions",
         "hxy_material_artifacts",
         "hxy_material_chunks",
         "hxy_material_parser_jobs",
@@ -319,6 +340,28 @@ def test_postflight_fails_without_private_chunk_governance() -> None:
     assert result["status"] == "failed"
     failed = {item["name"] for item in result["checks"] if item["status"] == "failed"}
     assert "private_chunk_non_authority" in failed
+
+
+def test_postflight_fails_without_assignment_scoped_staff_sessions() -> None:
+    connection = FakeInspectionConnection(activated=True)
+    original_execute = connection.execute
+
+    def execute(sql: str, params=None):
+        result = original_execute(sql, params)
+        if "hxy_release:columns" in sql:
+            result.rows = []
+        return result
+
+    connection.execute = execute
+    result = run_postflight(
+        ROOT,
+        "host=127.0.0.1 dbname=hxy_release_test user=hxy_app",
+        connect_factory=_inspection_factory(connection),
+    )
+
+    assert result["status"] == "failed"
+    failed = {item["name"] for item in result["checks"] if item["status"] == "failed"}
+    assert "assignment_session_scope" in failed
 
 
 class FakeCommandRunner:
@@ -415,6 +458,21 @@ def test_backup_rejects_an_unverifiable_archive(tmp_path: Path) -> None:
     assert not list(tmp_path.rglob("manifest.json"))
 
 
+def test_backup_rejects_cross_project_output_path(tmp_path: Path) -> None:
+    output_root = tmp_path / "htops" / "backups"
+
+    with pytest.raises(ReleaseBoundaryError, match="backup"):
+        create_backup(
+            ROOT,
+            DATABASE_URL,
+            output_root=output_root,
+            runner=FakeCommandRunner(),
+            now=NOW,
+            git_commit="a" * 40,
+            preflight_runner=_passed_preflight,
+        )
+
+
 def test_backup_manifest_rejects_stale_database_or_changed_migrations(
     tmp_path: Path,
 ) -> None:
@@ -477,8 +535,13 @@ def test_apply_runs_only_009_014_in_one_locked_transaction(tmp_path: Path) -> No
     )
 
     assert result["status"] == "passed"
-    assert len(runner.calls) == 1
-    command, env = runner.calls[0]
+    assert len(runner.calls) == 2
+    restore_command, restore_env = runner.calls[0]
+    assert restore_command[0:2] == ["pg_restore", "--list"]
+    assert "release-secret-value" not in " ".join(restore_command)
+    assert restore_env["PGPASSWORD"] == "release-secret-value"
+
+    command, env = runner.calls[1]
     command_text = " ".join(command)
     assert command[0] == "psql"
     assert "--single-transaction" in command
@@ -492,6 +555,24 @@ def test_apply_runs_only_009_014_in_one_locked_transaction(tmp_path: Path) -> No
     assert "release-secret-value" not in command_text
     assert env["PGPASSWORD"] == "release-secret-value"
     assert "HXY_DATABASE_URL" not in env
+
+
+def test_apply_rejects_backup_that_no_longer_passes_pg_restore(tmp_path: Path) -> None:
+    backup = _make_backup(tmp_path, FakeCommandRunner())
+    runner = FakeCommandRunner(restore_returncode=1)
+
+    with pytest.raises(ReleaseBackupError, match="verification"):
+        apply_activation_migrations(
+            ROOT,
+            DATABASE_URL,
+            manifest_path=Path(backup["manifest_path"]),
+            confirmation=APPLY_CONFIRMATION,
+            runner=runner,
+            now=NOW,
+            postflight_runner=_passed_postflight,
+        )
+
+    assert [command[0] for command, _env in runner.calls] == ["pg_restore"]
 
 
 def test_release_subprocesses_do_not_inherit_unrelated_secrets(
@@ -532,3 +613,43 @@ def test_apply_stops_when_the_migration_transaction_fails(tmp_path: Path) -> Non
         )
 
     assert postflight_calls == []
+
+
+def test_activation_release_runbook_has_all_guarded_release_gates() -> None:
+    runbook = RUNBOOK.read_text(encoding="utf-8")
+
+    assert "hxy-activation-release.py preflight" in runbook
+    assert "hxy-activation-release.py backup" in runbook
+    assert "hxy-activation-release.py apply" in runbook
+    assert "hxy-activation-release.py postflight" in runbook
+    assert APPLY_CONFIRMATION in runbook
+    assert "009-014" in runbook
+    assert "scripts/apply-db-migrations.sh" in runbook
+    assert "仅用于开发/全新数据库初始化" in runbook
+
+
+def test_activation_release_runbook_starts_api_before_worker_and_checks_isolation() -> None:
+    runbook = RUNBOOK.read_text(encoding="utf-8")
+
+    api_start = runbook.index("systemctl start hxy-knowledge-api")
+    worker_start = runbook.index("systemctl start hxy-material-worker")
+    assert api_start < worker_start
+    assert "curl --fail --silent http://127.0.0.1:18081/health" in runbook
+    assert "AI 草稿" in runbook
+    assert "已批准" in runbook
+    assert "另一个 assignment" in runbook
+    assert "不能召回" in runbook
+    assert "archive" in runbook
+
+
+def test_activation_release_runbook_has_stop_and_rollback_boundaries() -> None:
+    runbook = RUNBOOK.read_text(encoding="utf-8")
+
+    assert "任一 Gate 失败立即停止" in runbook
+    assert "先停 worker，再回滚 API 代码" in runbook
+    assert "不自动执行数据库恢复" in runbook
+    assert "不批准答案卡" in runbook
+    assert "不修改核心知识" in runbook
+    assert "本手册不执行生产部署" in runbook
+    assert "/root/htops" not in runbook
+    assert "htops-" not in runbook
