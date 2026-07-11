@@ -45,6 +45,21 @@ export class MeRequestError extends Error {
   }
 }
 
+export async function exchangeSessionGrant(grant: string): Promise<void> {
+  const response = await fetch("/api/v1/auth/session-grant", {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ grant }),
+  });
+  if (!response.ok) {
+    throw new MeRequestError(response.status, "Unable to exchange session grant");
+  }
+}
+
 export async function loadMe(): Promise<MeResponse> {
   // The relative URL intentionally keeps credentialed requests same-origin.
   const response = await fetch("/api/v1/me", {

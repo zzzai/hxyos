@@ -144,6 +144,40 @@ async function mockProductApi(page: Page) {
 }
 
 test.describe("HXYOS product shell viewport contract", () => {
+  test("opens the mobile conversation from a one-time fragment link", async ({
+    page,
+  }) => {
+    const grant = "g".repeat(64);
+    let exchanged = false;
+    await mockProductApi(page);
+    await page.unroute("**/api/v1/me");
+    await page.route("**/api/v1/auth/session-grant", async (route) => {
+      expect(route.request().method()).toBe("POST");
+      expect(route.request().postDataJSON()).toEqual({ grant });
+      exchanged = true;
+      await route.fulfill({ status: 200, json: { status: "authenticated" } });
+    });
+    await page.route("**/api/v1/me", async (route) => {
+      await route.fulfill(
+        exchanged
+          ? { status: 200, json: TEST_SESSION }
+          : { status: 401, json: { detail: "Unauthorized" } },
+      );
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+
+    await page.goto(`/#hxy_session_grant=${grant}`);
+
+    await expect(
+      page.getByRole("textbox", { name: "告诉 HXYOS 你要做什么" }),
+    ).toBeEnabled();
+    expect(exchanged).toBe(true);
+    expect(page.url()).not.toContain("hxy_session_grant");
+    await expect(page.getByText(grant)).toHaveCount(0);
+    await expect(page.getByRole("textbox", { name: "用户名" })).toHaveCount(0);
+    await expect(page.getByRole("textbox", { name: "密码" })).toHaveCount(0);
+  });
+
   test("keeps the mobile composer visible above the primary navigation", async ({
     page,
   }) => {

@@ -6,6 +6,7 @@ import { MeRequestError, type MeResponse } from "../../api/client";
 import {
   SessionProvider,
   useSession,
+  type SessionGrantExchanger,
   type SessionLoader,
 } from "./SessionProvider";
 
@@ -24,6 +25,7 @@ const TEST_SESSION: MeResponse = {
   },
   available_assignments: [],
 };
+const SESSION_GRANT = "g".repeat(64);
 
 function SessionProbe() {
   const { status, session, retry } = useSession();
@@ -42,6 +44,7 @@ function SessionProbe() {
 }
 
 afterEach(() => {
+  window.history.replaceState({}, "", "/");
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -140,6 +143,116 @@ describe("SessionProvider", () => {
       ),
     );
     expect(screen.getByTestId("session-role")).toHaveTextContent("none");
+  });
+
+  it("clears and exchanges a fragment grant before loading the session", async () => {
+    const order: string[] = [];
+    window.history.replaceState(
+      {},
+      "",
+      `/#hxy_session_grant=${SESSION_GRANT}`,
+    );
+    const grantExchanger = vi.fn<SessionGrantExchanger>(async (grant) => {
+      expect(grant).toBe(SESSION_GRANT);
+      expect(window.location.hash).toBe("");
+      order.push("exchange");
+    });
+    const loader = vi.fn<SessionLoader>(async () => {
+      order.push("me");
+      return TEST_SESSION;
+    });
+
+    render(
+      <SessionProvider loader={loader} grantExchanger={grantExchanger}>
+        <SessionProbe />
+      </SessionProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("session-status")).toHaveTextContent(
+        "authenticated",
+      ),
+    );
+    expect(order).toEqual(["exchange", "me"]);
+    expect(window.location.href).not.toContain(SESSION_GRANT);
+    expect(document.body.textContent).not.toContain(SESSION_GRANT);
+  });
+
+  it("clears an invalid or consumed grant and stays unauthorized", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      `/#hxy_session_grant=${SESSION_GRANT}`,
+    );
+    const grantExchanger = vi
+      .fn<SessionGrantExchanger>()
+      .mockRejectedValue(new MeRequestError(401, "Unauthorized"));
+    const loader = vi.fn<SessionLoader>();
+
+    render(
+      <SessionProvider loader={loader} grantExchanger={grantExchanger}>
+        <SessionProbe />
+      </SessionProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("session-status")).toHaveTextContent(
+        "unauthorized",
+      ),
+    );
+    expect(window.location.hash).toBe("");
+    expect(loader).not.toHaveBeenCalled();
+    expect(document.body.textContent).not.toContain(SESSION_GRANT);
+  });
+
+  it("posts the fragment grant in a same-origin body before requesting me", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      `/#hxy_session_grant=${SESSION_GRANT}`,
+    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ status: "authenticated" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(TEST_SESSION), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <SessionProvider>
+        <SessionProbe />
+      </SessionProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("session-status")).toHaveTextContent(
+        "authenticated",
+      ),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/v1/auth/session-grant",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "include",
+        body: JSON.stringify({ grant: SESSION_GRANT }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/v1/me",
+      expect.objectContaining({ credentials: "include" }),
+    );
+    expect(window.location.hash).toBe("");
   });
 
   it("surfaces an error and retries through the injected loader", async () => {
