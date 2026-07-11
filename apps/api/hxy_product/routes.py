@@ -18,7 +18,14 @@ from .auth import (
     gateway_secret_is_strong,
     select_session_token,
 )
-from .schemas import AssignmentContext, MeResponse, OrganizationContext, StoreContext, UserContext
+from .schemas import (
+    AssignmentContext,
+    MeResponse,
+    OrganizationContext,
+    SessionGrantRequest,
+    StoreContext,
+    UserContext,
+)
 
 
 ROLE_LABELS = MappingProxyType(
@@ -170,6 +177,23 @@ def _expire_session_cookie(
     )
 
 
+def _authenticated_session_response(
+    raw_token: str,
+    settings: ProductAuthSettings,
+) -> JSONResponse:
+    response = JSONResponse({"status": "authenticated"})
+    response.set_cookie(
+        key="hxy_session",
+        value=raw_token,
+        max_age=settings.session_ttl_seconds,
+        path="/api/v1",
+        secure=settings.secure_cookie,
+        httponly=True,
+        samesite="lax",
+    )
+    return response
+
+
 def create_identity_router(
     repository_factory: Callable[[], Any],
     auth_settings: ProductAuthSettings,
@@ -204,17 +228,20 @@ def create_identity_router(
         )
         if principal is None:
             raise _unauthorized()
-        response = JSONResponse({"status": "authenticated"})
-        response.set_cookie(
-            key="hxy_session",
-            value=raw_token,
-            max_age=auth_settings.session_ttl_seconds,
-            path="/api/v1",
-            secure=auth_settings.secure_cookie,
-            httponly=True,
-            samesite="lax",
+        return _authenticated_session_response(raw_token, auth_settings)
+
+    @router.post("/api/v1/auth/session-grant")
+    def one_time_session_grant_exchange(request: SessionGrantRequest) -> JSONResponse:
+        repository = get_repository()
+        raw_token = secrets.token_urlsafe(32)
+        principal = repository.exchange_session_grant(
+            request.grant,
+            raw_token,
+            auth_settings.session_ttl_seconds,
         )
-        return response
+        if principal is None:
+            raise _unauthorized()
+        return _authenticated_session_response(raw_token, auth_settings)
 
     @router.post("/api/v1/auth/logout")
     def logout(

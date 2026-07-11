@@ -169,6 +169,73 @@ class IdentityRepository:
             assignment_id=str(row["assignment_id"]),
         )
 
+    def exchange_session_grant(
+        self,
+        session_grant: str,
+        raw_token: str,
+        ttl_seconds: int,
+    ) -> Principal | None:
+        grant_hash = hashlib.sha256(session_grant.encode("utf-8")).hexdigest()
+        token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+        try:
+            with self.connect() as connection:
+                row = connection.execute(
+                    """
+                    SELECT account.id::text AS account_id,
+                           account.display_name,
+                           assignment.assignment_id::text AS assignment_id
+                    FROM staff_sessions AS grant
+                    JOIN staff_accounts AS account ON account.id = grant.account_id
+                    JOIN hxy_role_assignments AS assignment
+                      ON assignment.assignment_id = grant.assignment_id
+                     AND assignment.account_id = grant.account_id
+                    JOIN hxy_organizations AS organization
+                      ON organization.organization_id = assignment.organization_id
+                    WHERE grant.token_hash = %s
+                      AND grant.expires_at > NOW()
+                      AND account.status = 'active'
+                      AND assignment.status = 'active'
+                      AND organization.status = 'active'
+                    FOR UPDATE OF grant
+                    """,
+                    (grant_hash,),
+                ).fetchone()
+                if row is None:
+                    return None
+                connection.execute(
+                    "DELETE FROM staff_sessions WHERE token_hash = %s",
+                    (grant_hash,),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO staff_sessions (
+                      token_hash,
+                      account_id,
+                      assignment_id,
+                      expires_at
+                    )
+                    VALUES (
+                      %s,
+                      %s::uuid,
+                      %s::uuid,
+                      NOW() + (%s * INTERVAL '1 second')
+                    )
+                    """,
+                    (
+                        token_hash,
+                        row["account_id"],
+                        row["assignment_id"],
+                        ttl_seconds,
+                    ),
+                )
+        except UniqueViolation:
+            return None
+        return Principal(
+            account_id=str(row["account_id"]),
+            display_name=str(row["display_name"]),
+            assignment_id=str(row["assignment_id"]),
+        )
+
     def delete_session(self, raw_token: str) -> None:
         token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
         with self.connect() as connection:

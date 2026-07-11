@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 
 CanonicalRole = Literal[
@@ -12,6 +12,12 @@ CanonicalRole = Literal[
     "store_employee",
     "system_admin",
 ]
+
+
+class SessionGrantRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    grant: str = Field(min_length=43, max_length=256)
 
 
 class UserContext(BaseModel):

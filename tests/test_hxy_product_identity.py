@@ -48,6 +48,7 @@ UNKNOWN_ACCOUNT_ID = "10000000-0000-0000-0000-000000000099"
 GATEWAY_ASSERTION_ID = "40000000-0000-0000-0000-000000000001"
 TAMPERED_ASSERTION_ID = "40000000-0000-0000-0000-000000000002"
 GATEWAY_SECRET = "gateway-unit-test-key-with-32-bytes"
+SESSION_GRANT = "g" * 64
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,14 @@ class FakeIdentityRepository:
         self.created_sessions: list[tuple[str, str, int]] = []
         self.deleted_sessions: list[str] = []
         self.consumed_assertion_ids: set[str] = set()
+        self.session_grants = {
+            SESSION_GRANT: FakePrincipal(
+                FOUNDER_ID,
+                "测试创始人",
+                FOUNDER_ASSIGNMENT_ID,
+            )
+        }
+        self.exchanged_session_grants: list[tuple[str, str, int]] = []
         self.principals = {
             "employee-session": FakePrincipal(
                 EMPLOYEE_ID,
@@ -147,6 +156,19 @@ class FakeIdentityRepository:
     def delete_session(self, raw_token: str) -> None:
         self.deleted_sessions.append(raw_token)
         self.principals.pop(raw_token, None)
+
+    def exchange_session_grant(
+        self,
+        session_grant: str,
+        raw_token: str,
+        ttl_seconds: int,
+    ) -> FakePrincipal | None:
+        principal = self.session_grants.pop(session_grant, None)
+        if principal is None:
+            return None
+        self.exchanged_session_grants.append((session_grant, raw_token, ttl_seconds))
+        self.principals[raw_token] = principal
+        return principal
 
 
 class ASGIClient:
@@ -247,6 +269,87 @@ def test_trusted_gateway_exchange_issues_secure_http_only_cookie(auth_session_cl
     assert ttl_seconds == settings.session_ttl_seconds
     assert raw_token not in response.text
     assert "token" not in response.json()
+
+
+def test_one_time_session_grant_rotates_into_secure_http_only_cookie(
+    auth_session_client,
+) -> None:
+    client, repository, settings = auth_session_client
+
+    response = client.request(
+        "POST",
+        "/api/v1/auth/session-grant",
+        json={"grant": SESSION_GRANT},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "authenticated"}
+    assert SESSION_GRANT not in response.text
+    assert "token" not in response.json()
+    cookie = response.headers["set-cookie"]
+    cookie_lower = cookie.lower()
+    assert cookie.startswith("hxy_session=")
+    assert SESSION_GRANT not in cookie
+    assert "httponly" in cookie_lower
+    assert "secure" in cookie_lower
+    assert "samesite=lax" in cookie_lower
+    assert "path=/api/v1" in cookie_lower
+    assert f"max-age={settings.session_ttl_seconds}" in cookie_lower
+    old_grant, new_token, ttl = repository.exchanged_session_grants[0]
+    assert old_grant == SESSION_GRANT
+    assert new_token != SESSION_GRANT
+    assert len(new_token) >= 43
+    assert ttl == settings.session_ttl_seconds
+
+
+def test_one_time_session_grant_rejects_reuse_and_unknown_grants(
+    auth_session_client,
+) -> None:
+    client, repository, _settings = auth_session_client
+
+    first = client.request(
+        "POST",
+        "/api/v1/auth/session-grant",
+        json={"grant": SESSION_GRANT},
+    )
+    replay = client.request(
+        "POST",
+        "/api/v1/auth/session-grant",
+        json={"grant": SESSION_GRANT},
+    )
+    unknown = client.request(
+        "POST",
+        "/api/v1/auth/session-grant",
+        json={"grant": "u" * 64},
+    )
+
+    assert first.status_code == 200
+    for response in (replay, unknown):
+        assert response.status_code == 401
+        assert response.json() == {"detail": "Unauthorized"}
+        assert "set-cookie" not in response.headers
+    assert len(repository.exchanged_session_grants) == 1
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"grant": "short"},
+        {"grant": "x" * 257},
+        {"grant": SESSION_GRANT, "role": "founder"},
+    ],
+)
+def test_one_time_session_grant_requires_exact_bounded_body(
+    auth_session_client,
+    payload: dict[str, object],
+) -> None:
+    client, repository, _settings = auth_session_client
+
+    response = client.request("POST", "/api/v1/auth/session-grant", json=payload)
+
+    assert response.status_code == 422
+    assert repository.exchanged_session_grants == []
 
 
 def test_trusted_gateway_exchange_rejects_replayed_assertion(auth_session_client) -> None:
@@ -769,6 +872,36 @@ class GatewayExchangeConnection:
         return FakeQueryResult()
 
 
+class SessionGrantExchangeConnection:
+    def __init__(self, *, valid: bool = True) -> None:
+        self.valid = valid
+        self.calls: list[tuple[str, tuple[object, ...]]] = []
+        self.committed = False
+        self.rolled_back = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, *_args) -> None:
+        self.committed = exc_type is None
+        self.rolled_back = exc_type is not None
+        return None
+
+    def execute(self, sql: str, params: tuple[object, ...]):
+        self.calls.append((sql, params))
+        if "FOR UPDATE" in sql:
+            return FakeQueryResult(
+                row={
+                    "account_id": FOUNDER_ID,
+                    "display_name": "测试创始人",
+                    "assignment_id": FOUNDER_ASSIGNMENT_ID,
+                }
+                if self.valid
+                else None
+            )
+        return FakeQueryResult()
+
+
 def test_postgres_repository_hashes_raw_token_and_requires_active_identity(monkeypatch) -> None:
     from apps.api.hxy_product.repository import IdentityRepository
 
@@ -925,6 +1058,74 @@ def test_postgres_repository_rolls_back_duplicate_assertion_without_session(
     assert connection.committed is False
     assert connection.rolled_back is True
     assert not any("INSERT INTO staff_sessions" in sql for sql, _ in connection.calls)
+
+
+def test_postgres_repository_atomically_rotates_one_time_session_grant(
+    monkeypatch,
+) -> None:
+    from apps.api.hxy_product.repository import IdentityRepository
+
+    connection = SessionGrantExchangeConnection()
+    repository = IdentityRepository("postgresql://identity.test/hxy")
+    monkeypatch.setattr(repository, "connect", lambda: connection)
+
+    principal = repository.exchange_session_grant(
+        SESSION_GRANT,
+        "new-normal-session-token",
+        1800,
+    )
+
+    grant_hash = hashlib.sha256(SESSION_GRANT.encode()).hexdigest()
+    session_hash = hashlib.sha256(b"new-normal-session-token").hexdigest()
+    assert principal is not None
+    assert principal.account_id == FOUNDER_ID
+    assert principal.assignment_id == FOUNDER_ASSIGNMENT_ID
+    assert connection.committed is True
+    assert connection.rolled_back is False
+    assert len(connection.calls) == 3
+    select_sql, select_params = connection.calls[0]
+    delete_sql, delete_params = connection.calls[1]
+    insert_sql, insert_params = connection.calls[2]
+    assert "FROM staff_sessions AS grant" in select_sql
+    assert "grant.expires_at > NOW()" in select_sql
+    assert "account.status = 'active'" in select_sql
+    assert "assignment.status = 'active'" in select_sql
+    assert "organization.status = 'active'" in select_sql
+    assert "FOR UPDATE" in select_sql
+    assert select_params == (grant_hash,)
+    assert "DELETE FROM staff_sessions" in delete_sql
+    assert delete_params == (grant_hash,)
+    assert "INSERT INTO staff_sessions" in insert_sql
+    assert insert_params == (
+        session_hash,
+        FOUNDER_ID,
+        FOUNDER_ASSIGNMENT_ID,
+        1800,
+    )
+    assert all(SESSION_GRANT not in params for _sql, params in connection.calls)
+    assert all("new-normal-session-token" not in params for _sql, params in connection.calls)
+
+
+def test_postgres_repository_rejects_unknown_or_expired_session_grant(
+    monkeypatch,
+) -> None:
+    from apps.api.hxy_product.repository import IdentityRepository
+
+    connection = SessionGrantExchangeConnection(valid=False)
+    repository = IdentityRepository("postgresql://identity.test/hxy")
+    monkeypatch.setattr(repository, "connect", lambda: connection)
+
+    principal = repository.exchange_session_grant(
+        "u" * 64,
+        "new-normal-session-token",
+        1800,
+    )
+
+    assert principal is None
+    assert connection.committed is True
+    assert len(connection.calls) == 1
+    assert not any("DELETE FROM" in sql for sql, _params in connection.calls)
+    assert not any("INSERT INTO" in sql for sql, _params in connection.calls)
 
 
 def test_postgres_repository_hash_deletes_unknown_session(monkeypatch) -> None:
