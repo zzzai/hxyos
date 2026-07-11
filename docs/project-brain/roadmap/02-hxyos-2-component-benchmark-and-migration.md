@@ -166,3 +166,39 @@ ChannelAdapter
 The first implementation wraps current behavior. External engines are not
 introduced until the baseline adapter passes existing tests and the 50-task
 benchmark schema exists.
+
+## Engine Ports V1 Baseline Record
+
+Recorded on 2026-07-11 from branch `feature/hxyos-engine-ports-v1`.
+
+Implemented:
+
+- immutable `EngineContext`, budget, artifact, usage, policy, and result contracts;
+- current `ModelRouter` behind `ModelGateway` without changing model execution;
+- current MarkItDown/MinerU runner behind `DocumentParser`;
+- permission-first current retrieval adapter with account/assignment/
+  organization/store context;
+- bounded engine descriptor, benchmark JSON Schema, five-role sample, and
+  dependency-free validator;
+- complete mode requires exactly 50 cases and 10 cases per role.
+
+Verification evidence:
+
+```text
+Python: 728 passed, 2 skipped
+TypeScript: 52 passed
+Web: 33 passed
+Playwright: 6 passed
+Web production build: passed
+secret scan: passed
+public-release scan: passed
+five-role benchmark sample: passed
+```
+
+Interpretation:
+
+- Product behavior has a tested baseline behind replaceable ports.
+- No external engine has been promoted.
+- The sample proves contract validation, not engine quality.
+- A 50-case corpus and baseline run results are still required before comparing
+  LiteLLM, RAGFlow, DataAgent, or another candidate.

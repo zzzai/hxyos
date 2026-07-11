@@ -4,6 +4,8 @@ import importlib
 from pathlib import Path
 from typing import Any
 
+from apps.api.hxy_engines.contracts import EngineBudget, EngineContext
+
 
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATION = ROOT / "data" / "migrations" / "014_hxy_knowledge_activation.sql"
@@ -191,7 +193,17 @@ def test_assignment_context_repository_merges_private_context_and_delegates_auth
     repository = module.AssignmentKnowledgeRepository(
         base,
         MaterialRepository(),
-        assignment_id=ASSIGNMENT_ID,
+        engine_context=EngineContext(
+            request_id="request-activation-test",
+            trace_id="trace-activation-test",
+            account_id="account-activation-test",
+            assignment_id=ASSIGNMENT_ID,
+            organization_id="organization-activation-test",
+            store_id=None,
+            purpose="answer_retrieval",
+            authority_policy="approved_plus_reference",
+            budget=EngineBudget(max_latency_ms=10_000),
+        ),
     )
 
     items = repository.search("顾客接待", limit=5, domain_hint="operations")
@@ -201,5 +213,6 @@ def test_assignment_context_repository_merges_private_context_and_delegates_auth
         "formal_knowledge",
     ]
     assert repository.retrieval_trace()["private_material_count"] == 1
+    assert repository.retrieval_trace()["engine"]["engine_name"] == "current-assignment-retrieval"
     assert repository.find_answer_card("问题", "operations")["status"] == "approved"
     assert repository.save_answer_run({"answer": "test"}) == "answer-id"
