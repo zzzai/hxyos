@@ -247,6 +247,7 @@ def create_conversation_router(
     def send_message(
         conversation_id: UUID,
         request: SendMessageRequest,
+        principal: Principal = Depends(resolve_principal),
         assignment: Any = Depends(resolve_assignment),
         repository: Any = Depends(get_conversation_repository),
     ) -> dict[str, Any]:
@@ -270,7 +271,11 @@ def create_conversation_router(
         assistant_message = reservation.get("assistant_message")
         if state != "completed":
             try:
-                answer = answer_generator(question=request.content, assignment=assignment)
+                answer = answer_generator(
+                    question=request.content,
+                    assignment=assignment,
+                    principal=principal,
+                )
                 safe_payload = product_answer_payload(answer)
                 assistant_message = repository.complete_assistant_message(
                     assignment.assignment_id,

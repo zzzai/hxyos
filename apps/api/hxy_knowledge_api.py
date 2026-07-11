@@ -82,6 +82,7 @@ from hxy_knowledge.workspace_events import (
 )
 from hxy_product.auth import ProductAuthSettings
 from hxy_product.knowledge_context import AssignmentKnowledgeRepository
+from hxy_engines.contracts import EngineBudget, EngineContext
 from hxy_product.conversation_repository import ConversationRepository
 from hxy_product.conversation_routes import create_conversation_router
 from hxy_product.material_repository import MaterialRepository
@@ -3524,7 +3525,12 @@ def create_app(
         maybe_apply_model_answer=_maybe_apply_model_answer,
     )
 
-    def generate_product_answer(*, question: str, assignment: Any) -> dict[str, Any]:
+    def generate_product_answer(
+        *,
+        question: str,
+        assignment: Any,
+        principal: Any,
+    ) -> dict[str, Any]:
         scenario_by_role = {
             "founder": "创始人内部决策",
             "hq_operations": "总部运营工作问答",
@@ -3540,10 +3546,22 @@ def create_app(
             "system_admin": "headquarters",
         }
         answer_role = answer_role_by_role.get(assignment.role, "team")
+        trace_id = str(uuid4())
+        engine_context = EngineContext(
+            request_id=str(uuid4()),
+            trace_id=trace_id,
+            account_id=principal.account_id,
+            assignment_id=assignment.assignment_id,
+            organization_id=assignment.organization_id,
+            store_id=assignment.store_id,
+            purpose="answer_retrieval",
+            authority_policy="approved_plus_reference",
+            budget=EngineBudget(max_latency_ms=60_000, max_tokens=16_000),
+        )
         context_repository = AssignmentKnowledgeRepository(
             make_repository(),
             make_material_repository(),
-            assignment_id=assignment.assignment_id,
+            engine_context=engine_context,
         )
         started_at = time.perf_counter()
         answer = answer_service.generate_answer(
@@ -3557,6 +3575,7 @@ def create_app(
             hooks=answer_hooks,
             role=answer_role,
             pipeline_role=answer_role,
+            engine_context=engine_context,
         )
         retrieval_trace = context_repository.retrieval_trace()
         private_evidence = [
@@ -3584,7 +3603,7 @@ def create_app(
         )
         usage = answer.get("model_usage") if isinstance(answer.get("model_usage"), dict) else {}
         answer["_product_trace"] = {
-            "trace_id": str(uuid4()),
+            "trace_id": trace_id,
             "assignment_id": assignment.assignment_id,
             "role": assignment.role,
             "intent": str(answer.get("intent") or "unknown")[:120],
@@ -3610,6 +3629,7 @@ def create_app(
                         if item.get("material_id") or item.get("asset_id")
                     }
                 )[:20],
+                "retrieval_engine": retrieval_trace.get("engine") or {},
             },
         }
         return answer

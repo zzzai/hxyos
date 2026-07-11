@@ -34,6 +34,7 @@ def generate_answer(
     hooks: AnswerServiceHooks,
     role: str = "founder",
     pipeline_role: str = "team",
+    engine_context: Any | None = None,
 ) -> dict[str, Any]:
     """Generate and persist one governed answer without binding to an HTTP framework."""
     understanding = understand_text(question, scenario=scenario, role=role)

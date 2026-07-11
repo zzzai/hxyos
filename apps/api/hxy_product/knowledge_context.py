@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from hxy_engines.adapters.current_retrieval import CurrentRetrievalEngine
+from hxy_engines.contracts import EngineContext
+from hxy_engines.retrieval import RetrievalRequest
+
 
 class AssignmentKnowledgeRepository:
     def __init__(
@@ -9,12 +13,18 @@ class AssignmentKnowledgeRepository:
         base_repository: Any,
         material_repository: Any,
         *,
-        assignment_id: str,
+        engine_context: EngineContext,
+        retrieval_engine: Any | None = None,
     ) -> None:
         self.base_repository = base_repository
         self.material_repository = material_repository
-        self.assignment_id = assignment_id
+        self.engine_context = engine_context
+        self.retrieval_engine = retrieval_engine or CurrentRetrievalEngine(
+            base_repository,
+            material_repository,
+        )
         self._last_items: list[dict[str, Any]] = []
+        self._last_engine_trace: dict[str, Any] = {}
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.base_repository, name)
@@ -27,41 +37,25 @@ class AssignmentKnowledgeRepository:
         limit: int = 20,
         domain_hint: str | None = None,
     ) -> list[dict[str, Any]]:
-        formal_items = self.base_repository.search(
-            query,
-            domain=domain,
-            stage=stage,
-            limit=limit,
-            domain_hint=domain_hint,
-        )
-        private_items = self.material_repository.search_material_chunks(
-            self.assignment_id,
-            query,
-            domain_hint=domain or domain_hint,
-            limit=min(limit, 8),
-        )
-        combined = [*formal_items, *private_items]
-        combined.sort(
-            key=lambda item: (
-                int(item.get("score") or 0),
-                item.get("source_type") == "private_material",
+        result = self.retrieval_engine.execute(
+            self.engine_context,
+            RetrievalRequest(
+                query=query,
+                assignment_id=self.engine_context.assignment_id,
+                organization_id=self.engine_context.organization_id,
+                store_id=self.engine_context.store_id,
+                domain=domain,
+                stage=stage,
+                limit=limit,
+                domain_hint=domain_hint,
             ),
-            reverse=True,
         )
-        seen: set[str] = set()
-        items: list[dict[str, Any]] = []
-        for item in combined:
-            key = str(item.get("chunk_id") or item.get("source_path") or "")
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            items.append(item)
-            if len(items) >= limit:
-                break
+        items = list(result.private_output or [])
         self._last_items = items
+        self._last_engine_trace = result.as_trace_record()
         return items
 
-    def retrieval_trace(self) -> dict[str, int]:
+    def retrieval_trace(self) -> dict[str, Any]:
         return {
             "retrieval_count": len(self._last_items),
             "private_material_count": sum(
@@ -69,4 +63,5 @@ class AssignmentKnowledgeRepository:
                 for item in self._last_items
                 if item.get("source_type") == "private_material"
             ),
+            "engine": self._last_engine_trace,
         }

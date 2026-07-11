@@ -402,6 +402,7 @@ def test_send_message_returns_pair_and_redacts_internal_answer_metadata(conversa
     assert [item["question"] for item in generated_questions] == ["我该怎么接待第一次到店的顾客？"]
     assert generated_questions[0]["role"] == "store_manager"
     assert generated_questions[0]["pipeline_role"] == "store_manager"
+    assert generated_questions[0]["engine_context"].account_id == ACCOUNT_ID
     assert identity_repository.assignment_account_ids == [ACCOUNT_ID]
     assert ("reserve", ASSIGNMENT_ID) in repository.calls
     assert ("complete", ASSIGNMENT_ID) in repository.calls
