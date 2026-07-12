@@ -166,96 +166,137 @@ class FakeInspectionConnection:
         raise AssertionError(normalized)
 
 
-def _constraint_rows() -> list[dict[str, str]]:
-    definitions = {
+def _constraint_rows() -> list[dict[str, Any]]:
+    specifications = {
         "parent_store": (
             "hxy_product_tasks",
-            "FOREIGN KEY (organization_id, store_id, parent_task_id) "
-            "REFERENCES hxy_product_tasks(organization_id, store_id, task_id)",
+            ("organization_id", "store_id", "parent_task_id"),
+            "hxy_product_tasks",
+            ("organization_id", "store_id", "task_id"),
         ),
         "tasks_org_store": (
             "hxy_product_tasks",
-            "FOREIGN KEY (organization_id, store_id) "
-            "REFERENCES hxy_organization_stores(organization_id, store_id)",
+            ("organization_id", "store_id"),
+            "hxy_organization_stores",
+            ("organization_id", "store_id"),
         ),
         "tasks_org": (
             "hxy_product_tasks",
-            "FOREIGN KEY (organization_id) "
-            "REFERENCES hxy_organizations(organization_id)",
+            ("organization_id",),
+            "hxy_organizations",
+            ("organization_id",),
         ),
         "tasks_creator": (
             "hxy_product_tasks",
-            "FOREIGN KEY (creator_assignment_id) "
-            "REFERENCES hxy_role_assignments(assignment_id)",
+            ("creator_assignment_id",),
+            "hxy_role_assignments",
+            ("assignment_id",),
         ),
         "tasks_creator_org": (
             "hxy_product_tasks",
-            "FOREIGN KEY (organization_id, creator_assignment_id) "
-            "REFERENCES hxy_role_assignments(organization_id, assignment_id)",
+            ("organization_id", "creator_assignment_id"),
+            "hxy_role_assignments",
+            ("organization_id", "assignment_id"),
         ),
         "tasks_assignee": (
             "hxy_product_tasks",
-            "FOREIGN KEY (assignee_assignment_id) "
-            "REFERENCES hxy_role_assignments(assignment_id)",
+            ("assignee_assignment_id",),
+            "hxy_role_assignments",
+            ("assignment_id",),
         ),
         "tasks_assignee_org": (
             "hxy_product_tasks",
-            "FOREIGN KEY (organization_id, assignee_assignment_id) "
-            "REFERENCES hxy_role_assignments(organization_id, assignment_id)",
+            ("organization_id", "assignee_assignment_id"),
+            "hxy_role_assignments",
+            ("organization_id", "assignment_id"),
         ),
         "tasks_assignee_store": (
             "hxy_product_tasks",
-            "FOREIGN KEY (organization_id, store_id, assignee_assignment_id) "
-            "REFERENCES hxy_role_assignments(organization_id, store_id, assignment_id)",
+            ("organization_id", "store_id", "assignee_assignment_id"),
+            "hxy_role_assignments",
+            ("organization_id", "store_id", "assignment_id"),
         ),
         "events_task_org": (
             "hxy_product_task_events",
-            "FOREIGN KEY (organization_id, task_id) "
-            "REFERENCES hxy_product_tasks(organization_id, task_id)",
+            ("organization_id", "task_id"),
+            "hxy_product_tasks",
+            ("organization_id", "task_id"),
         ),
         "events_org": (
             "hxy_product_task_events",
-            "FOREIGN KEY (organization_id) "
-            "REFERENCES hxy_organizations(organization_id)",
+            ("organization_id",),
+            "hxy_organizations",
+            ("organization_id",),
         ),
         "events_actor_org": (
             "hxy_product_task_events",
-            "FOREIGN KEY (organization_id, actor_assignment_id) "
-            "REFERENCES hxy_role_assignments(organization_id, assignment_id)",
+            ("organization_id", "actor_assignment_id"),
+            "hxy_role_assignments",
+            ("organization_id", "assignment_id"),
         ),
         "training_org_store": (
             "hxy_product_training_sessions",
-            "FOREIGN KEY (organization_id, store_id) "
-            "REFERENCES hxy_organization_stores(organization_id, store_id)",
+            ("organization_id", "store_id"),
+            "hxy_organization_stores",
+            ("organization_id", "store_id"),
         ),
         "training_org": (
             "hxy_product_training_sessions",
-            "FOREIGN KEY (organization_id) "
-            "REFERENCES hxy_organizations(organization_id)",
+            ("organization_id",),
+            "hxy_organizations",
+            ("organization_id",),
         ),
         "training_assignment_org": (
             "hxy_product_training_sessions",
-            "FOREIGN KEY (organization_id, assignment_id) "
-            "REFERENCES hxy_role_assignments(organization_id, assignment_id)",
+            ("organization_id", "assignment_id"),
+            "hxy_role_assignments",
+            ("organization_id", "assignment_id"),
         ),
         "training_assignment_store": (
             "hxy_product_training_sessions",
-            "FOREIGN KEY (organization_id, store_id, assignment_id) "
-            "REFERENCES hxy_role_assignments(organization_id, store_id, assignment_id)",
+            ("organization_id", "store_id", "assignment_id"),
+            "hxy_role_assignments",
+            ("organization_id", "store_id", "assignment_id"),
         ),
     }
     return [
         {
             "marker": marker,
-            "table_name": table,
-            "constraint_type": "f",
-            "definition": definition,
+            "current_schema": "public",
+            "source_schema": "public",
+            "source_table": source_table,
+            "source_columns": list(source_columns),
+            "target_schema": "public",
+            "target_table": target_table,
+            "target_columns": list(target_columns),
+            "convalidated": True,
+            "confdeltype": "r",
         }
-        for marker, (table, definition) in definitions.items()
+        for marker, (
+            source_table,
+            source_columns,
+            target_table,
+            target_columns,
+        ) in specifications.items()
     ]
 
 
-def _trigger_rows() -> list[dict[str, str]]:
+def _function_definition(name: str, source: str) -> str:
+    return (
+        f"CREATE OR REPLACE FUNCTION public.{name}() RETURNS trigger "
+        f"LANGUAGE plpgsql AS $function$ {source} $function$"
+    )
+
+
+def _trigger_rows() -> list[dict[str, Any]]:
+    task_source = (
+        "BEGIN RAISE EXCEPTION "
+        "'hxy_product_task_events is append-only'; END;"
+    )
+    training_source = (
+        "BEGIN RAISE EXCEPTION "
+        "'hxy_product_training_sessions is append-only'; END;"
+    )
     return [
         {
             "table_schema": "public",
@@ -264,6 +305,12 @@ def _trigger_rows() -> list[dict[str, str]]:
             "tgenabled": "O",
             "function_schema": "public",
             "function_name": "hxy_reject_task_event_mutation",
+            "tgqual": None,
+            "prosrc": task_source,
+            "function_definition": _function_definition(
+                "hxy_reject_task_event_mutation",
+                task_source,
+            ),
             "definition": "CREATE TRIGGER x BEFORE UPDATE OR DELETE ON x FOR EACH ROW",
         },
         {
@@ -273,6 +320,12 @@ def _trigger_rows() -> list[dict[str, str]]:
             "tgenabled": "O",
             "function_schema": "public",
             "function_name": "hxy_reject_task_event_mutation",
+            "tgqual": None,
+            "prosrc": task_source,
+            "function_definition": _function_definition(
+                "hxy_reject_task_event_mutation",
+                task_source,
+            ),
             "definition": "CREATE TRIGGER x BEFORE TRUNCATE ON x FOR EACH STATEMENT",
         },
         {
@@ -282,6 +335,12 @@ def _trigger_rows() -> list[dict[str, str]]:
             "tgenabled": "O",
             "function_schema": "public",
             "function_name": "hxy_reject_product_training_mutation",
+            "tgqual": None,
+            "prosrc": training_source,
+            "function_definition": _function_definition(
+                "hxy_reject_product_training_mutation",
+                training_source,
+            ),
             "definition": "CREATE TRIGGER x BEFORE UPDATE OR DELETE ON x FOR EACH ROW",
         },
         {
@@ -291,6 +350,12 @@ def _trigger_rows() -> list[dict[str, str]]:
             "tgenabled": "O",
             "function_schema": "public",
             "function_name": "hxy_reject_product_training_mutation",
+            "tgqual": None,
+            "prosrc": training_source,
+            "function_definition": _function_definition(
+                "hxy_reject_product_training_mutation",
+                training_source,
+            ),
             "definition": "CREATE TRIGGER x BEFORE TRUNCATE ON x FOR EACH STATEMENT",
         },
     ]
@@ -623,6 +688,59 @@ def test_postflight_rejects_misbound_or_disabled_append_only_triggers(
 
 
 @pytest.mark.parametrize(
+    ("trigger_name", "override", "failed_check"),
+    [
+        (
+            "trg_hxy_product_task_events_append_only",
+            {"tgqual": "false"},
+            "task_event_append_only",
+        ),
+        (
+            "trg_hxy_product_training_append_only",
+            {
+                "prosrc": "BEGIN RETURN OLD; END;",
+                "function_definition": (
+                    "CREATE OR REPLACE FUNCTION "
+                    "public.hxy_reject_product_training_mutation() "
+                    "RETURNS trigger LANGUAGE plpgsql "
+                    "AS $function$ BEGIN RETURN OLD; END; $function$"
+                ),
+            },
+            "training_append_only",
+        ),
+        (
+            "trg_hxy_product_task_events_no_truncate",
+            {
+                "prosrc": (
+                    "BEGIN RAISE EXCEPTION "
+                    "'hxy_product_training_sessions is append-only'; END;"
+                )
+            },
+            "task_event_append_only",
+        ),
+    ],
+)
+def test_postflight_rejects_trigger_conditions_or_replaced_function_bodies(
+    trigger_name: str,
+    override: dict[str, Any],
+    failed_check: str,
+) -> None:
+    connection = FakeInspectionConnection(released=True)
+    connection.trigger_overrides[trigger_name] = override
+
+    result = run_postflight(
+        ROOT,
+        DATABASE_URL,
+        connect_factory=_inspection_factory(connection),
+        activation_runner=_activation(),
+    )
+
+    failed = {item["name"] for item in result["checks"] if item["status"] == "failed"}
+    assert result["status"] == "failed"
+    assert failed_check in failed
+
+
+@pytest.mark.parametrize(
     ("trigger_name", "table_name", "function_name"),
     [
         (
@@ -741,35 +859,72 @@ def test_postflight_rejects_wrong_trigger_timing_level_or_event_set(
 
 
 @pytest.mark.parametrize(
-    ("marker", "definition", "failed_check"),
+    ("marker", "target_columns", "failed_check"),
     [
         (
             "tasks_org_store",
-            "FOREIGN KEY (organization_id, store_id) "
-            "REFERENCES hxy_organization_stores(organization_id, region_id)",
+            ["organization_id", "region_id"],
             "task_scope_foreign_keys",
         ),
         (
             "events_actor_org",
-            "FOREIGN KEY (organization_id, actor_assignment_id) "
-            "REFERENCES hxy_role_assignments(organization_id, role_code)",
+            ["organization_id", "role_code"],
             "task_event_foreign_keys",
         ),
         (
             "training_assignment_store",
-            "FOREIGN KEY (organization_id, store_id, assignment_id) "
-            "REFERENCES hxy_role_assignments(organization_id, store_id, role_code)",
+            ["organization_id", "store_id", "role_code"],
             "training_scope_foreign_keys",
         ),
     ],
 )
 def test_postflight_rejects_foreign_keys_with_wrong_target_columns(
     marker: str,
-    definition: str,
+    target_columns: list[str],
     failed_check: str,
 ) -> None:
     connection = FakeInspectionConnection(released=True)
-    connection.constraint_overrides[marker] = {"definition": definition}
+    connection.constraint_overrides[marker] = {"target_columns": target_columns}
+
+    result = run_postflight(
+        ROOT,
+        DATABASE_URL,
+        connect_factory=_inspection_factory(connection),
+        activation_runner=_activation(),
+    )
+
+    failed = {item["name"] for item in result["checks"] if item["status"] == "failed"}
+    assert result["status"] == "failed"
+    assert failed_check in failed
+
+
+@pytest.mark.parametrize(
+    ("marker", "override", "failed_check"),
+    [
+        (
+            "tasks_org_store",
+            {"target_schema": "shadow"},
+            "task_scope_foreign_keys",
+        ),
+        (
+            "events_actor_org",
+            {"convalidated": False},
+            "task_event_foreign_keys",
+        ),
+        (
+            "training_assignment_store",
+            {"confdeltype": "c"},
+            "training_scope_foreign_keys",
+        ),
+    ],
+)
+def test_postflight_rejects_unsafe_foreign_key_catalog_state(
+    marker: str,
+    override: dict[str, Any],
+    failed_check: str,
+) -> None:
+    connection = FakeInspectionConnection(released=True)
+    connection.constraint_overrides[marker] = override
 
     result = run_postflight(
         ROOT,
@@ -882,6 +1037,34 @@ def _make_backup(release_root: Path, runner: FakeCommandRunner):
     )
 
 
+def _initialize_release_git_repository(release_root: Path) -> str:
+    (release_root / ".gitignore").write_text("data/backups/\n", encoding="utf-8")
+    (release_root / "release-source.txt").write_text("clean\n", encoding="utf-8")
+    commands = [
+        ["git", "init", "--quiet"],
+        ["git", "config", "user.email", "hxy-release@example.invalid"],
+        ["git", "config", "user.name", "HXY Release Test"],
+        ["git", "add", "."],
+        ["git", "commit", "--quiet", "-m", "test release source"],
+    ]
+    for command in commands:
+        subprocess.run(
+            command,
+            cwd=release_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=release_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
 def test_backup_and_apply_reuse_guarded_core_for_only_015_016(
     release_root: Path,
 ) -> None:
@@ -906,6 +1089,7 @@ def test_backup_and_apply_reuse_guarded_core_for_only_015_016(
         now=NOW,
         git_commit=GIT_COMMIT,
         postflight_runner=_passed_postflight,
+        git_inspector=_git(),
         trusted_root=release_root,
     )
 
@@ -920,6 +1104,89 @@ def test_backup_and_apply_reuse_guarded_core_for_only_015_016(
         if value == "--file"
     ] == list(ROLE_JOURNEYS_MIGRATIONS)
     assert not any("014_" in item or "017_" in item for item in psql)
+
+
+@pytest.mark.parametrize("dirty_kind", ["tracked", "untracked"])
+def test_apply_rechecks_clean_git_state_before_any_runner_command(
+    release_root: Path,
+    dirty_kind: str,
+) -> None:
+    git_commit = _initialize_release_git_repository(release_root)
+    backup = create_backup(
+        release_root,
+        DATABASE_URL,
+        output_root=release_root / "data" / "backups" / "role-journeys",
+        runner=FakeCommandRunner(),
+        now=NOW,
+        git_commit=git_commit,
+        preflight_runner=_passed_preflight,
+        trusted_root=release_root,
+    )
+    if dirty_kind == "tracked":
+        (release_root / "release-source.txt").write_text(
+            "dirty\n",
+            encoding="utf-8",
+        )
+    else:
+        (release_root / "data" / "orders.csv").write_text(
+            "business-data\n",
+            encoding="utf-8",
+        )
+    runner = FakeCommandRunner()
+
+    with pytest.raises(ReleaseAuthorizationError, match="clean worktree"):
+        apply_role_journeys_migrations(
+            release_root,
+            DATABASE_URL,
+            manifest_path=Path(backup["manifest_path"]),
+            confirmation=APPLY_CONFIRMATION,
+            runner=runner,
+            now=NOW,
+            git_commit=git_commit,
+            postflight_runner=_passed_postflight,
+            trusted_root=release_root,
+        )
+
+    assert runner.calls == []
+
+
+def test_apply_git_gate_allows_explicit_local_dependency_symlink(
+    release_root: Path,
+    tmp_path: Path,
+) -> None:
+    git_commit = _initialize_release_git_repository(release_root)
+    backup = create_backup(
+        release_root,
+        DATABASE_URL,
+        output_root=release_root / "data" / "backups" / "role-journeys",
+        runner=FakeCommandRunner(),
+        now=NOW,
+        git_commit=git_commit,
+        preflight_runner=_passed_preflight,
+        trusted_root=release_root,
+    )
+    dependency_path = release_root / "apps" / "hxy-web"
+    dependency_path.mkdir(parents=True)
+    (dependency_path / "node_modules").symlink_to(tmp_path / "shared-node-modules")
+    runner = FakeCommandRunner()
+
+    result = apply_role_journeys_migrations(
+        release_root,
+        DATABASE_URL,
+        manifest_path=Path(backup["manifest_path"]),
+        confirmation=APPLY_CONFIRMATION,
+        runner=runner,
+        now=NOW,
+        git_commit=git_commit,
+        postflight_runner=_passed_postflight,
+        trusted_root=release_root,
+    )
+
+    assert result["status"] == "passed"
+    assert [command[0] for command, _env in runner.calls] == [
+        "pg_restore",
+        "psql",
+    ]
 
 
 def test_apply_requires_exact_confirmation(release_root: Path) -> None:

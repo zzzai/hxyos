@@ -245,16 +245,44 @@ def _inspect_database(
             constraints = connection.execute(
                 """
                 /* hxy_role_release:constraints */
-                SELECT relation.relname AS table_name,
-                       constraint_row.contype AS constraint_type,
-                       pg_get_constraintdef(constraint_row.oid) AS definition
+                SELECT current_schema() AS current_schema,
+                       source_namespace.nspname AS source_schema,
+                       source_relation.relname AS source_table,
+                       ARRAY(
+                         SELECT source_attribute.attname
+                         FROM unnest(constraint_row.conkey) WITH ORDINALITY
+                           AS source_key(attnum, position)
+                         JOIN pg_attribute AS source_attribute
+                           ON source_attribute.attrelid = constraint_row.conrelid
+                          AND source_attribute.attnum = source_key.attnum
+                         ORDER BY source_key.position
+                       ) AS source_columns,
+                       target_namespace.nspname AS target_schema,
+                       target_relation.relname AS target_table,
+                       ARRAY(
+                         SELECT target_attribute.attname
+                         FROM unnest(constraint_row.confkey) WITH ORDINALITY
+                           AS target_key(attnum, position)
+                         JOIN pg_attribute AS target_attribute
+                           ON target_attribute.attrelid = constraint_row.confrelid
+                          AND target_attribute.attnum = target_key.attnum
+                         ORDER BY target_key.position
+                       ) AS target_columns,
+                       constraint_row.convalidated,
+                       constraint_row.confdeltype
                 FROM pg_constraint AS constraint_row
-                JOIN pg_class AS relation ON relation.oid = constraint_row.conrelid
-                JOIN pg_namespace AS namespace_row
-                  ON namespace_row.oid = relation.relnamespace
-                WHERE namespace_row.nspname = current_schema()
-                  AND relation.relname = ANY(%s::text[])
-                ORDER BY relation.relname, constraint_row.contype, constraint_row.conname
+                JOIN pg_class AS source_relation
+                  ON source_relation.oid = constraint_row.conrelid
+                JOIN pg_namespace AS source_namespace
+                  ON source_namespace.oid = source_relation.relnamespace
+                JOIN pg_class AS target_relation
+                  ON target_relation.oid = constraint_row.confrelid
+                JOIN pg_namespace AS target_namespace
+                  ON target_namespace.oid = target_relation.relnamespace
+                WHERE source_namespace.nspname = current_schema()
+                  AND source_relation.relname = ANY(%s::text[])
+                  AND constraint_row.contype = 'f'
+                ORDER BY source_relation.relname, constraint_row.conname
                 """,
                 (list(_ROLE_JOURNEY_TABLES),),
             ).fetchall()
@@ -265,8 +293,11 @@ def _inspect_database(
                        relation.relname AS table_name,
                        trigger_row.tgname AS trigger_name,
                        trigger_row.tgenabled,
+                       pg_get_expr(trigger_row.tgqual, trigger_row.tgrelid) AS tgqual,
                        function_namespace.nspname AS function_schema,
                        function_row.proname AS function_name,
+                       function_row.prosrc,
+                       pg_get_functiondef(function_row.oid) AS function_definition,
                        pg_get_triggerdef(trigger_row.oid) AS definition
                 FROM pg_trigger AS trigger_row
                 JOIN pg_class AS relation ON relation.oid = trigger_row.tgrelid
@@ -377,32 +408,6 @@ def _inspect_database(
     return result
 
 
-def _identifier_name(value: str) -> str:
-    return value.rsplit(".", 1)[-1].strip().strip('"').replace('""', '"').lower()
-
-
-def _identifier_columns(value: str) -> tuple[str, ...]:
-    return tuple(_identifier_name(item) for item in value.split(","))
-
-
-def _parse_foreign_key_definition(
-    definition: str,
-) -> tuple[tuple[str, ...], str, tuple[str, ...]] | None:
-    normalized = " ".join(definition.split())
-    match = re.match(
-        r"^FOREIGN KEY \(([^)]*)\) REFERENCES ([^\s(]+)\(([^)]*)\)",
-        normalized,
-        re.IGNORECASE,
-    )
-    if match is None:
-        return None
-    return (
-        _identifier_columns(match.group(1)),
-        _identifier_name(match.group(2)),
-        _identifier_columns(match.group(3)),
-    )
-
-
 def _parse_index_columns(definition: str) -> tuple[str, ...] | None:
     match = re.search(
         r"\bUSING\s+btree\s*\(([^)]*)\)",
@@ -462,6 +467,18 @@ def _parse_trigger_definition(
     )
 
 
+def _normalize_function_source(value: Any) -> str:
+    return " ".join(str(value or "").split())
+
+
+def _function_definition_matches(definition: Any, expected_source: str) -> bool:
+    normalized = _normalize_function_source(definition)
+    return (
+        expected_source in normalized
+        and "language plpgsql" in normalized.lower()
+    )
+
+
 def _postflight_checks(
     pending_tables: list[str],
     columns: list[dict[str, Any]],
@@ -473,19 +490,23 @@ def _postflight_checks(
         tuple[str, tuple[str, ...], str, tuple[str, ...]]
     ] = set()
     for row in constraints:
-        if str(row.get("constraint_type") or "") != "f":
+        current_schema = str(row.get("current_schema") or "")
+        if (
+            current_schema != "public"
+            or str(row.get("source_schema") or "") != current_schema
+            or str(row.get("target_schema") or "") != current_schema
+            or row.get("convalidated") is not True
+            or str(row.get("confdeltype") or "") != "r"
+        ):
             continue
-        parsed = _parse_foreign_key_definition(str(row.get("definition") or ""))
-        if parsed is not None:
-            source_columns, target_table, target_columns = parsed
-            normalized_foreign_keys.add(
-                (
-                    str(row.get("table_name") or ""),
-                    source_columns,
-                    target_table,
-                    target_columns,
-                )
+        normalized_foreign_keys.add(
+            (
+                str(row.get("source_table") or ""),
+                tuple(str(item) for item in row.get("source_columns") or ()),
+                str(row.get("target_table") or ""),
+                tuple(str(item) for item in row.get("target_columns") or ()),
             )
+        )
 
     def has_fk(
         table: str,
@@ -622,8 +643,13 @@ def _postflight_checks(
                 "table": str(row.get("table_name") or ""),
                 "name": str(row.get("trigger_name") or ""),
                 "enabled": str(row.get("tgenabled") or "").upper(),
+                "condition": row.get("tgqual"),
                 "function_schema": str(row.get("function_schema") or ""),
                 "function": str(row.get("function_name") or ""),
+                "function_source": _normalize_function_source(
+                    row.get("prosrc")
+                ),
+                "function_definition": row.get("function_definition"),
                 "timing": parsed_definition[0] if parsed_definition else "",
                 "events": parsed_definition[1] if parsed_definition else frozenset(),
                 "level": parsed_definition[2] if parsed_definition else "",
@@ -634,6 +660,7 @@ def _postflight_checks(
         table: str,
         name: str,
         function: str,
+        function_source: str,
         timing: str,
         events: frozenset[str],
         level: str,
@@ -642,9 +669,15 @@ def _postflight_checks(
             item["table"] == table
             and item["name"] == name
             and item["enabled"] in {"O", "A"}
+            and item["condition"] is None
             and item["table_schema"]
             and item["function_schema"] == item["table_schema"]
             and item["function"] == function
+            and item["function_source"] == function_source
+            and _function_definition_matches(
+                item["function_definition"],
+                function_source,
+            )
             and item["timing"] == timing
             and item["events"] == events
             and item["level"] == level
@@ -655,6 +688,7 @@ def _postflight_checks(
         "hxy_product_task_events",
         "trg_hxy_product_task_events_append_only",
         "hxy_reject_task_event_mutation",
+        "BEGIN RAISE EXCEPTION 'hxy_product_task_events is append-only'; END;",
         "BEFORE",
         frozenset({"UPDATE", "DELETE"}),
         "ROW",
@@ -662,6 +696,7 @@ def _postflight_checks(
         "hxy_product_task_events",
         "trg_hxy_product_task_events_no_truncate",
         "hxy_reject_task_event_mutation",
+        "BEGIN RAISE EXCEPTION 'hxy_product_task_events is append-only'; END;",
         "BEFORE",
         frozenset({"TRUNCATE"}),
         "STATEMENT",
@@ -670,6 +705,7 @@ def _postflight_checks(
         "hxy_product_training_sessions",
         "trg_hxy_product_training_append_only",
         "hxy_reject_product_training_mutation",
+        "BEGIN RAISE EXCEPTION 'hxy_product_training_sessions is append-only'; END;",
         "BEFORE",
         frozenset({"UPDATE", "DELETE"}),
         "ROW",
@@ -677,6 +713,7 @@ def _postflight_checks(
         "hxy_product_training_sessions",
         "trg_hxy_product_training_no_truncate",
         "hxy_reject_product_training_mutation",
+        "BEGIN RAISE EXCEPTION 'hxy_product_training_sessions is append-only'; END;",
         "BEFORE",
         frozenset({"TRUNCATE"}),
         "STATEMENT",
@@ -886,8 +923,22 @@ def apply_role_journeys_migrations(
     now: datetime | None = None,
     git_commit: str | None = None,
     postflight_runner: InspectionRunner = run_postflight,
+    git_inspector: GitInspector | None = None,
     trusted_root: Path = _DEFAULT_TRUSTED_ROOT,
 ) -> dict[str, Any]:
+    if confirmation != APPLY_CONFIRMATION:
+        raise ReleaseAuthorizationError("exact migration confirmation is required")
+    git_state = (git_inspector or inspect_git_worktree)(root_dir)
+    commit_valid = bool(
+        git_state.get("commit_valid", git_state.get("commit") != "unknown")
+    )
+    worktree_clean = bool(
+        git_state.get("worktree_clean", git_state.get("status") == "passed")
+    )
+    if not commit_valid or not worktree_clean:
+        raise ReleaseAuthorizationError(
+            "apply requires a real Git commit and clean worktree"
+        )
     result = apply_release_migrations(
         ROLE_JOURNEYS_RELEASE,
         root_dir,
