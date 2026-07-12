@@ -51,12 +51,37 @@ DATABASE_URL = (
 FINGERPRINT_DATABASE_URL = (
     "host=db.internal hostaddr=10.20.30.40 port=55433 "
     "dbname=hxy_release_test user=hxy_app password=release-secret-value "
-    "options='-c search_path=hxy,public' sslmode=require "
+    "sslmode=require "
     "sslrootcert=/run/secrets/root.crt sslcert=/run/secrets/client.crt "
     "sslkey=/run/secrets/client.key target_session_attrs=read-write"
 )
 NOW = datetime(2026, 7, 12, 2, 0, tzinfo=timezone.utc)
 GIT_COMMIT = "a" * 40
+INSTANCE_A = {
+    "system_identifier": "7400000000000000001",
+    "server_addr": "10.20.30.40",
+    "server_port": "55433",
+    "database": "hxy_release_test",
+    "server_major": "16",
+}
+INSTANCE_B = INSTANCE_A | {
+    "system_identifier": "7400000000000000002",
+    "server_addr": "10.20.30.41",
+}
+INSTANCE_C = INSTANCE_A | {
+    "system_identifier": "7400000000000000003",
+    "server_addr": "10.20.30.42",
+}
+
+
+@pytest.fixture(autouse=True)
+def fixed_database_instance(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        guarded_migration,
+        "database_instance_identity",
+        lambda _database_url: dict(INSTANCE_A),
+        raising=False,
+    )
 
 
 @pytest.fixture
@@ -133,8 +158,15 @@ def make_backup(
     runner: RecordingRunner | None = None,
     *,
     database_url: str = DATABASE_URL,
+    migration_loader=None,
+    instance_inspector=None,
 ) -> tuple[dict[str, object], RecordingRunner]:
     command_runner = runner or RecordingRunner()
+    kwargs = {}
+    if migration_loader is not None:
+        kwargs["migration_loader"] = migration_loader
+    if instance_inspector is not None:
+        kwargs["instance_inspector"] = instance_inspector
     result = create_release_backup(
         SPEC,
         release_root,
@@ -145,8 +177,19 @@ def make_backup(
         git_commit=GIT_COMMIT,
         preflight_inspector=passed_inspector,
         trusted_root=release_root,
+        **kwargs,
     )
     return result, command_runner
+
+
+class InstanceSequence:
+    def __init__(self, *identities: dict[str, str]) -> None:
+        self.identities = iter(identities)
+        self.calls = 0
+
+    def __call__(self, _database_url: str) -> dict[str, str]:
+        self.calls += 1
+        return dict(next(self.identities))
 
 
 def test_migration_inventory_is_ordered_and_checksum_bound_to_spec(
@@ -282,6 +325,7 @@ def test_backup_manifest_binds_release_database_git_and_migrations(
         "database": database_identity(DATABASE_URL),
         "git_commit": GIT_COMMIT,
         "connection_fingerprint": manifest["connection_fingerprint"],
+        "instance_fingerprint": manifest["instance_fingerprint"],
         "dump": {
             "file": SPEC.dump_filename,
             "size_bytes": dump_path.stat().st_size,
@@ -320,6 +364,10 @@ def test_backup_manifest_binds_release_database_git_and_migrations(
     assert dump_path.stat().st_mode & 0o777 == 0o600
     assert len(manifest["connection_fingerprint"]) == 64
     assert set(manifest["connection_fingerprint"]) <= set("0123456789abcdef")
+    assert len(manifest["instance_fingerprint"]) == 64
+    assert INSTANCE_A["system_identifier"] not in manifest_path.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_connection_fingerprint_binds_nonsecret_libpq_semantics_without_plaintext(
@@ -339,7 +387,6 @@ def test_connection_fingerprint_binds_nonsecret_libpq_semantics_without_plaintex
     for plaintext in (
         "release-secret-value",
         "10.20.30.40",
-        "search_path",
         "/run/secrets/root.crt",
         "/run/secrets/client.crt",
         "/run/secrets/client.key",
@@ -352,10 +399,6 @@ def test_connection_fingerprint_binds_nonsecret_libpq_semantics_without_plaintex
     "changed_database_url",
     [
         FINGERPRINT_DATABASE_URL.replace("10.20.30.40", "10.20.30.41"),
-        FINGERPRINT_DATABASE_URL.replace(
-            "search_path=hxy,public",
-            "search_path=other,public",
-        ),
         FINGERPRINT_DATABASE_URL.replace("sslmode=require", "sslmode=verify-ca"),
         FINGERPRINT_DATABASE_URL.replace(
             "target_session_attrs=read-write",
@@ -432,8 +475,8 @@ def test_apply_rejects_changed_connection_semantics_before_commands(
             SPEC,
             release_root,
             FINGERPRINT_DATABASE_URL.replace(
-                "search_path=hxy,public",
-                "search_path=other,public",
+                "sslmode=require",
+                "sslmode=verify-ca",
             ),
             manifest_path=Path(str(result["manifest_path"])),
             confirmation=SPEC.confirmation,
@@ -447,18 +490,18 @@ def test_apply_rejects_changed_connection_semantics_before_commands(
     assert runner.calls == []
 
 
-def test_backup_preserves_mapped_libpq_connection_semantics(
+def test_backup_pins_subprocesses_to_actual_server_and_controlled_search_path(
     release_root: Path,
     tmp_path: Path,
 ) -> None:
     database_url = (
-        "host=db-a,db-b hostaddr=10.0.0.1,10.0.0.2 port=5432,5433 "
+        "host=db-a hostaddr=10.0.0.1 port=55433 "
         "dbname=hxy_release_test user=hxy_app password=release-secret-value "
-        "options='-c search_path=hxy,public' sslmode=verify-full "
+        "sslmode=verify-full "
         "sslrootcert=/run/secrets/root.crt sslcert=/run/secrets/client.crt "
         "sslkey=/run/secrets/client.key target_session_attrs=read-write "
         "connect_timeout=7 application_name=hxy-release passfile=/run/secrets/pgpass "
-        "channel_binding=require load_balance_hosts=random "
+        "channel_binding=require load_balance_hosts=disable "
         "ssl_min_protocol_version=TLSv1.2 ssl_max_protocol_version=TLSv1.3"
     )
 
@@ -469,13 +512,13 @@ def test_backup_preserves_mapped_libpq_connection_semantics(
     )
 
     expected = {
-        "PGHOST": "db-a,db-b",
-        "PGHOSTADDR": "10.0.0.1,10.0.0.2",
-        "PGPORT": "5432,5433",
+        "PGHOST": "db-a",
+        "PGHOSTADDR": INSTANCE_A["server_addr"],
+        "PGPORT": "55433",
         "PGDATABASE": "hxy_release_test",
         "PGUSER": "hxy_app",
         "PGPASSWORD": "release-secret-value",
-        "PGOPTIONS": "-c search_path=hxy,public",
+        "PGOPTIONS": "-c search_path=public,pg_catalog",
         "PGSSLMODE": "verify-full",
         "PGSSLROOTCERT": "/run/secrets/root.crt",
         "PGSSLCERT": "/run/secrets/client.crt",
@@ -485,7 +528,7 @@ def test_backup_preserves_mapped_libpq_connection_semantics(
         "PGAPPNAME": "hxy-release",
         "PGPASSFILE": "/run/secrets/pgpass",
         "PGCHANNELBINDING": "require",
-        "PGLOADBALANCEHOSTS": "random",
+        "PGLOADBALANCEHOSTS": "disable",
         "PGSSLMINPROTOCOLVERSION": "TLSv1.2",
         "PGSSLMAXPROTOCOLVERSION": "TLSv1.3",
     }
@@ -510,6 +553,40 @@ def test_backup_rejects_service_based_connection_configuration_before_inspection
     inspector_calls: list[str] = []
 
     with pytest.raises(ReleaseExecutionError, match="service"):
+        create_release_backup(
+            SPEC,
+            release_root,
+            database_url,
+            output_root=release_root / "data" / "backups" / "test-release",
+            runner=runner,
+            now=NOW,
+            git_commit=GIT_COMMIT,
+            preflight_inspector=lambda _root, _dsn: inspector_calls.append("called"),
+            trusted_root=release_root,
+        )
+
+    assert inspector_calls == []
+    assert runner.calls == []
+
+
+@pytest.mark.parametrize(
+    "database_url",
+    [
+        DATABASE_URL.replace("host=127.0.0.1", "host=db-a,db-b"),
+        DATABASE_URL + " hostaddr=10.0.0.1,10.0.0.2",
+        DATABASE_URL.replace("port=55433", "port=55433,55434"),
+        DATABASE_URL + " load_balance_hosts=random",
+        DATABASE_URL + " options='-c search_path=private,public'",
+    ],
+)
+def test_backup_rejects_multi_target_and_dsn_options_before_inspection(
+    release_root: Path,
+    database_url: str,
+) -> None:
+    runner = RecordingRunner()
+    inspector_calls: list[str] = []
+
+    with pytest.raises(ReleaseExecutionError, match="single|options|load_balance"):
         create_release_backup(
             SPEC,
             release_root,
@@ -644,6 +721,24 @@ def test_backup_restore_failure_still_drops_temporary_database(
         "dropdb",
     ]
     assert runner.calls[1][0][-1] == runner.calls[3][0][-1]
+    assert not list((release_root / "data" / "backups").rglob("manifest.json"))
+
+
+def test_backup_rejects_instance_change_after_pg_dump(
+    release_root: Path,
+    tmp_path: Path,
+) -> None:
+    runner = RecordingRunner()
+
+    with pytest.raises(ReleaseBackupError, match="instance"):
+        make_backup(
+            release_root,
+            tmp_path,
+            runner,
+            instance_inspector=InstanceSequence(INSTANCE_A, INSTANCE_B),
+        )
+
+    assert [command[0] for command, _env in runner.calls] == ["pg_dump"]
     assert not list((release_root / "data" / "backups").rglob("manifest.json"))
 
 
@@ -897,6 +992,113 @@ def test_apply_uses_one_locked_transaction_and_only_profile_migrations(
     assert "release-secret-value" not in command_text
     assert env["PGPASSWORD"] == "release-secret-value"
     assert "HXY_DATABASE_URL" not in env
+
+
+@pytest.mark.parametrize(
+    ("instances", "expected_commands", "postflight_calls"),
+    [
+        ((INSTANCE_B,), [], 0),
+        ((INSTANCE_A, INSTANCE_A, INSTANCE_B), ["pg_restore", "psql"], 0),
+        ((INSTANCE_A, INSTANCE_A, INSTANCE_A, INSTANCE_C), ["pg_restore", "psql"], 1),
+    ],
+)
+def test_apply_rejects_instance_changes_before_after_and_after_postflight(
+    release_root: Path,
+    tmp_path: Path,
+    instances: tuple[dict[str, str], ...],
+    expected_commands: list[str],
+    postflight_calls: int,
+) -> None:
+    backup, _backup_runner = make_backup(release_root, tmp_path)
+    runner = RecordingRunner()
+    calls: list[str] = []
+
+    with pytest.raises(ReleaseExecutionError, match="instance"):
+        apply_release_migrations(
+            SPEC,
+            release_root,
+            DATABASE_URL,
+            manifest_path=Path(str(backup["manifest_path"])),
+            confirmation=SPEC.confirmation,
+            runner=runner,
+            now=NOW,
+            git_commit=GIT_COMMIT,
+            trusted_root=release_root,
+            postflight_inspector=lambda _root, _dsn: (
+                calls.append("postflight") or {"status": "passed"}
+            ),
+            instance_inspector=InstanceSequence(*instances),
+        )
+
+    assert [command[0] for command, _env in runner.calls] == expected_commands
+    assert len(calls) == postflight_calls
+
+
+def test_apply_executes_verified_loader_bytes_from_private_temporary_snapshots(
+    release_root: Path,
+    tmp_path: Path,
+) -> None:
+    head_blobs = {
+        "015.sql": b"SELECT 'HEAD-15';\n",
+        "016.sql": b"SELECT 'HEAD-16';\n",
+    }
+
+    def loader(_root: Path, name: str) -> bytes:
+        return head_blobs[name]
+
+    backup, _backup_runner = make_backup(
+        release_root,
+        tmp_path,
+        migration_loader=loader,
+    )
+    manifest = json.loads(
+        Path(str(backup["manifest_path"])).read_text(encoding="utf-8")
+    )
+    assert manifest["migrations"] == [
+        {"name": name, "sha256": hashlib.sha256(blob).hexdigest()}
+        for name, blob in head_blobs.items()
+    ]
+
+    snapshot_paths: list[Path] = []
+
+    def runner(command: list[str], env: dict[str, str]):
+        if command[0] == "pg_restore":
+            return subprocess.CompletedProcess(command, 0, "archive listing", "")
+        if command[0] == "psql":
+            paths = [
+                Path(command[index + 1])
+                for index, value in enumerate(command)
+                if value == "--file"
+            ]
+            snapshot_paths.extend(paths)
+            assert [path.read_bytes() for path in paths] == list(head_blobs.values())
+            assert all(path.stat().st_mode & 0o777 == 0o600 for path in paths)
+            assert all(path.parent.stat().st_mode & 0o777 == 0o700 for path in paths)
+            (release_root / "data" / "migrations" / "015.sql").write_text(
+                "SELECT 'WORKTREE-REPLACED';\n",
+                encoding="utf-8",
+            )
+            return subprocess.CompletedProcess(command, 0, "migrations applied", "")
+        raise AssertionError(command)
+
+    result = apply_release_migrations(
+        SPEC,
+        release_root,
+        DATABASE_URL,
+        manifest_path=Path(str(backup["manifest_path"])),
+        confirmation=SPEC.confirmation,
+        runner=runner,
+        now=NOW,
+        git_commit=GIT_COMMIT,
+        trusted_root=release_root,
+        postflight_inspector=passed_inspector,
+        migration_loader=loader,
+    )
+
+    assert result["status"] == "passed"
+    assert snapshot_paths
+    assert all(not path.exists() for path in snapshot_paths)
+    assert not list((release_root / "data" / "release-tmp").glob("*"))
 
 
 def test_apply_rejects_migration_symlink_before_any_runner_command(
