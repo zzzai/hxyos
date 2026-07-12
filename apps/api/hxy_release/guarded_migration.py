@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import os
 import secrets
@@ -316,7 +317,7 @@ def database_instance_identity(database_url: str) -> dict[str, str]:
                 /* hxy_release:instance_identity */
                 SELECT control.system_identifier::text AS system_identifier,
                        database_row.oid::text AS database_oid,
-                       inet_server_addr()::text AS server_addr,
+                       host(inet_server_addr()) AS server_addr,
                        inet_server_port()::text AS server_port,
                        current_database() AS database,
                        current_setting('server_version_num') AS server_version_num,
@@ -343,6 +344,7 @@ def database_instance_identity(database_url: str) -> dict[str, str]:
             "server_major",
         )
     }
+    identity["server_addr"] = _normalize_server_address(identity["server_addr"])
     if not all(identity.values()):
         raise ReleaseInstanceError("database instance identity is incomplete")
     if identity["database"] != expected["database"]:
@@ -350,7 +352,40 @@ def database_instance_identity(database_url: str) -> dict[str, str]:
     return identity
 
 
+def _normalize_server_address(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw or "%" in raw:
+        raise ReleaseInstanceError("database instance server address is invalid")
+    try:
+        if "/" in raw:
+            interface = ipaddress.ip_interface(raw)
+            if interface.network.prefixlen != interface.max_prefixlen:
+                raise ReleaseInstanceError(
+                    "database instance server address is not a host CIDR"
+                )
+            address = interface.ip
+        else:
+            address = ipaddress.ip_address(raw)
+    except ValueError as exc:
+        raise ReleaseInstanceError(
+            "database instance server address is invalid"
+        ) from exc
+    normalized = str(address)
+    if "/" in normalized:
+        raise ReleaseInstanceError("database instance server address is invalid")
+    return normalized
+
+
+def _normalize_instance_identity(identity: dict[str, str]) -> dict[str, str]:
+    normalized = {key: str(value or "") for key, value in identity.items()}
+    normalized["server_addr"] = _normalize_server_address(
+        normalized.get("server_addr")
+    )
+    return normalized
+
+
 def _instance_fingerprint(identity: dict[str, str]) -> str:
+    identity = _normalize_instance_identity(identity)
     normalized = {
         key: str(identity.get(key) or "")
         for key in (
@@ -379,7 +414,7 @@ def _pin_database_target(
     inspect_instance: InstanceInspector,
 ) -> PinnedDatabaseTarget:
     values = _validated_conninfo(database_url)
-    identity = inspect_instance(database_url)
+    identity = _normalize_instance_identity(inspect_instance(database_url))
     if str(identity.get("database") or "") != str(values.get("dbname") or ""):
         raise ReleaseInstanceError("database instance identity has wrong database")
     instance_fingerprint = _instance_fingerprint(identity)
@@ -547,7 +582,7 @@ def _postgres_environment(
             if value not in (None, "")
         }
     )
-    env["PGHOSTADDR"] = server_addr
+    env["PGHOSTADDR"] = _normalize_server_address(server_addr)
     env["PGOPTIONS"] = "-c search_path=public"
     return env
 

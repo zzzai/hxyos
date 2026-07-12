@@ -333,6 +333,7 @@ def test_database_instance_identity_requires_control_id_and_database_oid(
     assert "pg_control_system()" in connection.sql
     assert "pg_database" in connection.sql
     assert "database_oid" in connection.sql
+    assert "host(inet_server_addr())" in connection.sql
 
 
 @pytest.mark.parametrize(
@@ -647,6 +648,72 @@ def test_backup_pins_preflight_and_all_commands_after_initial_hostname_lookup(
         env["PGHOSTADDR"] == INSTANCE_A["server_addr"]
         for _command, env in runner.calls
     )
+
+
+@pytest.mark.parametrize(
+    ("catalog_address", "expected_address"),
+    [
+        ("127.0.0.1/32", "127.0.0.1"),
+        ("2001:db8::1/128", "2001:db8::1"),
+    ],
+)
+def test_backup_normalizes_host_cidr_before_pinning_inspectors_and_commands(
+    release_root: Path,
+    catalog_address: str,
+    expected_address: str,
+) -> None:
+    identity = INSTANCE_A | {"server_addr": catalog_address}
+    instances = InstanceSequence(identity, identity)
+    preflight_urls: list[str] = []
+    runner = RecordingRunner()
+
+    create_release_backup(
+        SPEC,
+        release_root,
+        HOSTNAME_DATABASE_URL,
+        output_root=release_root / "data" / "backups" / "test-release",
+        preflight_inspector=lambda _root, dsn: (
+            preflight_urls.append(dsn) or {"status": "passed"}
+        ),
+        runner=runner,
+        now=NOW,
+        git_commit=GIT_COMMIT,
+        trusted_root=release_root,
+        instance_inspector=instances,
+    )
+
+    assert conninfo_to_dict(preflight_urls[0])["hostaddr"] == expected_address
+    assert conninfo_to_dict(instances.database_urls[1])["hostaddr"] == expected_address
+    assert all(env["PGHOSTADDR"] == expected_address for _command, env in runner.calls)
+    assert all("/" not in env["PGHOSTADDR"] for _command, env in runner.calls)
+
+
+@pytest.mark.parametrize("catalog_address", ["127.0.0.1/24", "2001:db8::1/64"])
+def test_backup_rejects_non_host_cidr_server_address(
+    release_root: Path,
+    catalog_address: str,
+) -> None:
+    runner = RecordingRunner()
+    preflight_calls: list[str] = []
+
+    with pytest.raises(ReleaseBackupError, match="server address"):
+        create_release_backup(
+            SPEC,
+            release_root,
+            HOSTNAME_DATABASE_URL,
+            output_root=release_root / "data" / "backups" / "test-release",
+            preflight_inspector=lambda _root, _dsn: preflight_calls.append("called"),
+            runner=runner,
+            now=NOW,
+            git_commit=GIT_COMMIT,
+            trusted_root=release_root,
+            instance_inspector=InstanceSequence(
+                INSTANCE_A | {"server_addr": catalog_address}
+            ),
+        )
+
+    assert preflight_calls == []
+    assert runner.calls == []
 
 
 @pytest.mark.parametrize(
