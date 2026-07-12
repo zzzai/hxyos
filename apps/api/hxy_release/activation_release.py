@@ -20,6 +20,7 @@ from .guarded_migration import (
     ReleaseBackupError,
     ReleaseBoundaryError,
     ReleaseExecutionError,
+    ReleaseInstanceError,
     ReleasePostflightError,
     apply_release_migrations,
     create_release_backup,
@@ -233,7 +234,8 @@ def _inspect_database(
                          ORDER BY class_key.position
                        ) AS opclasses,
                        pg_get_expr(index_row.indpred, index_row.indrelid) AS predicate,
-                       index_row.indisvalid
+                       index_row.indisvalid,
+                       index_row.indisunique
                 FROM pg_index AS index_row
                 JOIN pg_class AS table_relation
                   ON table_relation.oid = index_row.indrelid
@@ -383,6 +385,7 @@ def _postflight_checks(
         and _canonical_predicate(row.get("predicate"))
         == "assignment_idisnotnull"
         and row.get("indisvalid") is True
+        and row.get("indisunique") is False
         for row in indexes
     )
     assignment_session_scope = (
@@ -651,6 +654,18 @@ def main(argv: list[str] | None = None) -> int:
             "applied": exc.applied,
             "postflight": exc.postflight,
         }
+    except ReleaseInstanceError as exc:
+        result = {
+            "status": "failed",
+            "phase": args.command,
+            "error_type": (
+                "ReleaseExecutionError" if exc.applied else type(exc).__name__
+            ),
+            "error": str(exc),
+            "applied": exc.applied,
+        }
+        if exc.applied:
+            result["error_code"] = "instance_changed_after_apply"
     except (
         ReleaseAuthorizationError,
         ReleaseBackupError,

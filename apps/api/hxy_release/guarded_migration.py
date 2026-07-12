@@ -15,7 +15,7 @@ from typing import Any, Callable, Iterable
 
 import psycopg
 from psycopg import ProgrammingError, pq
-from psycopg.conninfo import conninfo_to_dict
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 
 
@@ -53,6 +53,13 @@ class MigrationReleaseSpec:
     advisory_lock: str
     dump_filename: str
     legacy_release: str | None = None
+
+
+@dataclass(frozen=True)
+class PinnedDatabaseTarget:
+    pinned_url: str
+    identity: dict[str, str]
+    instance_fingerprint: str
 
 
 class ReleaseBoundaryError(ValueError):
@@ -301,39 +308,45 @@ def _connection_fingerprint(database_url: str) -> str:
 
 def database_instance_identity(database_url: str) -> dict[str, str]:
     expected = database_identity(database_url)
-    with psycopg.connect(database_url, row_factory=dict_row) as connection:
-        connection.read_only = True
-        row = connection.execute(
-            """
-            /* hxy_release:instance_identity */
-            SELECT CASE
-                     WHEN has_function_privilege('pg_control_system()', 'EXECUTE')
-                     THEN (pg_control_system()).system_identifier::text
-                     ELSE NULL
-                   END AS system_identifier,
-                   inet_server_addr()::text AS server_addr,
-                   inet_server_port()::text AS server_port,
-                   current_database() AS database,
-                   (current_setting('server_version_num')::integer / 10000)::text
-                     AS server_major
-            """
-        ).fetchone()
+    try:
+        with psycopg.connect(database_url, row_factory=dict_row) as connection:
+            connection.read_only = True
+            row = connection.execute(
+                """
+                /* hxy_release:instance_identity */
+                SELECT control.system_identifier::text AS system_identifier,
+                       database_row.oid::text AS database_oid,
+                       inet_server_addr()::text AS server_addr,
+                       inet_server_port()::text AS server_port,
+                       current_database() AS database,
+                       current_setting('server_version_num') AS server_version_num,
+                       (current_setting('server_version_num')::integer / 10000)::text
+                         AS server_major
+                FROM pg_database AS database_row
+                CROSS JOIN LATERAL pg_control_system() AS control
+                WHERE database_row.datname = current_database()
+                """
+            ).fetchone()
+    except psycopg.Error as exc:
+        raise ReleaseInstanceError(
+            "database instance identity query failed"
+        ) from exc
     identity = {
         key: str((row or {}).get(key) or "")
         for key in (
             "system_identifier",
+            "database_oid",
             "server_addr",
             "server_port",
             "database",
+            "server_version_num",
             "server_major",
         )
     }
+    if not all(identity.values()):
+        raise ReleaseInstanceError("database instance identity is incomplete")
     if identity["database"] != expected["database"]:
         raise ReleaseInstanceError("database instance identity has wrong database")
-    if not identity["server_addr"] or not identity["server_port"]:
-        raise ReleaseInstanceError(
-            "database instance identity requires server address and port"
-        )
     return identity
 
 
@@ -342,13 +355,15 @@ def _instance_fingerprint(identity: dict[str, str]) -> str:
         key: str(identity.get(key) or "")
         for key in (
             "system_identifier",
+            "database_oid",
             "server_addr",
             "server_port",
             "database",
+            "server_version_num",
             "server_major",
         )
     }
-    if not all(normalized[key] for key in ("server_addr", "server_port", "database", "server_major")):
+    if not all(normalized.values()):
         raise ReleaseInstanceError("database instance identity is incomplete")
     encoded = json.dumps(
         normalized,
@@ -357,6 +372,25 @@ def _instance_fingerprint(identity: dict[str, str]) -> str:
         sort_keys=True,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _pin_database_target(
+    database_url: str,
+    inspect_instance: InstanceInspector,
+) -> PinnedDatabaseTarget:
+    values = _validated_conninfo(database_url)
+    identity = inspect_instance(database_url)
+    if str(identity.get("database") or "") != str(values.get("dbname") or ""):
+        raise ReleaseInstanceError("database instance identity has wrong database")
+    instance_fingerprint = _instance_fingerprint(identity)
+    pinned_values = dict(values)
+    pinned_values["hostaddr"] = identity["server_addr"]
+    pinned_url = make_conninfo(**pinned_values)
+    return PinnedDatabaseTarget(
+        pinned_url=pinned_url,
+        identity=identity,
+        instance_fingerprint=instance_fingerprint,
+    )
 
 
 def _assert_instance_fingerprint(
@@ -470,7 +504,7 @@ def _postgres_environment(
         }
     )
     env["PGHOSTADDR"] = server_addr
-    env["PGOPTIONS"] = "-c search_path=public,pg_catalog"
+    env["PGOPTIONS"] = "-c search_path=public"
     return env
 
 
@@ -527,13 +561,12 @@ def create_release_backup(
         migration_loader=migration_loader,
     )
     inspect_instance = instance_inspector or database_instance_identity
-    instance_before = inspect_instance(database_url)
-    instance_fingerprint = _instance_fingerprint(instance_before)
+    target = _pin_database_target(database_url, inspect_instance)
     command_env = _postgres_environment(
-        database_url,
-        server_addr=instance_before["server_addr"],
+        target.pinned_url,
+        server_addr=target.identity["server_addr"],
     )
-    preflight = preflight_inspector(root_dir, database_url)
+    preflight = preflight_inspector(root_dir, target.pinned_url)
     if preflight.get("status") != "passed":
         raise ReleaseBackupError("preflight must pass before backup")
 
@@ -567,9 +600,9 @@ def create_release_backup(
         raise ReleaseBackupError("database backup failed")
     dump_path.chmod(0o600)
 
-    instance_after_dump = inspect_instance(database_url)
+    instance_after_dump = inspect_instance(target.pinned_url)
     _assert_instance_fingerprint(
-        instance_fingerprint,
+        target.instance_fingerprint,
         instance_after_dump,
         phase="during backup",
     )
@@ -627,7 +660,7 @@ def create_release_backup(
         "database": identity,
         "git_commit": git_commit or _current_git_commit(root_dir),
         "connection_fingerprint": _connection_fingerprint(database_url),
-        "instance_fingerprint": instance_fingerprint,
+        "instance_fingerprint": target.instance_fingerprint,
         "dump": {
             "file": dump_path.name,
             "size_bytes": dump_path.stat().st_size,
@@ -680,6 +713,7 @@ def validate_release_backup_manifest(
     trusted_root: Path = _DEFAULT_TRUSTED_ROOT,
     migration_loader: MigrationLoader | None = None,
     instance_inspector: InstanceInspector | None = None,
+    _pinned_target: PinnedDatabaseTarget | None = None,
 ) -> dict[str, Any]:
     manifest_path = _validate_backup_path(manifest_path, trusted_root)
     try:
@@ -710,13 +744,13 @@ def validate_release_backup_manifest(
             "backup connection fingerprint does not match release target"
         )
     inspect_instance = instance_inspector or database_instance_identity
-    instance = inspect_instance(database_url)
+    target = _pinned_target or _pin_database_target(database_url, inspect_instance)
     instance_fingerprint = str(manifest.get("instance_fingerprint") or "")
     if not instance_fingerprint:
         raise ReleaseBackupError("backup instance fingerprint is missing")
     _assert_instance_fingerprint(
         instance_fingerprint,
-        instance,
+        target.identity,
         phase="before release validation",
     )
     expected_commit = git_commit or _current_git_commit(root_dir)
@@ -800,6 +834,7 @@ def apply_release_migrations(
         return migration_blobs[name]
 
     inspect_instance = instance_inspector or database_instance_identity
+    target = _pin_database_target(database_url, inspect_instance)
     validated_backup = validate_release_backup_manifest(
         spec,
         root_dir,
@@ -810,8 +845,9 @@ def apply_release_migrations(
         trusted_root=trusted_root,
         migration_loader=verified_loader,
         instance_inspector=inspect_instance,
+        _pinned_target=target,
     )
-    instance_before = inspect_instance(database_url)
+    instance_before = inspect_instance(target.pinned_url)
     _assert_instance_fingerprint(
         str(validated_backup["instance_fingerprint"]),
         instance_before,
@@ -819,8 +855,8 @@ def apply_release_migrations(
     )
     command_runner = runner or _default_command_runner
     command_env = _postgres_environment(
-        database_url,
-        server_addr=instance_before["server_addr"],
+        target.pinned_url,
+        server_addr=target.identity["server_addr"],
     )
     release_root = _validate_release_root(root_dir, trusted_root)
     temporary_root = release_root / "data" / "release-tmp"
@@ -872,7 +908,7 @@ def apply_release_migrations(
         if result.returncode != 0:
             raise ReleaseExecutionError("release migration transaction failed")
 
-        instance_after_apply = inspect_instance(database_url)
+        instance_after_apply = inspect_instance(target.pinned_url)
         _assert_instance_fingerprint(
             str(validated_backup["instance_fingerprint"]),
             instance_after_apply,
@@ -882,12 +918,12 @@ def apply_release_migrations(
 
         postflight_error: Exception | None = None
         try:
-            postflight = postflight_inspector(root_dir, database_url)
+            postflight = postflight_inspector(root_dir, target.pinned_url)
         except Exception as exc:
             postflight_error = exc
             postflight = {"status": "failed", "error": type(exc).__name__}
 
-        instance_after_postflight = inspect_instance(database_url)
+        instance_after_postflight = inspect_instance(target.pinned_url)
         _assert_instance_fingerprint(
             str(validated_backup["instance_fingerprint"]),
             instance_after_postflight,

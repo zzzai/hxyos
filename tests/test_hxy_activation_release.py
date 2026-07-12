@@ -40,9 +40,11 @@ RUNBOOK = ROOT / "docs" / "operations" / "hxy-knowledge-activation-release.md"
 GIT_COMMIT = "a" * 40
 INSTANCE_A = {
     "system_identifier": "7400000000000000001",
+    "database_oid": "16384",
     "server_addr": "127.0.0.1",
     "server_port": "55433",
     "database": "hxy_release_test",
+    "server_version_num": "160013",
     "server_major": "16",
 }
 
@@ -495,6 +497,7 @@ def _activation_index_rows() -> list[dict[str, Any]]:
             "opclasses": ["uuid_ops", "timestamptz_ops"],
             "predicate": "(assignment_id IS NOT NULL)",
             "indisvalid": True,
+            "indisunique": False,
         },
     ]
 
@@ -648,6 +651,60 @@ def test_postflight_fails_without_assignment_scoped_staff_sessions() -> None:
     assert result["status"] == "failed"
     failed = {item["name"] for item in result["checks"] if item["status"] == "failed"}
     assert "assignment_session_scope" in failed
+
+
+def test_postflight_rejects_unique_staff_session_lookup_index() -> None:
+    connection = FakeInspectionConnection(activated=True)
+    connection.index_overrides["idx_staff_sessions_assignment_expires"] = {
+        "indisunique": True
+    }
+
+    result = run_postflight(
+        ROOT,
+        DATABASE_URL,
+        connect_factory=_inspection_factory(connection),
+    )
+
+    assert result["status"] == "failed"
+    failed = {item["name"] for item in result["checks"] if item["status"] == "failed"}
+    assert "assignment_session_scope" in failed
+
+
+@pytest.mark.parametrize("applied", [False, True])
+def test_activation_cli_reports_instance_change_commit_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    applied: bool,
+) -> None:
+    error = guarded_migration.ReleaseInstanceError("x" * 2000, applied=applied)
+    monkeypatch.setenv("HXY_DATABASE_URL", DATABASE_URL)
+    monkeypatch.setattr(
+        activation_release,
+        "apply_activation_migrations",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(error),
+    )
+
+    exit_code = activation_release.main(
+        [
+            "apply",
+            "--backup-manifest",
+            str(tmp_path / "manifest.json"),
+            "--confirm",
+            APPLY_CONFIRMATION,
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 2
+    assert payload["applied"] is applied
+    assert len(payload["error"]) == 500
+    if applied:
+        assert payload["error_type"] == "ReleaseExecutionError"
+        assert payload["error_code"] == "instance_changed_after_apply"
+    else:
+        assert payload["error_type"] == "ReleaseInstanceError"
+        assert "error_code" not in payload
 
 
 @pytest.mark.parametrize(

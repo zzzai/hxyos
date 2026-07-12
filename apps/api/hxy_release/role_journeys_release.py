@@ -22,6 +22,7 @@ from .guarded_migration import (
     ReleaseBackupError,
     ReleaseBoundaryError,
     ReleaseExecutionError,
+    ReleaseInstanceError,
     ReleasePostflightError,
     apply_release_migrations,
     create_release_backup,
@@ -1276,6 +1277,18 @@ def main(argv: list[str] | None = None) -> int:
             "applied": exc.applied,
             "postflight": exc.postflight,
         }
+    except ReleaseInstanceError as exc:
+        result = {
+            "status": "failed",
+            "phase": args.command,
+            "error_type": (
+                "ReleaseExecutionError" if exc.applied else type(exc).__name__
+            ),
+            "error": str(exc),
+            "applied": exc.applied,
+        }
+        if exc.applied:
+            result["error_code"] = "instance_changed_after_apply"
     except (
         ReleaseAuthorizationError,
         ReleaseBackupError,

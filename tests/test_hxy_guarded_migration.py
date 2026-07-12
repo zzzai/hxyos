@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from psycopg.conninfo import conninfo_to_dict
 
 from apps.api.hxy_release import guarded_migration
 from apps.api.hxy_release.guarded_migration import (
@@ -48,6 +49,10 @@ DATABASE_URL = (
     "host=127.0.0.1 port=55433 dbname=hxy_release_test "
     "user=hxy_app password=release-secret-value"
 )
+HOSTNAME_DATABASE_URL = (
+    "host=db.internal port=55433 dbname=hxy_release_test "
+    "user=hxy_app password=release-secret-value sslmode=verify-full"
+)
 FINGERPRINT_DATABASE_URL = (
     "host=db.internal hostaddr=10.20.30.40 port=55433 "
     "dbname=hxy_release_test user=hxy_app password=release-secret-value "
@@ -59,9 +64,11 @@ NOW = datetime(2026, 7, 12, 2, 0, tzinfo=timezone.utc)
 GIT_COMMIT = "a" * 40
 INSTANCE_A = {
     "system_identifier": "7400000000000000001",
+    "database_oid": "16384",
     "server_addr": "10.20.30.40",
     "server_port": "55433",
     "database": "hxy_release_test",
+    "server_version_num": "160013",
     "server_major": "16",
 }
 INSTANCE_B = INSTANCE_A | {
@@ -72,6 +79,8 @@ INSTANCE_C = INSTANCE_A | {
     "system_identifier": "7400000000000000003",
     "server_addr": "10.20.30.42",
 }
+INSTANCE_OTHER_DATABASE_OID = INSTANCE_A | {"database_oid": "16385"}
+REAL_DATABASE_INSTANCE_IDENTITY = guarded_migration.database_instance_identity
 
 
 @pytest.fixture(autouse=True)
@@ -186,9 +195,11 @@ class InstanceSequence:
     def __init__(self, *identities: dict[str, str]) -> None:
         self.identities = iter(identities)
         self.calls = 0
+        self.database_urls: list[str] = []
 
-    def __call__(self, _database_url: str) -> dict[str, str]:
+    def __call__(self, database_url: str) -> dict[str, str]:
         self.calls += 1
+        self.database_urls.append(database_url)
         return dict(next(self.identities))
 
 
@@ -283,6 +294,72 @@ def test_database_identity_and_boundary_are_hxy_owned_without_credentials(
         )
     with pytest.raises(ReleaseBoundaryError, match="root"):
         validate_hxy_boundary(Path("/root/htops"), identity)
+
+
+class FakeIdentityConnection:
+    def __init__(self, row: dict[str, str]) -> None:
+        self.row = row
+        self.read_only = False
+        self.sql = ""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def execute(self, sql: str):
+        assert self.read_only is True
+        self.sql = sql
+        return self
+
+    def fetchone(self) -> dict[str, str]:
+        return self.row
+
+
+def test_database_instance_identity_requires_control_id_and_database_oid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = FakeIdentityConnection(INSTANCE_A)
+    monkeypatch.setattr(
+        guarded_migration.psycopg,
+        "connect",
+        lambda *_args, **_kwargs: connection,
+    )
+
+    identity = REAL_DATABASE_INSTANCE_IDENTITY(DATABASE_URL)
+
+    assert identity == INSTANCE_A
+    assert "pg_control_system()" in connection.sql
+    assert "pg_database" in connection.sql
+    assert "database_oid" in connection.sql
+
+
+@pytest.mark.parametrize(
+    "missing_key",
+    [
+        "system_identifier",
+        "database_oid",
+        "server_addr",
+        "server_port",
+        "database",
+        "server_version_num",
+        "server_major",
+    ],
+)
+def test_database_instance_identity_fails_closed_when_any_field_is_empty(
+    monkeypatch: pytest.MonkeyPatch,
+    missing_key: str,
+) -> None:
+    connection = FakeIdentityConnection(INSTANCE_A | {missing_key: ""})
+    monkeypatch.setattr(
+        guarded_migration.psycopg,
+        "connect",
+        lambda *_args, **_kwargs: connection,
+    )
+
+    with pytest.raises(ReleaseExecutionError, match="instance"):
+        REAL_DATABASE_INSTANCE_IDENTITY(DATABASE_URL)
 
 
 def test_release_root_requires_real_containment_in_trusted_root(
@@ -518,7 +595,7 @@ def test_backup_pins_subprocesses_to_actual_server_and_controlled_search_path(
         "PGDATABASE": "hxy_release_test",
         "PGUSER": "hxy_app",
         "PGPASSWORD": "release-secret-value",
-        "PGOPTIONS": "-c search_path=public,pg_catalog",
+        "PGOPTIONS": "-c search_path=public",
         "PGSSLMODE": "verify-full",
         "PGSSLROOTCERT": "/run/secrets/root.crt",
         "PGSSLCERT": "/run/secrets/client.crt",
@@ -536,6 +613,40 @@ def test_backup_pins_subprocesses_to_actual_server_and_controlled_search_path(
         assert expected.items() <= env.items()
         assert database_url not in " ".join(command)
         assert "release-secret-value" not in " ".join(command)
+
+
+def test_backup_pins_preflight_and_all_commands_after_initial_hostname_lookup(
+    release_root: Path,
+) -> None:
+    instances = InstanceSequence(INSTANCE_A, INSTANCE_A)
+    preflight_urls: list[str] = []
+    runner = RecordingRunner()
+
+    create_release_backup(
+        SPEC,
+        release_root,
+        HOSTNAME_DATABASE_URL,
+        output_root=release_root / "data" / "backups" / "test-release",
+        preflight_inspector=lambda _root, dsn: (
+            preflight_urls.append(dsn) or {"status": "passed"}
+        ),
+        runner=runner,
+        now=NOW,
+        git_commit=GIT_COMMIT,
+        trusted_root=release_root,
+        instance_inspector=instances,
+    )
+
+    assert "hostaddr" not in conninfo_to_dict(instances.database_urls[0])
+    pinned = conninfo_to_dict(preflight_urls[0])
+    assert pinned["host"] == "db.internal"
+    assert pinned["hostaddr"] == INSTANCE_A["server_addr"]
+    assert conninfo_to_dict(instances.database_urls[1])["hostaddr"] == pinned["hostaddr"]
+    assert all(env["PGHOST"] == "db.internal" for _command, env in runner.calls)
+    assert all(
+        env["PGHOSTADDR"] == INSTANCE_A["server_addr"]
+        for _command, env in runner.calls
+    )
 
 
 @pytest.mark.parametrize(
@@ -740,6 +851,32 @@ def test_backup_rejects_instance_change_after_pg_dump(
 
     assert [command[0] for command, _env in runner.calls] == ["pg_dump"]
     assert not list((release_root / "data" / "backups").rglob("manifest.json"))
+
+
+def test_backup_rejects_empty_system_identifier_before_preflight(
+    release_root: Path,
+) -> None:
+    runner = RecordingRunner()
+    preflight_calls: list[str] = []
+
+    with pytest.raises(ReleaseBackupError, match="instance"):
+        create_release_backup(
+            SPEC,
+            release_root,
+            DATABASE_URL,
+            output_root=release_root / "data" / "backups" / "test-release",
+            preflight_inspector=lambda _root, _dsn: preflight_calls.append("called"),
+            runner=runner,
+            now=NOW,
+            git_commit=GIT_COMMIT,
+            trusted_root=release_root,
+            instance_inspector=InstanceSequence(
+                INSTANCE_A | {"system_identifier": ""}
+            ),
+        )
+
+    assert preflight_calls == []
+    assert runner.calls == []
 
 
 def test_manifest_write_fsyncs_file_then_parent_directory(
@@ -1032,6 +1169,68 @@ def test_apply_rejects_instance_changes_before_after_and_after_postflight(
 
     assert [command[0] for command, _env in runner.calls] == expected_commands
     assert len(calls) == postflight_calls
+
+
+def test_apply_rejects_same_cluster_with_different_database_oid_before_commands(
+    release_root: Path,
+    tmp_path: Path,
+) -> None:
+    backup, _backup_runner = make_backup(release_root, tmp_path)
+    runner = RecordingRunner()
+
+    with pytest.raises(ReleaseExecutionError, match="instance"):
+        apply_release_migrations(
+            SPEC,
+            release_root,
+            DATABASE_URL,
+            manifest_path=Path(str(backup["manifest_path"])),
+            confirmation=SPEC.confirmation,
+            runner=runner,
+            now=NOW,
+            git_commit=GIT_COMMIT,
+            trusted_root=release_root,
+            postflight_inspector=passed_inspector,
+            instance_inspector=InstanceSequence(INSTANCE_OTHER_DATABASE_OID),
+        )
+
+    assert runner.calls == []
+
+
+def test_apply_pins_postflight_and_instance_checks_to_initial_hostname_target(
+    release_root: Path,
+    tmp_path: Path,
+) -> None:
+    backup, _backup_runner = make_backup(
+        release_root,
+        tmp_path,
+        database_url=HOSTNAME_DATABASE_URL,
+    )
+    instances = InstanceSequence(INSTANCE_A, INSTANCE_A, INSTANCE_A, INSTANCE_A)
+    postflight_urls: list[str] = []
+
+    result = apply_release_migrations(
+        SPEC,
+        release_root,
+        HOSTNAME_DATABASE_URL,
+        manifest_path=Path(str(backup["manifest_path"])),
+        confirmation=SPEC.confirmation,
+        runner=RecordingRunner(),
+        now=NOW,
+        git_commit=GIT_COMMIT,
+        trusted_root=release_root,
+        postflight_inspector=lambda _root, dsn: (
+            postflight_urls.append(dsn) or {"status": "passed"}
+        ),
+        instance_inspector=instances,
+    )
+
+    assert result["status"] == "passed"
+    assert "hostaddr" not in conninfo_to_dict(instances.database_urls[0])
+    pinned_hostaddrs = [
+        conninfo_to_dict(dsn).get("hostaddr")
+        for dsn in instances.database_urls[1:] + postflight_urls
+    ]
+    assert pinned_hostaddrs == [INSTANCE_A["server_addr"]] * 4
 
 
 def test_apply_executes_verified_loader_bytes_from_private_temporary_snapshots(

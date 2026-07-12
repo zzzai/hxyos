@@ -40,9 +40,11 @@ GIT_COMMIT = "a" * 40
 NOW = datetime(2026, 7, 12, 2, 0, tzinfo=timezone.utc)
 INSTANCE_A = {
     "system_identifier": "7400000000000000001",
+    "database_oid": "16384",
     "server_addr": "127.0.0.1",
     "server_port": "55433",
     "database": "hxy_release_test",
+    "server_version_num": "160013",
     "server_major": "16",
 }
 
@@ -1632,6 +1634,43 @@ def test_cli_defaults_backup_root_and_preserves_post_apply_failure_state(
     assert payload["postflight"]["detail"] == "[redacted]"
     assert len(payload["postflight"]["long"]) == 500
     assert "release-secret-value" not in json.dumps(payload)
+
+
+@pytest.mark.parametrize("applied", [False, True])
+def test_role_cli_reports_instance_change_commit_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    applied: bool,
+) -> None:
+    error = guarded_migration.ReleaseInstanceError("x" * 2000, applied=applied)
+    monkeypatch.setenv("HXY_DATABASE_URL", DATABASE_URL)
+    monkeypatch.setattr(
+        role_journeys_release,
+        "apply_role_journeys_migrations",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(error),
+    )
+
+    exit_code = role_journeys_release.main(
+        [
+            "apply",
+            "--backup-manifest",
+            str(tmp_path / "manifest.json"),
+            "--confirm",
+            APPLY_CONFIRMATION,
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 2
+    assert payload["applied"] is applied
+    assert len(payload["error"]) == 500
+    if applied:
+        assert payload["error_type"] == "ReleaseExecutionError"
+        assert payload["error_code"] == "instance_changed_after_apply"
+    else:
+        assert payload["error_type"] == "ReleaseInstanceError"
+        assert "error_code" not in payload
 
 
 def test_cli_requires_database_url(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
