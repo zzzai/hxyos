@@ -1319,3 +1319,83 @@ def test_cli_wrapper_runs_outside_the_repository(tmp_path: Path) -> None:
 
     assert result.returncode == 2
     assert json.loads(result.stdout)["error"] == "HXY_DATABASE_URL is required"
+
+
+def test_internal_runbook_enforces_release_stop_gate_order() -> None:
+    runbook_path = ROOT / "docs" / "operations" / "hxy-role-journeys-release.md"
+
+    assert runbook_path.is_file(), "role journeys release runbook is required"
+    runbook = runbook_path.read_text(encoding="utf-8")
+    ordered_gates = [
+        "## Gate 1: Immutable Release Source",
+        "## Gate 2: Code And Public Preflight",
+        "## Gate 3: Read-Only Role Release Preflight",
+        "## Gate 4: Verified Restorable Backup",
+        "## Gate 5: Transactional Apply 015-016",
+        "## Gate 6: Read-Only Postflight",
+        "## Gate 7: API Activation From Versioned Release",
+        "## Gate 8: Web Activation From Same Commit",
+        "## Gate 9: Role Canaries",
+        "## Gate 10: Mobile Smoke",
+        "## Gate 11: Completion Record",
+    ]
+
+    positions = [runbook.index(gate) for gate in ordered_gates]
+    assert positions == sorted(positions)
+    for phrase in [
+        "clean immutable release worktree",
+        "exact target commit",
+        "python3 scripts/check-hxy-secrets.py",
+        "python3 scripts/check-hxy-public-release.py",
+        "scripts/hxy-role-journeys-release.py preflight",
+        "pg_restore --list",
+        "manifest.json",
+        "APPLY-HXY-015-016",
+        "--single-transaction",
+        "scripts/hxy-role-journeys-release.py postflight",
+        "versioned release path",
+        "API and web from one commit",
+    ]:
+        assert phrase in runbook
+
+
+def test_internal_runbook_covers_role_canaries_rollback_and_hxy_boundaries() -> None:
+    runbook = (
+        ROOT / "docs" / "operations" / "hxy-role-journeys-release.md"
+    ).read_text(encoding="utf-8")
+
+    for phrase in [
+        "founder question -> evidence -> task",
+        "manager task -> issue -> follow-up",
+        "employee answer -> practice -> correction -> issue",
+        "mobile smoke",
+        "application rollback before database restore",
+        "independent maintenance confirmation",
+        "不得向 /root/htops 写入",
+        "不得修改核心知识",
+        "`/root/hxy` 当前是脏工作树，不得作为 release source",
+        "atomic service switch",
+        "保留旧 release",
+    ]:
+        assert phrase in runbook
+
+
+def test_internal_runbook_is_private_code_only_and_contains_no_secret_values() -> None:
+    runbook = (
+        ROOT / "docs" / "operations" / "hxy-role-journeys-release.md"
+    ).read_text(encoding="utf-8")
+
+    assert "GitHub 仅用于内部代码仓" in runbook
+    assert "不创建公开项目描述" in runbook
+    assert "不得记录密码、token、完整 DSN 或私有资料" in runbook
+    assert "## 项目介绍" not in runbook
+    assert "public roadmap" not in runbook.lower()
+    for secret_pattern in [
+        r"(?i)password\s*=",
+        r"(?i)token\s*=",
+        r"(?i)authorization:\s*bearer",
+        r"(?i)postgres(?:ql)?://\S+",
+        r"(?i)gh[pousr]_[a-z0-9]+",
+        r"-----BEGIN [A-Z ]*PRIVATE KEY-----",
+    ]:
+        assert re.search(secret_pattern, runbook) is None
