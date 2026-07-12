@@ -102,6 +102,22 @@ def database_identity(database_url: str) -> dict[str, str]:
     }
 
 
+def _connection_fingerprint(database_url: str) -> str:
+    values = conninfo_to_dict(database_url)
+    normalized = {
+        key: str(value)
+        for key, value in values.items()
+        if value not in (None, "") and key not in {"password", "sslpassword"}
+    }
+    encoded = json.dumps(
+        normalized,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def validate_hxy_boundary(
     root_dir: Path,
     identity: dict[str, str],
@@ -328,6 +344,7 @@ def create_release_backup(
         "created_at": _iso_utc(created_at),
         "database": identity,
         "git_commit": git_commit or _current_git_commit(root_dir),
+        "connection_fingerprint": _connection_fingerprint(database_url),
         "dump": {
             "file": dump_path.name,
             "size_bytes": dump_path.stat().st_size,
@@ -397,6 +414,11 @@ def validate_release_backup_manifest(
     validate_hxy_boundary(root_dir, identity, trusted_root=trusted_root)
     if manifest.get("database") != identity:
         raise ReleaseBackupError("backup database does not match release target")
+    fingerprint = _connection_fingerprint(database_url)
+    if manifest.get("connection_fingerprint") != fingerprint:
+        raise ReleaseBackupError(
+            "backup connection fingerprint does not match release target"
+        )
     expected_commit = git_commit or _current_git_commit(root_dir)
     if manifest.get("git_commit") != expected_commit:
         raise ReleaseBackupError("backup Git commit does not match release source")
@@ -444,6 +466,7 @@ def validate_release_backup_manifest(
         "dump_path": str(dump_path),
         "created_at": _iso_utc(created_at),
         "git_commit": expected_commit,
+        "connection_fingerprint": fingerprint,
     }
 
 

@@ -48,6 +48,13 @@ DATABASE_URL = (
     "host=127.0.0.1 port=55433 dbname=hxy_release_test "
     "user=hxy_app password=release-secret-value"
 )
+FINGERPRINT_DATABASE_URL = (
+    "host=db.internal hostaddr=10.20.30.40 port=55433 "
+    "dbname=hxy_release_test user=hxy_app password=release-secret-value "
+    "options='-c search_path=hxy,public' sslmode=require "
+    "sslrootcert=/run/secrets/root.crt sslcert=/run/secrets/client.crt "
+    "sslkey=/run/secrets/client.key target_session_attrs=read-write"
+)
 NOW = datetime(2026, 7, 12, 2, 0, tzinfo=timezone.utc)
 GIT_COMMIT = "a" * 40
 
@@ -221,6 +228,7 @@ def test_backup_manifest_binds_release_database_git_and_migrations(
         "created_at": "2026-07-12T02:00:00Z",
         "database": database_identity(DATABASE_URL),
         "git_commit": GIT_COMMIT,
+        "connection_fingerprint": manifest["connection_fingerprint"],
         "dump": {
             "file": SPEC.dump_filename,
             "size_bytes": dump_path.stat().st_size,
@@ -257,6 +265,133 @@ def test_backup_manifest_binds_release_database_git_and_migrations(
     assert manifest_path.parent.stat().st_mode & 0o777 == 0o700
     assert manifest_path.stat().st_mode & 0o777 == 0o600
     assert dump_path.stat().st_mode & 0o777 == 0o600
+    assert len(manifest["connection_fingerprint"]) == 64
+    assert set(manifest["connection_fingerprint"]) <= set("0123456789abcdef")
+
+
+def test_connection_fingerprint_binds_nonsecret_libpq_semantics_without_plaintext(
+    release_root: Path,
+    tmp_path: Path,
+) -> None:
+    result, _runner = make_backup(
+        release_root,
+        tmp_path,
+        database_url=FINGERPRINT_DATABASE_URL,
+    )
+
+    manifest_path = Path(str(result["manifest_path"]))
+    manifest_text = manifest_path.read_text(encoding="utf-8")
+    manifest = json.loads(manifest_text)
+    assert len(manifest["connection_fingerprint"]) == 64
+    for plaintext in (
+        "release-secret-value",
+        "10.20.30.40",
+        "search_path",
+        "/run/secrets/root.crt",
+        "/run/secrets/client.crt",
+        "/run/secrets/client.key",
+        "read-write",
+    ):
+        assert plaintext not in manifest_text
+
+
+@pytest.mark.parametrize(
+    "changed_database_url",
+    [
+        FINGERPRINT_DATABASE_URL.replace("10.20.30.40", "10.20.30.41"),
+        FINGERPRINT_DATABASE_URL.replace(
+            "search_path=hxy,public",
+            "search_path=other,public",
+        ),
+        FINGERPRINT_DATABASE_URL.replace("sslmode=require", "sslmode=verify-ca"),
+        FINGERPRINT_DATABASE_URL.replace(
+            "target_session_attrs=read-write",
+            "target_session_attrs=primary",
+        ),
+    ],
+)
+def test_manifest_rejects_changed_nonsecret_connection_semantics(
+    release_root: Path,
+    tmp_path: Path,
+    changed_database_url: str,
+) -> None:
+    result, _runner = make_backup(
+        release_root,
+        tmp_path,
+        database_url=FINGERPRINT_DATABASE_URL,
+    )
+
+    with pytest.raises(ReleaseBackupError, match="connection fingerprint"):
+        validate_release_backup_manifest(
+            SPEC,
+            release_root,
+            changed_database_url,
+            Path(str(result["manifest_path"])),
+            now=NOW,
+            git_commit=GIT_COMMIT,
+            trusted_root=release_root,
+        )
+
+
+def test_password_rotation_preserves_connection_fingerprint(
+    release_root: Path,
+    tmp_path: Path,
+) -> None:
+    result, _runner = make_backup(
+        release_root,
+        tmp_path,
+        database_url=FINGERPRINT_DATABASE_URL,
+    )
+    rotated_database_url = FINGERPRINT_DATABASE_URL.replace(
+        "release-secret-value",
+        "rotated-release-secret",
+    )
+
+    validated = validate_release_backup_manifest(
+        SPEC,
+        release_root,
+        rotated_database_url,
+        Path(str(result["manifest_path"])),
+        now=NOW,
+        git_commit=GIT_COMMIT,
+        trusted_root=release_root,
+    )
+
+    manifest = json.loads(
+        Path(str(result["manifest_path"])).read_text(encoding="utf-8")
+    )
+    assert validated["connection_fingerprint"] == manifest["connection_fingerprint"]
+
+
+def test_apply_rejects_changed_connection_semantics_before_commands(
+    release_root: Path,
+    tmp_path: Path,
+) -> None:
+    result, _runner = make_backup(
+        release_root,
+        tmp_path,
+        database_url=FINGERPRINT_DATABASE_URL,
+    )
+    runner = RecordingRunner()
+
+    with pytest.raises(ReleaseBackupError, match="connection fingerprint"):
+        apply_release_migrations(
+            SPEC,
+            release_root,
+            FINGERPRINT_DATABASE_URL.replace(
+                "search_path=hxy,public",
+                "search_path=other,public",
+            ),
+            manifest_path=Path(str(result["manifest_path"])),
+            confirmation=SPEC.confirmation,
+            runner=runner,
+            now=NOW,
+            git_commit=GIT_COMMIT,
+            postflight_inspector=passed_inspector,
+            trusted_root=release_root,
+        )
+
+    assert runner.calls == []
 
 
 def test_backup_preserves_mapped_libpq_connection_semantics(
