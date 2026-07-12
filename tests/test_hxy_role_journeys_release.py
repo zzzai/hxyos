@@ -623,6 +623,124 @@ def test_postflight_rejects_misbound_or_disabled_append_only_triggers(
 
 
 @pytest.mark.parametrize(
+    ("trigger_name", "table_name", "function_name"),
+    [
+        (
+            "trg_hxy_product_task_events_append_only",
+            "hxy_product_task_events",
+            "hxy_reject_task_event_mutation",
+        ),
+        (
+            "trg_hxy_product_training_append_only",
+            "hxy_product_training_sessions",
+            "hxy_reject_product_training_mutation",
+        ),
+    ],
+)
+def test_postflight_accepts_delete_or_update_event_order(
+    trigger_name: str,
+    table_name: str,
+    function_name: str,
+) -> None:
+    connection = FakeInspectionConnection(released=True)
+    connection.trigger_overrides[trigger_name] = {
+        "definition": (
+            f"CREATE TRIGGER {trigger_name} BEFORE DELETE OR UPDATE "
+            f"ON public.{table_name} FOR EACH ROW "
+            f"EXECUTE FUNCTION public.{function_name}()"
+        )
+    }
+
+    result = run_postflight(
+        ROOT,
+        DATABASE_URL,
+        connect_factory=_inspection_factory(connection),
+        activation_runner=_activation(),
+    )
+
+    assert result["status"] == "passed"
+
+
+@pytest.mark.parametrize(
+    ("trigger_name", "definition", "failed_check"),
+    [
+        (
+            "trg_hxy_product_task_events_append_only",
+            "CREATE TRIGGER x BEFORE UPDATE ON public.hxy_product_task_events "
+            "FOR EACH ROW EXECUTE FUNCTION public.hxy_reject_task_event_mutation()",
+            "task_event_append_only",
+        ),
+        (
+            "trg_hxy_product_task_events_append_only",
+            "CREATE TRIGGER x BEFORE DELETE ON public.hxy_product_task_events "
+            "FOR EACH ROW EXECUTE FUNCTION public.hxy_reject_task_event_mutation()",
+            "task_event_append_only",
+        ),
+        (
+            "trg_hxy_product_task_events_append_only",
+            "CREATE TRIGGER x AFTER DELETE OR UPDATE "
+            "ON public.hxy_product_task_events FOR EACH ROW "
+            "EXECUTE FUNCTION public.hxy_reject_task_event_mutation()",
+            "task_event_append_only",
+        ),
+        (
+            "trg_hxy_product_task_events_append_only",
+            "CREATE TRIGGER x BEFORE DELETE OR UPDATE "
+            "ON public.hxy_product_task_events FOR EACH STATEMENT "
+            "EXECUTE FUNCTION public.hxy_reject_task_event_mutation()",
+            "task_event_append_only",
+        ),
+        (
+            "trg_hxy_product_training_append_only",
+            "CREATE TRIGGER x BEFORE DELETE "
+            "ON public.hxy_product_training_sessions FOR EACH ROW "
+            "EXECUTE FUNCTION public.hxy_reject_product_training_mutation()",
+            "training_append_only",
+        ),
+        (
+            "trg_hxy_product_training_append_only",
+            "CREATE TRIGGER x BEFORE UPDATE "
+            "ON public.hxy_product_training_sessions FOR EACH ROW "
+            "EXECUTE FUNCTION public.hxy_reject_product_training_mutation()",
+            "training_append_only",
+        ),
+        (
+            "trg_hxy_product_training_append_only",
+            "CREATE TRIGGER x AFTER DELETE OR UPDATE "
+            "ON public.hxy_product_training_sessions FOR EACH ROW "
+            "EXECUTE FUNCTION public.hxy_reject_product_training_mutation()",
+            "training_append_only",
+        ),
+        (
+            "trg_hxy_product_training_append_only",
+            "CREATE TRIGGER x BEFORE DELETE OR UPDATE "
+            "ON public.hxy_product_training_sessions FOR EACH STATEMENT "
+            "EXECUTE FUNCTION public.hxy_reject_product_training_mutation()",
+            "training_append_only",
+        ),
+    ],
+)
+def test_postflight_rejects_wrong_trigger_timing_level_or_event_set(
+    trigger_name: str,
+    definition: str,
+    failed_check: str,
+) -> None:
+    connection = FakeInspectionConnection(released=True)
+    connection.trigger_overrides[trigger_name] = {"definition": definition}
+
+    result = run_postflight(
+        ROOT,
+        DATABASE_URL,
+        connect_factory=_inspection_factory(connection),
+        activation_runner=_activation(),
+    )
+
+    failed = {item["name"] for item in result["checks"] if item["status"] == "failed"}
+    assert result["status"] == "failed"
+    assert failed_check in failed
+
+
+@pytest.mark.parametrize(
     ("marker", "definition", "failed_check"),
     [
         (

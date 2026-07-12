@@ -436,6 +436,32 @@ def _canonical_predicate(predicate: Any) -> str | None:
     return normalized
 
 
+def _parse_trigger_definition(
+    definition: str,
+) -> tuple[str, frozenset[str], str] | None:
+    normalized = " ".join(definition.upper().split())
+    timing_match = re.search(
+        r"\b(BEFORE|AFTER|INSTEAD OF)\s+(.+?)\s+ON\s+",
+        normalized,
+    )
+    level_match = re.search(r"\bFOR EACH (ROW|STATEMENT)\b", normalized)
+    if timing_match is None or level_match is None:
+        return None
+    event_parts = re.split(r"\s+OR\s+", timing_match.group(2))
+    allowed_events = {"INSERT", "UPDATE", "DELETE", "TRUNCATE"}
+    if (
+        not event_parts
+        or any(event not in allowed_events for event in event_parts)
+        or len(event_parts) != len(set(event_parts))
+    ):
+        return None
+    return (
+        timing_match.group(1),
+        frozenset(event_parts),
+        level_match.group(1),
+    )
+
+
 def _postflight_checks(
     pending_tables: list[str],
     columns: list[dict[str, Any]],
@@ -585,26 +611,32 @@ def _postflight_checks(
         for row in columns
     )
 
-    normalized_triggers = [
-        {
-            "table_schema": str(row.get("table_schema") or ""),
-            "table": str(row.get("table_name") or ""),
-            "name": str(row.get("trigger_name") or ""),
-            "enabled": str(row.get("tgenabled") or "").upper(),
-            "function_schema": str(row.get("function_schema") or ""),
-            "function": str(row.get("function_name") or ""),
-            "definition": " ".join(
-                str(row.get("definition") or "").lower().split()
-            ),
-        }
-        for row in triggers
-    ]
+    normalized_triggers = []
+    for row in triggers:
+        parsed_definition = _parse_trigger_definition(
+            str(row.get("definition") or "")
+        )
+        normalized_triggers.append(
+            {
+                "table_schema": str(row.get("table_schema") or ""),
+                "table": str(row.get("table_name") or ""),
+                "name": str(row.get("trigger_name") or ""),
+                "enabled": str(row.get("tgenabled") or "").upper(),
+                "function_schema": str(row.get("function_schema") or ""),
+                "function": str(row.get("function_name") or ""),
+                "timing": parsed_definition[0] if parsed_definition else "",
+                "events": parsed_definition[1] if parsed_definition else frozenset(),
+                "level": parsed_definition[2] if parsed_definition else "",
+            }
+        )
 
     def has_trigger(
         table: str,
         name: str,
         function: str,
-        fragments: tuple[str, ...],
+        timing: str,
+        events: frozenset[str],
+        level: str,
     ) -> bool:
         return any(
             item["table"] == table
@@ -613,7 +645,9 @@ def _postflight_checks(
             and item["table_schema"]
             and item["function_schema"] == item["table_schema"]
             and item["function"] == function
-            and all(fragment in item["definition"] for fragment in fragments)
+            and item["timing"] == timing
+            and item["events"] == events
+            and item["level"] == level
             for item in normalized_triggers
         )
 
@@ -621,23 +655,31 @@ def _postflight_checks(
         "hxy_product_task_events",
         "trg_hxy_product_task_events_append_only",
         "hxy_reject_task_event_mutation",
-        ("before update or delete", "for each row"),
+        "BEFORE",
+        frozenset({"UPDATE", "DELETE"}),
+        "ROW",
     ) and has_trigger(
         "hxy_product_task_events",
         "trg_hxy_product_task_events_no_truncate",
         "hxy_reject_task_event_mutation",
-        ("before truncate", "for each statement"),
+        "BEFORE",
+        frozenset({"TRUNCATE"}),
+        "STATEMENT",
     )
     training_append_only = has_trigger(
         "hxy_product_training_sessions",
         "trg_hxy_product_training_append_only",
         "hxy_reject_product_training_mutation",
-        ("before update or delete", "for each row"),
+        "BEFORE",
+        frozenset({"UPDATE", "DELETE"}),
+        "ROW",
     ) and has_trigger(
         "hxy_product_training_sessions",
         "trg_hxy_product_training_no_truncate",
         "hxy_reject_product_training_mutation",
-        ("before truncate", "for each statement"),
+        "BEFORE",
+        frozenset({"TRUNCATE"}),
+        "STATEMENT",
     )
 
     def has_index(
