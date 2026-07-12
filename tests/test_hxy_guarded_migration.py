@@ -405,7 +405,7 @@ def test_backup_preserves_mapped_libpq_connection_semantics(
         "sslrootcert=/run/secrets/root.crt sslcert=/run/secrets/client.crt "
         "sslkey=/run/secrets/client.key target_session_attrs=read-write "
         "connect_timeout=7 application_name=hxy-release passfile=/run/secrets/pgpass "
-        "service=hxy-prod channel_binding=require load_balance_hosts=random "
+        "channel_binding=require load_balance_hosts=random "
         "ssl_min_protocol_version=TLSv1.2 ssl_max_protocol_version=TLSv1.3"
     )
 
@@ -431,7 +431,6 @@ def test_backup_preserves_mapped_libpq_connection_semantics(
         "PGCONNECT_TIMEOUT": "7",
         "PGAPPNAME": "hxy-release",
         "PGPASSFILE": "/run/secrets/pgpass",
-        "PGSERVICE": "hxy-prod",
         "PGCHANNELBINDING": "require",
         "PGLOADBALANCEHOSTS": "random",
         "PGSSLMINPROTOCOLVERSION": "TLSv1.2",
@@ -441,6 +440,118 @@ def test_backup_preserves_mapped_libpq_connection_semantics(
         assert expected.items() <= env.items()
         assert database_url not in " ".join(command)
         assert "release-secret-value" not in " ".join(command)
+
+
+@pytest.mark.parametrize(
+    "database_url",
+    [
+        DATABASE_URL + " service=hxy-prod",
+        DATABASE_URL + " servicefile=/run/secrets/pg_service.conf",
+    ],
+)
+def test_backup_rejects_service_based_connection_configuration_before_inspection(
+    release_root: Path,
+    database_url: str,
+) -> None:
+    runner = RecordingRunner()
+    inspector_calls: list[str] = []
+
+    with pytest.raises(ReleaseExecutionError, match="service"):
+        create_release_backup(
+            SPEC,
+            release_root,
+            database_url,
+            output_root=release_root / "data" / "backups" / "test-release",
+            runner=runner,
+            now=NOW,
+            git_commit=GIT_COMMIT,
+            preflight_inspector=lambda _root, _dsn: inspector_calls.append("called"),
+            trusted_root=release_root,
+        )
+
+    assert inspector_calls == []
+    assert runner.calls == []
+
+
+@pytest.mark.parametrize(
+    "database_url",
+    [
+        DATABASE_URL.replace("host=127.0.0.1 ", ""),
+        DATABASE_URL.replace("port=55433 ", ""),
+        DATABASE_URL.replace("dbname=hxy_release_test ", ""),
+        DATABASE_URL.replace("user=hxy_app ", ""),
+        DATABASE_URL.replace(" password=release-secret-value", ""),
+    ],
+)
+def test_backup_requires_explicit_target_and_authentication_parameters(
+    release_root: Path,
+    database_url: str,
+) -> None:
+    runner = RecordingRunner()
+    inspector_calls: list[str] = []
+
+    with pytest.raises(ReleaseExecutionError, match="explicit"):
+        create_release_backup(
+            SPEC,
+            release_root,
+            database_url,
+            output_root=release_root / "data" / "backups" / "test-release",
+            runner=runner,
+            now=NOW,
+            git_commit=GIT_COMMIT,
+            preflight_inspector=lambda _root, _dsn: inspector_calls.append("called"),
+            trusted_root=release_root,
+        )
+
+    assert inspector_calls == []
+    assert runner.calls == []
+
+
+@pytest.mark.parametrize("environment_name", ["PGHOST", "PGOPTIONS", "PGSSLROOTCERT"])
+def test_backup_rejects_implicit_libpq_process_environment_before_parsing(
+    release_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    environment_name: str,
+) -> None:
+    monkeypatch.setenv(environment_name, "implicit-value")
+    runner = RecordingRunner()
+    inspector_calls: list[str] = []
+
+    with pytest.raises(ReleaseExecutionError, match="process environment"):
+        create_release_backup(
+            SPEC,
+            release_root,
+            "not-a-valid-connection-string",
+            output_root=release_root / "data" / "backups" / "test-release",
+            runner=runner,
+            now=NOW,
+            git_commit=GIT_COMMIT,
+            preflight_inspector=lambda _root, _dsn: inspector_calls.append("called"),
+            trusted_root=release_root,
+        )
+
+    assert inspector_calls == []
+    assert runner.calls == []
+
+
+def test_explicit_passfile_is_accepted_as_authentication(
+    release_root: Path,
+    tmp_path: Path,
+) -> None:
+    passfile_database_url = DATABASE_URL.replace(
+        "password=release-secret-value",
+        "passfile=/run/secrets/pgpass",
+    )
+
+    _result, runner = make_backup(
+        release_root,
+        tmp_path,
+        database_url=passfile_database_url,
+    )
+
+    for _command, env in runner.calls:
+        assert env["PGPASSFILE"] == "/run/secrets/pgpass"
+        assert "PGPASSWORD" not in env
 
 
 def test_backup_rejects_nonempty_libpq_parameters_without_environment_mapping(

@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from psycopg import pq
+from psycopg import ProgrammingError, pq
 from psycopg.conninfo import conninfo_to_dict
 
 
@@ -20,6 +20,17 @@ _CONNINFO_ENVIRONMENT = {
     item.keyword.decode(): item.envvar.decode()
     for item in pq.Conninfo.get_defaults()
     if item.envvar is not None
+}
+_LIBPQ_PROCESS_ENVIRONMENT = frozenset(_CONNINFO_ENVIRONMENT.values()) | {
+    "PGKEEPALIVES",
+    "PGKEEPALIVESCOUNT",
+    "PGKEEPALIVESIDLE",
+    "PGKEEPALIVESINTERVAL",
+    "PGREPLICATION",
+    "PGSERVICEFILE",
+    "PGSSLPASSWORD",
+    "PGSYSCONFDIR",
+    "PGTCPUSER_TIMEOUT",
 }
 
 CommandRunner = Callable[[list[str], dict[str, str]], subprocess.CompletedProcess[str]]
@@ -92,8 +103,48 @@ def migration_inventory(
     return inventory
 
 
+def _reject_implicit_libpq_environment() -> None:
+    present = sorted(
+        key
+        for key in os.environ
+        if key in _LIBPQ_PROCESS_ENVIRONMENT or key.startswith("PGSSL")
+    )
+    if present:
+        raise ReleaseExecutionError(
+            "libpq process environment is not allowed: " + ", ".join(present)
+        )
+
+
+def _validated_conninfo(database_url: str) -> dict[str, str]:
+    _reject_implicit_libpq_environment()
+    try:
+        values = conninfo_to_dict(database_url)
+    except ProgrammingError as exc:
+        raise ReleaseExecutionError(
+            "database DSN is invalid; service and servicefile are not allowed"
+        ) from exc
+    if values.get("service") or values.get("servicefile"):
+        raise ReleaseExecutionError(
+            "database DSN service or servicefile configuration is not allowed"
+        )
+    missing = [
+        key
+        for key in ("host", "port", "dbname", "user")
+        if not values.get(key)
+    ]
+    if missing:
+        raise ReleaseExecutionError(
+            "database DSN requires explicit target parameters: " + ", ".join(missing)
+        )
+    if not values.get("password") and not values.get("passfile"):
+        raise ReleaseExecutionError(
+            "database DSN requires explicit password or passfile authentication"
+        )
+    return values
+
+
 def database_identity(database_url: str) -> dict[str, str]:
-    values = conninfo_to_dict(database_url)
+    values = _validated_conninfo(database_url)
     return {
         "host": str(values.get("host") or ""),
         "port": str(values.get("port") or "5432"),
@@ -103,7 +154,7 @@ def database_identity(database_url: str) -> dict[str, str]:
 
 
 def _connection_fingerprint(database_url: str) -> str:
-    values = conninfo_to_dict(database_url)
+    values = _validated_conninfo(database_url)
     normalized = {
         key: str(value)
         for key, value in values.items()
@@ -180,7 +231,7 @@ def _default_command_runner(
 
 
 def _postgres_environment(database_url: str) -> dict[str, str]:
-    values = conninfo_to_dict(database_url)
+    values = _validated_conninfo(database_url)
     inherited_keys = (
         "PATH",
         "HOME",
