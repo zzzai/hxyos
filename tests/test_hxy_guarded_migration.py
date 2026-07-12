@@ -1297,7 +1297,107 @@ def test_apply_executes_verified_loader_bytes_from_private_temporary_snapshots(
     assert result["status"] == "passed"
     assert snapshot_paths
     assert all(not path.exists() for path in snapshot_paths)
-    assert not list((release_root / "data" / "release-tmp").glob("*"))
+    temporary_root = release_root / "data" / "release-tmp"
+    assert temporary_root.is_dir()
+    assert not list(temporary_root.iterdir())
+
+
+def test_apply_uses_trusted_data_root_when_release_tree_is_sealed(
+    tmp_path: Path,
+) -> None:
+    trusted_root = tmp_path / "hxy"
+    release_root = trusted_root / ".worktrees" / "sealed-release"
+    migration_dir = release_root / "data" / "migrations"
+    migration_dir.mkdir(parents=True)
+    (migration_dir / "015.sql").write_text("SELECT 15;\n", encoding="utf-8")
+    (migration_dir / "016.sql").write_text("SELECT 16;\n", encoding="utf-8")
+    backup = create_release_backup(
+        SPEC,
+        release_root,
+        DATABASE_URL,
+        output_root=trusted_root / "data" / "backups" / "test-release",
+        preflight_inspector=passed_inspector,
+        runner=RecordingRunner(),
+        now=NOW,
+        git_commit=GIT_COMMIT,
+        trusted_root=trusted_root,
+    )
+    release_data = release_root / "data"
+    release_data.chmod(0o555)
+    runner = RecordingRunner()
+    try:
+        result = apply_release_migrations(
+            SPEC,
+            release_root,
+            DATABASE_URL,
+            manifest_path=Path(str(backup["manifest_path"])),
+            confirmation=SPEC.confirmation,
+            runner=runner,
+            now=NOW,
+            git_commit=GIT_COMMIT,
+            trusted_root=trusted_root,
+            postflight_inspector=passed_inspector,
+        )
+    finally:
+        release_data.chmod(0o755)
+
+    assert result["status"] == "passed"
+    psql_command = next(command for command, _env in runner.calls if command[0] == "psql")
+    snapshot_paths = [
+        Path(psql_command[index + 1])
+        for index, value in enumerate(psql_command)
+        if value == "--file"
+    ]
+    temporary_root = trusted_root / "data" / "release-tmp"
+    assert snapshot_paths
+    assert all(path.parent.parent == temporary_root for path in snapshot_paths)
+    assert all(not path.exists() for path in snapshot_paths)
+    assert temporary_root.is_dir()
+    assert not list(temporary_root.iterdir())
+    assert not (release_root / "data" / "release-tmp").exists()
+
+
+def test_apply_rejects_symlinked_trusted_release_temporary_root(
+    tmp_path: Path,
+) -> None:
+    trusted_root = tmp_path / "hxy"
+    release_root = trusted_root / ".worktrees" / "release"
+    migration_dir = release_root / "data" / "migrations"
+    migration_dir.mkdir(parents=True)
+    (migration_dir / "015.sql").write_text("SELECT 15;\n", encoding="utf-8")
+    (migration_dir / "016.sql").write_text("SELECT 16;\n", encoding="utf-8")
+    backup = create_release_backup(
+        SPEC,
+        release_root,
+        DATABASE_URL,
+        output_root=trusted_root / "data" / "backups" / "test-release",
+        preflight_inspector=passed_inspector,
+        runner=RecordingRunner(),
+        now=NOW,
+        git_commit=GIT_COMMIT,
+        trusted_root=trusted_root,
+    )
+    temporary_root = trusted_root / "data" / "release-tmp"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    temporary_root.symlink_to(outside, target_is_directory=True)
+    runner = RecordingRunner()
+
+    with pytest.raises(ReleaseBoundaryError, match="temporary root"):
+        apply_release_migrations(
+            SPEC,
+            release_root,
+            DATABASE_URL,
+            manifest_path=Path(str(backup["manifest_path"])),
+            confirmation=SPEC.confirmation,
+            runner=runner,
+            now=NOW,
+            git_commit=GIT_COMMIT,
+            trusted_root=trusted_root,
+            postflight_inspector=passed_inspector,
+        )
+
+    assert runner.calls == []
 
 
 def test_apply_rejects_migration_symlink_before_any_runner_command(

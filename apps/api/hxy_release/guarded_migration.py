@@ -427,6 +427,50 @@ def _validate_backup_path(path: Path, trusted_root: Path) -> Path:
     return resolved
 
 
+def _validate_release_temporary_root(trusted_root: Path) -> Path:
+    trusted = trusted_root.resolve()
+    if _contains_htops(trusted):
+        raise ReleaseBoundaryError("release temporary root must be HXY-owned")
+    data_root = trusted / "data"
+    try:
+        resolved_data_root = data_root.resolve(strict=True)
+    except OSError as exc:
+        raise ReleaseBoundaryError(
+            "trusted release data root must be a real directory"
+        ) from exc
+    if (
+        data_root.is_symlink()
+        or resolved_data_root != data_root
+        or not resolved_data_root.is_dir()
+    ):
+        raise ReleaseBoundaryError(
+            "trusted release data root must be a real directory"
+        )
+
+    temporary_root = resolved_data_root / "release-tmp"
+    if temporary_root.is_symlink():
+        raise ReleaseBoundaryError(
+            "release temporary root must be a real directory"
+        )
+    try:
+        temporary_root.mkdir(mode=0o700, exist_ok=True)
+        resolved_temporary_root = temporary_root.resolve(strict=True)
+    except OSError as exc:
+        raise ReleaseBoundaryError(
+            "release temporary root must be a real directory"
+        ) from exc
+    if (
+        resolved_temporary_root.parent != resolved_data_root
+        or not resolved_temporary_root.is_relative_to(resolved_data_root)
+        or not resolved_temporary_root.is_dir()
+    ):
+        raise ReleaseBoundaryError(
+            "release temporary root must remain within trusted data root"
+        )
+    resolved_temporary_root.chmod(0o700)
+    return resolved_temporary_root
+
+
 def _bounded_value(value: Any, sensitive_values: tuple[str, ...]) -> Any:
     if isinstance(value, dict):
         return {
@@ -858,12 +902,8 @@ def apply_release_migrations(
         target.pinned_url,
         server_addr=target.identity["server_addr"],
     )
-    release_root = _validate_release_root(root_dir, trusted_root)
-    temporary_root = release_root / "data" / "release-tmp"
-    if temporary_root.is_symlink():
-        raise ReleaseBoundaryError("release temporary root must be a real directory")
-    temporary_root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    temporary_root.chmod(0o700)
+    _validate_release_root(root_dir, trusted_root)
+    temporary_root = _validate_release_temporary_root(trusted_root)
     snapshot_dir = Path(
         tempfile.mkdtemp(prefix=f"{spec.release_id}-", dir=temporary_root)
     )
