@@ -69,6 +69,18 @@ def _assert_section_contains(
         assert phrase in sections[section], f"{phrase!r} must appear in {section}"
 
 
+def _assert_section_order(
+    sections: dict[str, str],
+    section: str,
+    ordered_phrases: tuple[str, ...],
+) -> None:
+    _assert_section_contains(sections, section, ordered_phrases)
+    positions = [sections[section].index(phrase) for phrase in ordered_phrases]
+    assert all(
+        earlier < later for earlier, later in zip(positions, positions[1:])
+    ), f"phrases out of order in {section}: {ordered_phrases!r}"
+
+
 @pytest.fixture
 def release_root(tmp_path: Path) -> Path:
     root = tmp_path / "hxy"
@@ -1549,9 +1561,25 @@ def test_internal_runbook_binds_runtime_marker_and_rollback_evidence_to_sections
             'ln -sfn "$HXY_ROLLBACK_PATH" /root/hxy/releases/current.next',
             "mv -Tf /root/hxy/releases/current.next /root/hxy/releases/current",
             "systemctl restart hxy-knowledge-api",
+            'HXY_ROLLBACK_API_MAIN_PID="$(systemctl show --property MainPID --value hxy-knowledge-api)"',
+            'test "$(readlink -f "/proc/${HXY_ROLLBACK_API_MAIN_PID}/cwd")" = "$HXY_ROLLBACK_PATH"',
             "systemctl reload nginx",
             "curl --fail --silent http://127.0.0.1:18081/health",
             "--header 'Cache-Control: no-cache'",
+            'test "$HXY_ROLLBACK_WEB_COMMIT" = "$HXY_ROLLBACK_COMMIT"',
+        ),
+    )
+    _assert_section_order(
+        sections,
+        "rollback_boundary",
+        (
+            "mv -Tf /root/hxy/releases/current.next /root/hxy/releases/current",
+            "systemctl restart hxy-knowledge-api",
+            'HXY_ROLLBACK_API_MAIN_PID="$(systemctl show --property MainPID --value hxy-knowledge-api)"',
+            'test "$(readlink -f "/proc/${HXY_ROLLBACK_API_MAIN_PID}/cwd")" = "$HXY_ROLLBACK_PATH"',
+            "curl --fail --silent http://127.0.0.1:18081/health",
+            "systemctl reload nginx",
+            'HXY_ROLLBACK_WEB_COMMIT="$(',
             'test "$HXY_ROLLBACK_WEB_COMMIT" = "$HXY_ROLLBACK_COMMIT"',
         ),
     )
@@ -1573,4 +1601,27 @@ nginx -t
             sections,
             "gate_8",
             ("--header 'Cache-Control: no-cache'",),
+        )
+
+
+def test_release_section_order_contract_rejects_restart_before_atomic_switch() -> None:
+    misordered_runbook = """\
+## Rollback Boundary
+systemctl restart hxy-knowledge-api
+mv -Tf /root/hxy/releases/current.next /root/hxy/releases/current
+HXY_ROLLBACK_API_MAIN_PID="$(systemctl show --property MainPID --value hxy-knowledge-api)"
+curl --fail --silent http://127.0.0.1:18081/health
+"""
+    sections = _slice_release_runbook_sections(misordered_runbook)
+
+    with pytest.raises(AssertionError, match="out of order in rollback_boundary"):
+        _assert_section_order(
+            sections,
+            "rollback_boundary",
+            (
+                "mv -Tf /root/hxy/releases/current.next /root/hxy/releases/current",
+                "systemctl restart hxy-knowledge-api",
+                'HXY_ROLLBACK_API_MAIN_PID="$(systemctl show --property MainPID --value hxy-knowledge-api)"',
+                "curl --fail --silent http://127.0.0.1:18081/health",
+            ),
         )

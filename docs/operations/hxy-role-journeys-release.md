@@ -288,9 +288,12 @@ ln -sfn "$HXY_ROLLBACK_PATH" /root/hxy/releases/current.next
 mv -Tf /root/hxy/releases/current.next /root/hxy/releases/current
 test "$(readlink -f /root/hxy/releases/current)" = "$HXY_ROLLBACK_PATH"
 systemctl restart hxy-knowledge-api
+HXY_ROLLBACK_API_MAIN_PID="$(systemctl show --property MainPID --value hxy-knowledge-api)"
+test "$HXY_ROLLBACK_API_MAIN_PID" -gt 0
+test "$(readlink -f "/proc/${HXY_ROLLBACK_API_MAIN_PID}/cwd")" = "$HXY_ROLLBACK_PATH"
+curl --fail --silent http://127.0.0.1:18081/health
 nginx -t
 systemctl reload nginx
-curl --fail --silent http://127.0.0.1:18081/health
 export HXY_WEB_RELEASE_MARKER_URL='https://hxyos.hexiaoyue.com/release-commit.txt'
 HXY_ROLLBACK_WEB_COMMIT="$(
   curl --fail --silent --show-error \
@@ -300,8 +303,9 @@ HXY_ROLLBACK_WEB_COMMIT="$(
 test "$HXY_ROLLBACK_WEB_COMMIT" = "$HXY_ROLLBACK_COMMIT"
 ```
 
-原子 current 回切、API restart、nginx reload、API health 和旧 commit HTTP marker 任一
-验证失败都必须停止并升级处理；不得因此直接进入数据库 restore。
+原子 current 回切、API restart、rollback API process cwd、API health、nginx reload 和
+旧 commit HTTP marker 任一验证失败都必须停止并升级处理；不得因此直接进入数据库
+restore。
 
 数据库 restore 不是普通 rollback，也不得由本手册自动执行。它可能丢弃 backup 之后的
 合法写入，必须在 API、worker 和 Web 写入全部停止后，由数据库维护负责人完成
