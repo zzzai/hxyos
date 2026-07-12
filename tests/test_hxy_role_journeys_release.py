@@ -46,6 +46,8 @@ def _slice_release_runbook_sections(markdown: str) -> dict[str, str]:
         title = heading.group("title").strip()
         if title == "Stop Rule":
             key = "stop_rule"
+        elif title == "Rollback Boundary":
+            key = "rollback_boundary"
         else:
             gate = re.fullmatch(r"Gate (?P<number>\d+)(?::.*)?", title)
             if gate is None:
@@ -1485,3 +1487,90 @@ def test_release_section_contract_rejects_requirement_in_the_wrong_gate() -> Non
 
     with pytest.raises(AssertionError, match="gate_4"):
         _assert_section_contains(sections, "gate_4", ("完整恢复验证",))
+
+
+def test_release_section_helper_slices_rollback_boundary_at_h2_boundaries() -> None:
+    markdown = """\
+## Gate 11: Completion
+completion body
+
+## Rollback Boundary
+rollback body
+
+## Appendix
+appendix body
+"""
+
+    sections = _slice_release_runbook_sections(markdown)
+
+    assert sections["gate_11"] == "completion body"
+    assert sections["rollback_boundary"] == "rollback body"
+
+
+def test_internal_runbook_binds_runtime_marker_and_rollback_evidence_to_sections() -> None:
+    runbook = (
+        ROOT / "docs" / "operations" / "hxy-role-journeys-release.md"
+    ).read_text(encoding="utf-8")
+    sections = _slice_release_runbook_sections(runbook)
+
+    _assert_section_contains(
+        sections,
+        "gate_2",
+        (
+            "printf '%s\\n' \"$HXY_RELEASE_COMMIT\"",
+            "$HXY_RELEASE_PATH/apps/hxy-web/dist/release-commit.txt",
+            "只写 `$HXY_RELEASE_COMMIT`",
+        ),
+    )
+    _assert_section_contains(
+        sections,
+        "gate_7",
+        (
+            'HXY_API_MAIN_PID="$(systemctl show --property MainPID --value hxy-knowledge-api)"',
+            'test "$(readlink -f "/proc/${HXY_API_MAIN_PID}/cwd")" = "$HXY_RELEASE_PATH"',
+            'test "$(readlink -f /root/hxy/releases/current)" = "$HXY_RELEASE_PATH"',
+        ),
+    )
+    _assert_section_contains(
+        sections,
+        "gate_8",
+        (
+            "HXY_WEB_RELEASE_MARKER_URL='https://hxyos.hexiaoyue.com/release-commit.txt'",
+            "--header 'Cache-Control: no-cache'",
+            'test "$HXY_WEB_RELEASE_COMMIT" = "$HXY_RELEASE_COMMIT"',
+            "HTTP marker 是最终证据",
+            "失败立即执行 Rollback Boundary 的应用回滚",
+        ),
+    )
+    _assert_section_contains(
+        sections,
+        "rollback_boundary",
+        (
+            'ln -sfn "$HXY_ROLLBACK_PATH" /root/hxy/releases/current.next',
+            "mv -Tf /root/hxy/releases/current.next /root/hxy/releases/current",
+            "systemctl restart hxy-knowledge-api",
+            "systemctl reload nginx",
+            "curl --fail --silent http://127.0.0.1:18081/health",
+            "--header 'Cache-Control: no-cache'",
+            'test "$HXY_ROLLBACK_WEB_COMMIT" = "$HXY_ROLLBACK_COMMIT"',
+        ),
+    )
+
+
+def test_release_section_contract_rejects_web_marker_evidence_in_gate_7() -> None:
+    misplaced_runbook = """\
+## Gate 7: API
+HXY_WEB_RELEASE_MARKER_URL='https://hxyos.hexiaoyue.com/release-commit.txt'
+curl --header 'Cache-Control: no-cache'
+
+## Gate 8: Web
+nginx -t
+"""
+    sections = _slice_release_runbook_sections(misplaced_runbook)
+
+    with pytest.raises(AssertionError, match="gate_8"):
+        _assert_section_contains(
+            sections,
+            "gate_8",
+            ("--header 'Cache-Control: no-cache'",),
+        )

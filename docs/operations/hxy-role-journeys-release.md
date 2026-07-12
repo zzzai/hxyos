@@ -56,11 +56,18 @@ npm --prefix apps/hxy-web ci
 .venv/bin/pytest tests/test_hxy_role_journeys_release.py -q
 npm test
 npm run build:web
+printf '%s\n' "$HXY_RELEASE_COMMIT" \
+  > "$HXY_RELEASE_PATH/apps/hxy-web/dist/release-commit.txt"
+test "$(wc -l < "$HXY_RELEASE_PATH/apps/hxy-web/dist/release-commit.txt")" -eq 1
+test "$(cat "$HXY_RELEASE_PATH/apps/hxy-web/dist/release-commit.txt")" = "$HXY_RELEASE_COMMIT"
 python3 scripts/check-hxy-secrets.py
 python3 scripts/check-hxy-public-release.py
 git diff --check
 git status --porcelain=v1 --untracked-files=all
 ```
+
+`release-commit.txt` 必须在 build 后生成，只写 `$HXY_RELEASE_COMMIT` 和一个结尾换行，
+不得写时间、分支、路径、凭据或其他内容。
 
 通过标准：测试、Web 构建、secret 检查、public release 检查和 whitespace 检查全部
 成功；Git 状态仅允许 release 工具显式放行的本地依赖 symlink。public release 检查
@@ -193,6 +200,9 @@ systemctl daemon-reload
 systemctl restart hxy-knowledge-api
 systemctl status hxy-knowledge-api --no-pager
 curl --fail --silent http://127.0.0.1:18081/health
+HXY_API_MAIN_PID="$(systemctl show --property MainPID --value hxy-knowledge-api)"
+test "$HXY_API_MAIN_PID" -gt 0
+test "$(readlink -f "/proc/${HXY_API_MAIN_PID}/cwd")" = "$HXY_RELEASE_PATH"
 test "$(readlink -f /root/hxy/releases/current)" = "$HXY_RELEASE_PATH"
 ```
 
@@ -208,10 +218,19 @@ test "$(git -C /root/hxy/releases/current rev-parse HEAD)" = "$HXY_RELEASE_COMMI
 test -d /root/hxy/releases/current/apps/hxy-web/dist
 nginx -t
 systemctl reload nginx
+export HXY_WEB_RELEASE_MARKER_URL='https://hxyos.hexiaoyue.com/release-commit.txt'
+HXY_WEB_RELEASE_COMMIT="$(
+  curl --fail --silent --show-error \
+    --header 'Cache-Control: no-cache' \
+    "$HXY_WEB_RELEASE_MARKER_URL"
+)"
+test "$HXY_WEB_RELEASE_COMMIT" = "$HXY_RELEASE_COMMIT"
 ```
 
-验证 API 进程 cwd 和 Web root 最终都解析到 `$HXY_RELEASE_PATH`。若 Web reload 或 API
-health 失败，立即执行应用回滚，不得继续角色 canary。
+验证 API 进程 cwd 和 Web root 最终都解析到 `$HXY_RELEASE_PATH`。HTTP marker 是最终证据；
+本地文件、nginx config/root 检查或 `nginx -t` 不能替代线上 marker。Web reload、API
+health、marker curl 或 commit 精确比对失败立即执行 Rollback Boundary 的应用回滚，
+不得继续角色 canary。
 
 ## Gate 9: Role Canaries
 
@@ -264,13 +283,25 @@ rollback decision
 ```bash
 export HXY_ROLLBACK_PATH="$(readlink -f /root/hxy/releases/previous)"
 test -d "$HXY_ROLLBACK_PATH"
+export HXY_ROLLBACK_COMMIT="$(git -C "$HXY_ROLLBACK_PATH" rev-parse HEAD)"
 ln -sfn "$HXY_ROLLBACK_PATH" /root/hxy/releases/current.next
 mv -Tf /root/hxy/releases/current.next /root/hxy/releases/current
+test "$(readlink -f /root/hxy/releases/current)" = "$HXY_ROLLBACK_PATH"
 systemctl restart hxy-knowledge-api
 nginx -t
 systemctl reload nginx
 curl --fail --silent http://127.0.0.1:18081/health
+export HXY_WEB_RELEASE_MARKER_URL='https://hxyos.hexiaoyue.com/release-commit.txt'
+HXY_ROLLBACK_WEB_COMMIT="$(
+  curl --fail --silent --show-error \
+    --header 'Cache-Control: no-cache' \
+    "$HXY_WEB_RELEASE_MARKER_URL"
+)"
+test "$HXY_ROLLBACK_WEB_COMMIT" = "$HXY_ROLLBACK_COMMIT"
 ```
+
+原子 current 回切、API restart、nginx reload、API health 和旧 commit HTTP marker 任一
+验证失败都必须停止并升级处理；不得因此直接进入数据库 restore。
 
 数据库 restore 不是普通 rollback，也不得由本手册自动执行。它可能丢弃 backup 之后的
 合法写入，必须在 API、worker 和 Web 写入全部停止后，由数据库维护负责人完成
