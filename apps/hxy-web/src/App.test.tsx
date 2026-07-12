@@ -29,6 +29,29 @@ const TEST_SESSION = {
   available_assignments: [],
 };
 
+const MANAGER_SESSION = {
+  ...TEST_SESSION,
+  user: {
+    account_id: "account-test-manager",
+    display_name: "测试店长",
+  },
+  active_assignment: {
+    ...TEST_SESSION.active_assignment,
+    assignment_id: "assignment-test-manager",
+    role: "store_manager" as const,
+    role_label: "店长",
+    capabilities: [
+      "conversation:use",
+      "materials:create",
+      "materials:read",
+      "store:operate",
+      "store:read",
+      "tasks:manage",
+      "tasks:read",
+    ],
+  },
+};
+
 function renderApp() {
   return render(<App initialSession={TEST_SESSION} />);
 }
@@ -107,6 +130,54 @@ function materialGateway(overrides: Record<string, unknown> = {}) {
     }),
     uploadMaterial: vi.fn().mockResolvedValue({
       material: PROCESSING_MATERIAL,
+    }),
+    ...overrides,
+  };
+}
+
+function taskGateway(overrides: Record<string, unknown> = {}) {
+  return {
+    listTasks: vi.fn().mockResolvedValue({
+      items: [
+        {
+          id: "task-one",
+          title: "完成今日开店检查",
+          details: "检查环境、物料和接待准备。",
+          priority: "high",
+          status: "open",
+          visibility: "store",
+          store_id: "store-test",
+          assignee_assignment_id: null,
+          source_conversation_id: null,
+          source_message_id: null,
+          result: null,
+          due_at: null,
+          completed_at: null,
+          created_at: "2026-07-12T09:00:00Z",
+          updated_at: "2026-07-12T09:00:00Z",
+        },
+      ],
+      count: 1,
+    }),
+    createTask: vi.fn(),
+    updateTask: vi.fn().mockResolvedValue({
+      task: {
+        id: "task-one",
+        title: "完成今日开店检查",
+        details: "检查环境、物料和接待准备。",
+        priority: "high",
+        status: "completed",
+        visibility: "store",
+        store_id: "store-test",
+        assignee_assignment_id: null,
+        source_conversation_id: null,
+        source_message_id: null,
+        result: "已完成检查。",
+        due_at: null,
+        completed_at: "2026-07-12T10:00:00Z",
+        created_at: "2026-07-12T09:00:00Z",
+        updated_at: "2026-07-12T10:00:00Z",
+      },
     }),
     ...overrides,
   };
@@ -211,6 +282,192 @@ describe("HXYOS product shell", () => {
       .map((item) => item.textContent?.trim());
 
     expect(labels).toEqual(["对话", "待办", "我的"]);
+  });
+
+  it("shows role-scoped tasks and completes work with a result", async () => {
+    const user = userEvent.setup();
+    const gateway = taskGateway();
+    render(<App initialSession={TEST_SESSION} taskClient={gateway} />);
+
+    await user.click(screen.getByRole("button", { name: "待办" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "完成今日开店检查" }),
+    ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "完成任务" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "执行结果" }),
+      "已完成检查。",
+    );
+    await user.click(screen.getByRole("button", { name: "确认完成" }));
+
+    await waitFor(() =>
+      expect(gateway.updateTask).toHaveBeenCalledWith("task-one", {
+        status: "completed",
+        result: "已完成检查。",
+      }),
+    );
+  });
+
+  it("turns an answer action into a task without copying text", async () => {
+    const user = userEvent.setup();
+    const conversations = conversationGateway({
+      listConversations: vi.fn().mockResolvedValue({
+        items: [
+          {
+            id: "conversation-new",
+            title: "开业检查",
+            created_at: "2026-07-12T09:00:00Z",
+            updated_at: "2026-07-12T09:00:00Z",
+            last_message_at: "2026-07-12T09:00:00Z",
+            message_count: 2,
+            last_message: null,
+          },
+        ],
+      }),
+      getConversation: vi.fn().mockResolvedValue({
+        conversation: {
+          id: "conversation-new",
+          title: "开业检查",
+          created_at: "2026-07-12T09:00:00Z",
+          updated_at: "2026-07-12T09:00:00Z",
+          last_message_at: "2026-07-12T09:00:00Z",
+          message_count: 2,
+          last_message: null,
+        },
+        messages: [
+          {
+            id: "answer-message",
+            conversation_id: "conversation-new",
+            role: "assistant",
+            content: "先完成开店前环境和物料检查。",
+            created_at: "2026-07-12T09:00:00Z",
+            answer_id: null,
+            answer_status: "AI 草稿",
+            confidence: "medium",
+            needs_review: true,
+            sources: [],
+            next_actions: ["完成开店前检查"],
+          },
+        ],
+      }),
+    });
+    const tasks = taskGateway({
+      listTasks: vi.fn().mockResolvedValue({ items: [], count: 0 }),
+      createTask: vi.fn().mockResolvedValue({
+        task: {
+          id: "task-from-answer",
+          title: "完成开店前检查",
+          details: "先完成开店前环境和物料检查。",
+          priority: "normal",
+          status: "open",
+          visibility: "assignee",
+          store_id: "store-test",
+          assignee_assignment_id: "assignment-test-manager",
+          source_conversation_id: "conversation-new",
+          source_message_id: "answer-message",
+          result: null,
+          due_at: null,
+          completed_at: null,
+          created_at: "2026-07-12T09:00:00Z",
+          updated_at: "2026-07-12T09:00:00Z",
+        },
+      }),
+    });
+    render(
+      <App
+        initialSession={MANAGER_SESSION}
+        conversationClient={conversations}
+        taskClient={tasks}
+      />,
+    );
+
+    await user.click(await screen.findByRole("button", { name: "转为待办" }));
+
+    expect(tasks.createTask).toHaveBeenCalledWith({
+      title: "完成开店前检查",
+      details: "先完成开店前环境和物料检查。",
+      priority: "normal",
+      visibility: "assignee",
+      assignee_assignment_id: "assignment-test-manager",
+      source_conversation_id: "conversation-new",
+      source_message_id: "answer-message",
+    });
+    expect(
+      await screen.findByRole("heading", { name: "完成开店前检查" }),
+    ).toBeVisible();
+  });
+
+  it("does not let an older task request overwrite a newer refresh", async () => {
+    const user = userEvent.setup();
+    let resolveOlder: ((value: unknown) => void) | undefined;
+    const older = new Promise((resolve) => {
+      resolveOlder = resolve;
+    });
+    const gateway = taskGateway({
+      listTasks: vi
+        .fn()
+        .mockReturnValueOnce(older)
+        .mockResolvedValueOnce({
+          items: [
+            {
+              id: "task-newer",
+              title: "最新待办",
+              details: "",
+              priority: "normal",
+              status: "open",
+              visibility: "store",
+              store_id: "store-test",
+              assignee_assignment_id: null,
+              source_conversation_id: null,
+              source_message_id: null,
+              result: null,
+              due_at: null,
+              completed_at: null,
+              created_at: "2026-07-12T10:00:00Z",
+              updated_at: "2026-07-12T10:00:00Z",
+            },
+          ],
+          count: 1,
+        }),
+    });
+    render(<App initialSession={TEST_SESSION} taskClient={gateway} />);
+
+    await user.click(screen.getByRole("button", { name: "待办" }));
+    await user.click(screen.getByRole("button", { name: "刷新" }));
+    expect(
+      await screen.findByRole("heading", { name: "最新待办" }),
+    ).toBeVisible();
+
+    await act(async () => {
+      resolveOlder?.({
+        items: [
+          {
+            id: "task-older",
+            title: "过期待办",
+            details: "",
+            priority: "normal",
+            status: "open",
+            visibility: "store",
+            store_id: "store-test",
+            assignee_assignment_id: null,
+            source_conversation_id: null,
+            source_message_id: null,
+            result: null,
+            due_at: null,
+            completed_at: null,
+            created_at: "2026-07-12T09:00:00Z",
+            updated_at: "2026-07-12T09:00:00Z",
+          },
+        ],
+        count: 1,
+      });
+    });
+
+    expect(screen.getByRole("heading", { name: "最新待办" })).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "过期待办" }),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps internal terminology out of the frontstage", () => {

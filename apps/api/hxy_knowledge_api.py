@@ -89,6 +89,8 @@ from hxy_product.material_routes import create_material_router
 from hxy_product.material_understanding import build_material_understanding
 from hxy_product.repository import IdentityRepository
 from hxy_product.routes import create_identity_router
+from hxy_product.task_repository import TaskRepository
+from hxy_product.task_routes import create_task_router
 
 
 RepositoryFactory = Callable[[], Any]
@@ -373,6 +375,15 @@ def _default_material_repository_factory(database_url: str) -> RepositoryFactory
         if not database_url:
             raise HTTPException(status_code=503, detail="HXY_DATABASE_URL is not configured")
         return MaterialRepository(database_url)
+
+    return make_repository
+
+
+def _default_task_repository_factory(database_url: str) -> RepositoryFactory:
+    def make_repository() -> TaskRepository:
+        if not database_url:
+            raise HTTPException(status_code=503, detail="HXY_DATABASE_URL is not configured")
+        return TaskRepository(database_url)
 
     return make_repository
 
@@ -3467,6 +3478,7 @@ def create_app(
     product_identity_repository_factory: RepositoryFactory | None = None,
     conversation_repository_factory: RepositoryFactory | None = None,
     material_repository_factory: RepositoryFactory | None = None,
+    task_repository_factory: RepositoryFactory | None = None,
     material_understanding_builder: Callable[..., dict[str, Any]] | None = None,
     product_auth_settings: ProductAuthSettings | None = None,
 ) -> FastAPI:
@@ -3489,6 +3501,9 @@ def create_app(
     make_material_repository = (
         material_repository_factory
         or _default_material_repository_factory(settings.database_url)
+    )
+    make_task_repository = (
+        task_repository_factory or _default_task_repository_factory(settings.database_url)
     )
     build_product_material_understanding = (
         material_understanding_builder or build_material_understanding
@@ -3631,6 +3646,12 @@ def create_app(
             min_material_free_bytes=settings.min_material_free_bytes,
             allowed_extensions=allowed_upload_extensions,
             understanding_builder=build_product_material_understanding,
+        )
+    )
+    app.include_router(
+        create_task_router(
+            make_product_identity_repository,
+            make_task_repository,
         )
     )
 

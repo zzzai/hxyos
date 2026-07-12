@@ -276,3 +276,49 @@ class IdentityRepository:
             )
             for row in rows
         ]
+
+    def get_assignment(self, assignment_id: str) -> AssignmentRecord | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT ra.assignment_id::text AS assignment_id,
+                       ra.organization_id::text AS organization_id,
+                       organization.name AS organization_name,
+                       ra.store_id,
+                       store.name AS store_name,
+                       ra.role
+                FROM hxy_role_assignments AS ra
+                JOIN hxy_organizations AS organization
+                  ON organization.organization_id = ra.organization_id
+                LEFT JOIN stores AS store ON store.store_id = ra.store_id
+                WHERE ra.assignment_id = %s::uuid
+                  AND ra.status = 'active'
+                  AND organization.status = 'active'
+                LIMIT 1
+                """,
+                (assignment_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return AssignmentRecord(
+            assignment_id=str(row["assignment_id"]),
+            organization_id=str(row["organization_id"]),
+            organization_name=str(row["organization_name"]),
+            store_id=str(row["store_id"]) if row["store_id"] is not None else None,
+            store_name=str(row["store_name"]) if row["store_name"] is not None else None,
+            role=str(row["role"]),
+        )
+
+    def organization_has_store(self, organization_id: str, store_id: str) -> bool:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT 1
+                FROM hxy_organization_stores
+                WHERE organization_id = %s::uuid
+                  AND store_id = %s
+                LIMIT 1
+                """,
+                (organization_id, store_id),
+            ).fetchone()
+        return row is not None

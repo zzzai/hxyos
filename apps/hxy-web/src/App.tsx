@@ -34,6 +34,11 @@ import {
   productMaterialClient,
 } from "./api/materials";
 import {
+  type HxyTask,
+  type TaskClient,
+  productTaskClient,
+} from "./api/tasks";
+import {
   SessionProvider,
   type SessionLoader,
   useSession,
@@ -75,6 +80,7 @@ interface FailedMaterialUpload {
 interface ProductShellProps {
   conversationClient: ConversationClient;
   materialClient: MaterialClient;
+  taskClient: TaskClient;
   clientMessageIdFactory: () => string;
   materialUploadIdFactory: () => string;
 }
@@ -82,6 +88,7 @@ interface ProductShellProps {
 function ProductShell({
   conversationClient,
   materialClient,
+  taskClient,
   clientMessageIdFactory,
   materialUploadIdFactory,
 }: ProductShellProps) {
@@ -109,6 +116,12 @@ function ProductShell({
   const [isRetryingUnderstanding, setIsRetryingUnderstanding] = useState(false);
   const [understandingRetryFailed, setUnderstandingRetryFailed] =
     useState(false);
+  const [tasks, setTasks] = useState<HxyTask[]>([]);
+  const [isTasksLoading, setIsTasksLoading] = useState(false);
+  const [tasksError, setTasksError] = useState(false);
+  const [completingTaskId, setCompletingTaskId] = useState<string | null>(null);
+  const [completionResult, setCompletionResult] = useState("");
+  const [taskActionPending, setTaskActionPending] = useState(false);
   const materialInputRef = useRef<HTMLInputElement>(null);
   const detailsTriggerRef = useRef<HTMLButtonElement>(null);
   const detailsDrawerRef = useRef<HTMLElement>(null);
@@ -117,6 +130,7 @@ function ProductShell({
   const messageListEndRef = useRef<HTMLDivElement>(null);
   const historyRequestVersionRef = useRef(0);
   const materialRequestVersionRef = useRef(0);
+  const taskRequestVersionRef = useRef(0);
   const assignment = session?.active_assignment;
   const isAuthenticated = status === "authenticated" && assignment !== undefined;
   const suggestions = assignment
@@ -126,6 +140,9 @@ function ProductShell({
     assignment?.capabilities.includes("materials:create") ?? false;
   const canReadMaterials =
     assignment?.capabilities.includes("materials:read") ?? false;
+  const canReadTasks = assignment?.capabilities.includes("tasks:read") ?? false;
+  const canManageTasks =
+    assignment?.capabilities.includes("tasks:manage") ?? false;
   const roleLabel =
     assignment?.role_label ??
     (status === "loading"
@@ -234,6 +251,36 @@ function ProductShell({
     isAuthenticated,
     materialClient,
   ]);
+
+  const loadTasks = async () => {
+    if (!isAuthenticated || !canReadTasks) return;
+    const requestVersion = taskRequestVersionRef.current + 1;
+    taskRequestVersionRef.current = requestVersion;
+    setIsTasksLoading(true);
+    setTasksError(false);
+    try {
+      const result = await taskClient.listTasks();
+      if (taskRequestVersionRef.current === requestVersion) {
+        setTasks(result.items);
+      }
+    } catch {
+      if (taskRequestVersionRef.current === requestVersion) {
+        setTasksError(true);
+      }
+    } finally {
+      if (taskRequestVersionRef.current === requestVersion) {
+        setIsTasksLoading(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    taskRequestVersionRef.current += 1;
+    setTasks([]);
+    setCompletingTaskId(null);
+    setCompletionResult("");
+    if (isAuthenticated && canReadTasks) void loadTasks();
+  }, [assignment?.assignment_id, canReadTasks, isAuthenticated, taskClient]);
 
   useEffect(() => {
     if (
@@ -398,6 +445,58 @@ function ProductShell({
     setIsDetailsOpen(false);
   };
 
+  const completeTask = async (task: HxyTask) => {
+    const result = completionResult.trim();
+    if (!result || taskActionPending) return;
+    taskRequestVersionRef.current += 1;
+    setIsTasksLoading(false);
+    setTaskActionPending(true);
+    setTasksError(false);
+    try {
+      const response = await taskClient.updateTask(task.id, {
+        status: "completed",
+        result,
+      });
+      setTasks((current) =>
+        current.map((item) =>
+          item.id === response.task.id ? response.task : item,
+        ),
+      );
+      setCompletingTaskId(null);
+      setCompletionResult("");
+    } catch {
+      setTasksError(true);
+    } finally {
+      setTaskActionPending(false);
+    }
+  };
+
+  const createTaskFromAnswer = async (message: ConversationMessage) => {
+    const title = message.next_actions[0]?.trim();
+    if (!assignment || !title || taskActionPending) return;
+    taskRequestVersionRef.current += 1;
+    setIsTasksLoading(false);
+    setTaskActionPending(true);
+    setTasksError(false);
+    try {
+      const response = await taskClient.createTask({
+        title: title.slice(0, 160),
+        details: message.content.slice(0, 5000),
+        priority: "normal",
+        visibility: "assignee",
+        assignee_assignment_id: assignment.assignment_id,
+        source_conversation_id: conversationId ?? undefined,
+        source_message_id: message.id,
+      });
+      setTasks((current) => [response.task, ...current]);
+      setActiveView("tasks");
+    } catch {
+      setTasksError(true);
+    } finally {
+      setTaskActionPending(false);
+    }
+  };
+
   const handleDetailsKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (event.key === "Escape") {
       event.preventDefault();
@@ -541,15 +640,110 @@ function ProductShell({
           aria-live="polite"
           aria-busy={isHistoryLoading || isSending}
         >
-          {activeView !== "conversation" ? (
+          {activeView === "tasks" ? (
+            <div className="task-view">
+              <div className="task-view-heading">
+                <div>
+                  <h1>{viewHeadings.tasks}</h1>
+                  <p>只显示当前岗位可以处理的事项</p>
+                </div>
+                <button type="button" onClick={() => void loadTasks()}>
+                  刷新
+                </button>
+              </div>
+              {isTasksLoading ? <p role="status">正在加载待办</p> : null}
+              {tasksError ? (
+                <div className="task-error" role="alert">
+                  <span>待办没有更新</span>
+                  <button type="button" onClick={() => void loadTasks()}>
+                    重试
+                  </button>
+                </div>
+              ) : null}
+              {!isTasksLoading && tasks.length === 0 ? (
+                <div className="task-empty">
+                  <ListTodo aria-hidden="true" />
+                  <p>暂时没有待办</p>
+                </div>
+              ) : (
+                <div className="task-list">
+                  {tasks.map((task) => (
+                    <article className="task-item" key={task.id}>
+                      <div className="task-item-head">
+                        <div>
+                          <span className={`task-priority is-${task.priority}`}>
+                            {task.priority === "urgent"
+                              ? "紧急"
+                              : task.priority === "high"
+                                ? "重要"
+                                : "普通"}
+                          </span>
+                          <h2>{task.title}</h2>
+                        </div>
+                        <span className="task-status">
+                          {task.status === "completed"
+                            ? "已完成"
+                            : task.status === "in_progress"
+                              ? "进行中"
+                              : "待处理"}
+                        </span>
+                      </div>
+                      {task.details ? <p>{task.details}</p> : null}
+                      {task.result ? (
+                        <p className="task-result">结果：{task.result}</p>
+                      ) : null}
+                      {task.status === "open" || task.status === "in_progress" ? (
+                        completingTaskId === task.id ? (
+                          <div className="task-completion">
+                            <textarea
+                              rows={3}
+                              aria-label="执行结果"
+                              value={completionResult}
+                              onChange={(event) =>
+                                setCompletionResult(event.target.value)
+                              }
+                            />
+                            <div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setCompletingTaskId(null);
+                                  setCompletionResult("");
+                                }}
+                              >
+                                取消
+                              </button>
+                              <button
+                                type="button"
+                                disabled={!completionResult.trim() || taskActionPending}
+                                onClick={() => void completeTask(task)}
+                              >
+                                确认完成
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            className="task-complete-button"
+                            type="button"
+                            onClick={() => setCompletingTaskId(task.id)}
+                          >
+                            完成任务
+                          </button>
+                        )
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : activeView === "profile" ? (
             <div className="empty-state">
               <div className="empty-symbol" aria-hidden="true">
                 <MessageSquare />
               </div>
               <h1>{viewHeadings[activeView]}</h1>
-              <p className="empty-note">
-                {activeView === "tasks" ? "暂时没有待办" : "个人信息尚未接入"}
-              </p>
+              <p className="empty-note">个人信息尚未接入</p>
             </div>
           ) : messages.length === 0 ? (
             <div className="empty-state">
@@ -584,6 +778,16 @@ function ProductShell({
                     key={message.id}
                   >
                     <p>{message.content}</p>
+                    {canManageTasks && message.next_actions.length > 0 ? (
+                      <button
+                        className="answer-task-button"
+                        type="button"
+                        disabled={taskActionPending}
+                        onClick={() => void createTaskFromAnswer(message)}
+                      >
+                        转为待办
+                      </button>
+                    ) : null}
                   </article>
                 ),
               )}
@@ -815,6 +1019,7 @@ interface AppProps {
   sessionLoader?: SessionLoader;
   conversationClient?: ConversationClient;
   materialClient?: MaterialClient;
+  taskClient?: TaskClient;
   clientMessageIdFactory?: () => string;
   materialUploadIdFactory?: () => string;
 }
@@ -824,6 +1029,7 @@ export default function App({
   sessionLoader,
   conversationClient = productConversationClient,
   materialClient = productMaterialClient,
+  taskClient = productTaskClient,
   clientMessageIdFactory = () => crypto.randomUUID(),
   materialUploadIdFactory = () => crypto.randomUUID(),
 }: AppProps) {
@@ -832,6 +1038,7 @@ export default function App({
       <ProductShell
         conversationClient={conversationClient}
         materialClient={materialClient}
+        taskClient={taskClient}
         clientMessageIdFactory={clientMessageIdFactory}
         materialUploadIdFactory={materialUploadIdFactory}
       />
