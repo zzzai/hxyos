@@ -45,7 +45,7 @@ def _public_task(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _can_access_task(assignment: Any, task: dict[str, Any]) -> bool:
+def can_access_task(assignment: Any, task: dict[str, Any]) -> bool:
     if task.get("organization_id") != assignment.organization_id:
         return False
     if assignment.role in {"founder", "hq_operations"}:
@@ -184,7 +184,7 @@ def create_task_router(
         if "tasks:read" not in ROLE_CAPABILITIES.get(assignment.role, ()):
             raise _forbidden()
         task = repository.get_task(str(task_id))
-        if task is None or not _can_access_task(assignment, task):
+        if task is None or not can_access_task(assignment, task):
             raise _not_found()
         if request.status == "cancelled" and "tasks:manage" not in ROLE_CAPABILITIES.get(
             assignment.role, ()

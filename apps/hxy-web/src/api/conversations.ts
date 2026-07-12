@@ -19,6 +19,8 @@ export interface ConversationMessage {
   needs_review: boolean | null;
   sources: AnswerSource[];
   next_actions: string[];
+  result_type?: string | null;
+  actions?: Array<{ type: string; label: string }>;
 }
 
 export interface ConversationSummary {

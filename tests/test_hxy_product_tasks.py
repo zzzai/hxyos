@@ -16,6 +16,7 @@ from apps.api.hxy_product.task_repository import TaskRepository, TaskStateConfli
 
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATION = ROOT / "data" / "migrations" / "015_hxy_product_tasks.sql"
+TASK_LINK_MIGRATION = ROOT / "data" / "migrations" / "016_hxy_product_training.sql"
 
 ACCOUNT_ID = "10000000-0000-0000-0000-000000000001"
 MANAGER_ASSIGNMENT_ID = "20000000-0000-0000-0000-000000000001"
@@ -434,6 +435,16 @@ def test_task_migration_defines_scoped_tasks_and_append_only_events() -> None:
     assert "event_type" in normalized
     assert "htops" not in sql.lower()
     assert "hetang" not in sql.lower()
+
+
+def test_task_link_upgrade_adds_same_store_parent_constraint() -> None:
+    sql = TASK_LINK_MIGRATION.read_text(encoding="utf-8")
+    normalized = " ".join(sql.split())
+
+    assert "ALTER TABLE hxy_product_tasks ADD COLUMN IF NOT EXISTS parent_task_id UUID" in normalized
+    assert "ON hxy_product_tasks (organization_id, store_id, task_id)" in normalized
+    assert "FOREIGN KEY (organization_id, store_id, parent_task_id)" in normalized
+    assert "REFERENCES hxy_product_tasks(organization_id, store_id, task_id)" in normalized
 
 
 def test_task_repository_queries_are_assignment_and_organization_scoped() -> None:

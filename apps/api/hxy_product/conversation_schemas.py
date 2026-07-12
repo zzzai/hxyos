@@ -55,6 +55,8 @@ class ProductMessage(StrictProductModel):
     needs_review: bool | None
     sources: list[ProductSource]
     next_actions: list[str]
+    result_type: str | None = None
+    actions: list[dict[str, str]] = Field(default_factory=list)
 
 
 class ProductConversation(StrictProductModel):

@@ -36,6 +36,11 @@ def _task_from_row(row: dict[str, Any]) -> dict[str, Any]:
             if row.get("source_message_id") is not None
             else None
         ),
+        "parent_task_id": (
+            str(row["parent_task_id"])
+            if row.get("parent_task_id") is not None
+            else None
+        ),
         "title": str(row["title"]),
         "details": str(row.get("details") or ""),
         "priority": str(row["priority"]),
@@ -111,11 +116,11 @@ class TaskRepository:
                 INSERT INTO hxy_product_tasks (
                   organization_id, store_id, creator_assignment_id,
                   assignee_assignment_id, source_conversation_id, source_message_id,
-                  title, details, priority, visibility, due_at
+                  parent_task_id, title, details, priority, visibility, due_at
                 )
                 VALUES (
                   %s::uuid, %s, %s::uuid, %s::uuid, %s::uuid, %s::uuid,
-                  %s, %s, %s, %s, %s
+                  %s::uuid, %s, %s, %s, %s, %s
                 )
                 RETURNING *
                 """,
@@ -126,6 +131,7 @@ class TaskRepository:
                     payload.get("assignee_assignment_id"),
                     payload.get("source_conversation_id"),
                     payload.get("source_message_id"),
+                    payload.get("parent_task_id"),
                     payload["title"],
                     payload.get("details") or "",
                     payload["priority"],

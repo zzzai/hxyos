@@ -42,6 +42,8 @@ def _message_from_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
         "next_actions": (
             payload.get("next_actions") if isinstance(payload.get("next_actions"), list) else []
         ),
+        "result_type": payload.get("result_type"),
+        "actions": payload.get("actions") if isinstance(payload.get("actions"), list) else [],
     }
 
 

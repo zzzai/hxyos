@@ -181,6 +181,8 @@ class FakeConversationRepository:
             "needs_review": payload.get("needs_review"),
             "sources": payload.get("sources", []),
             "next_actions": payload.get("next_actions", []),
+            "result_type": payload.get("result_type"),
+            "actions": payload.get("actions", []),
         }
         self.messages[(assignment_id, conversation_id)].append(assistant_message)
         if trace_payload:
@@ -312,6 +314,36 @@ def test_create_and_list_conversations_use_server_derived_assignment(conversatio
     assert identity_repository.assignment_account_ids == [ACCOUNT_ID, ACCOUNT_ID]
     assert ("create", ASSIGNMENT_ID) in repository.calls
     assert ("list", ASSIGNMENT_ID) in repository.calls
+
+
+def test_store_employee_answer_has_frontdesk_result_envelope(conversation_context) -> None:
+    client, identity_repository, _, _ = conversation_context
+    identity_repository.assignment = FakeAssignment(
+        assignment_id=ASSIGNMENT_ID,
+        organization_id=ORGANIZATION_ID,
+        organization_name="测试组织",
+        store_id="test-store",
+        store_name="测试门店",
+        role="store_employee",
+    )
+
+    response = client.request(
+        "POST",
+        f"/api/v1/conversations/{CONVERSATION_ID}/messages",
+        headers=bearer(),
+        json={
+            "content": "顾客问泡脚能不能治疗失眠，我该怎么说？",
+            "client_message_id": CLIENT_MESSAGE_ID,
+        },
+    )
+
+    assert response.status_code == 200
+    assistant = response.json()["assistant_message"]
+    assert assistant["result_type"] == "frontdesk_answer"
+    assert assistant["actions"] == [
+        {"type": "training", "label": "练习这个说法"},
+        {"type": "issue", "label": "上报现场问题"},
+    ]
 
 
 def test_conversation_create_rejects_browser_supplied_authority(conversation_context) -> None:

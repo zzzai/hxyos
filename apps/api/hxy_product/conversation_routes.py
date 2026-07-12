@@ -16,6 +16,7 @@ from .conversation_schemas import (
     SendMessageRequest,
     SendMessageResponse,
 )
+from .public_safety import redact_internal_paths
 from .routes import ROLE_CAPABILITIES, assignment_for_principal
 
 
@@ -28,21 +29,10 @@ _SOURCE_STRENGTHS = frozenset(
     {"high", "medium", "low", "reference", "candidate", "approved", "action_asset"}
 )
 
-_ABSOLUTE_PATH_RE = re.compile(
-    r"(?<![:/\w])(?:[A-Za-z]:[\\/]|/(?!/))[^\s，。；;]+"
-)
-_HXY_RELATIVE_PATH_RE = re.compile(
-    r"(?<!\w)(?:knowledge|data|apps|packages|ops|scripts|tests)/(?:[^\s，。；;]+)"
-)
 _MATERIAL_SOURCE_URL_RE = re.compile(
     r"^/api/v1/materials/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/content$",
     re.IGNORECASE,
 )
-
-
-def _redact_internal_paths(value: str) -> str:
-    redacted = _ABSOLUTE_PATH_RE.sub("[已隐藏内部路径]", value)
-    return _HXY_RELATIVE_PATH_RE.sub("[已隐藏内部路径]", redacted)
 
 
 def _safe_title(value: Any) -> str:
@@ -50,7 +40,7 @@ def _safe_title(value: Any) -> str:
     normalized = title.replace("\\", "/")
     if "/" in normalized:
         title = PurePath(normalized).name or "资料来源"
-    return _redact_internal_paths(title)[:160]
+    return redact_internal_paths(title)[:160]
 
 
 def _safe_enum(value: Any, allowed: frozenset[str], default: str) -> str:
@@ -71,7 +61,7 @@ def _safe_sources(answer: dict[str, Any]) -> list[dict[str, str]]:
     for item in raw_sources[:8]:
         if not isinstance(item, dict):
             continue
-        excerpt = _redact_internal_paths(str(item.get("excerpt") or item.get("content") or "").strip())
+        excerpt = redact_internal_paths(str(item.get("excerpt") or item.get("content") or "").strip())
         strength = _safe_enum(
             item.get("strength") or item.get("status"),
             _SOURCE_STRENGTHS,
@@ -100,12 +90,12 @@ def _safe_answer_id(value: Any) -> str | None:
 def product_answer_payload(answer: dict[str, Any]) -> dict[str, Any]:
     raw_actions = answer.get("next_actions") or []
     next_actions = [
-        _redact_internal_paths(str(action).strip())[:300]
+        redact_internal_paths(str(action).strip())[:300]
         for action in raw_actions
         if str(action).strip()
     ][:3]
     return {
-        "answer": _redact_internal_paths(str(answer.get("answer") or "").strip()),
+        "answer": redact_internal_paths(str(answer.get("answer") or "").strip()),
         "answer_status": _safe_enum(answer.get("answer_status"), _ANSWER_STATUSES, "AI 草稿"),
         "confidence": _safe_enum(answer.get("confidence"), _CONFIDENCE_LEVELS, "low"),
         "needs_review": bool(answer.get("needs_review", True)),
@@ -115,12 +105,34 @@ def product_answer_payload(answer: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _role_result_envelope(role: str) -> dict[str, Any]:
+    if role == "store_employee":
+        return {
+            "result_type": "frontdesk_answer",
+            "actions": [
+                {"type": "training", "label": "练习这个说法"},
+                {"type": "issue", "label": "上报现场问题"},
+            ],
+        }
+    if role == "store_manager":
+        return {
+            "result_type": "operating_answer",
+            "actions": [{"type": "tasks", "label": "转为门店待办"}],
+        }
+    if role in {"founder", "hq_operations"}:
+        return {
+            "result_type": "decision_support",
+            "actions": [{"type": "tasks", "label": "转为下一项任务"}],
+        }
+    return {"result_type": "system_answer", "actions": []}
+
+
 def _public_message(record: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": record["id"],
         "conversation_id": record["conversation_id"],
         "role": record["role"],
-        "content": _redact_internal_paths(str(record.get("content") or "")),
+        "content": redact_internal_paths(str(record.get("content") or "")),
         "created_at": record["created_at"],
         "answer_id": _safe_answer_id(record.get("answer_id")),
         "answer_status": (
@@ -137,7 +149,7 @@ def _public_message(record: dict[str, Any]) -> dict[str, Any]:
         "sources": [
             {
                 "title": _safe_title(item.get("title")),
-                "excerpt": _redact_internal_paths(str(item.get("excerpt") or ""))[:500],
+                "excerpt": redact_internal_paths(str(item.get("excerpt") or ""))[:500],
                 "strength": _safe_enum(
                     item.get("strength"),
                     _SOURCE_STRENGTHS,
@@ -149,7 +161,16 @@ def _public_message(record: dict[str, Any]) -> dict[str, Any]:
             if isinstance(item, dict)
         ][:8],
         "next_actions": [
-            _redact_internal_paths(str(item))[:300] for item in (record.get("next_actions") or [])
+            redact_internal_paths(str(item))[:300] for item in (record.get("next_actions") or [])
+        ][:3],
+        "result_type": str(record.get("result_type") or "") or None,
+        "actions": [
+            {
+                "type": str(item.get("type") or "")[:40],
+                "label": redact_internal_paths(str(item.get("label") or ""))[:120],
+            }
+            for item in (record.get("actions") or [])
+            if isinstance(item, dict) and item.get("type") and item.get("label")
         ][:3],
     }
 
@@ -158,7 +179,7 @@ def _public_conversation(record: dict[str, Any]) -> dict[str, Any]:
     last_message = record.get("last_message")
     return {
         "id": record["id"],
-        "title": _redact_internal_paths(str(record.get("title") or "新对话"))[:120],
+        "title": redact_internal_paths(str(record.get("title") or "新对话"))[:120],
         "created_at": record["created_at"],
         "updated_at": record["updated_at"],
         "last_message_at": record.get("last_message_at"),
@@ -272,6 +293,7 @@ def create_conversation_router(
             try:
                 answer = answer_generator(question=request.content, assignment=assignment)
                 safe_payload = product_answer_payload(answer)
+                safe_payload.update(_role_result_envelope(assignment.role))
                 assistant_message = repository.complete_assistant_message(
                     assignment.assignment_id,
                     conversation_key,

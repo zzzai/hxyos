@@ -82,6 +82,7 @@ from hxy_knowledge.workspace_events import (
 )
 from hxy_product.auth import ProductAuthSettings
 from hxy_product.knowledge_context import AssignmentKnowledgeRepository
+from hxy_product.journey_routes import create_journey_router
 from hxy_product.conversation_repository import ConversationRepository
 from hxy_product.conversation_routes import create_conversation_router
 from hxy_product.material_repository import MaterialRepository
@@ -91,6 +92,7 @@ from hxy_product.repository import IdentityRepository
 from hxy_product.routes import create_identity_router
 from hxy_product.task_repository import TaskRepository
 from hxy_product.task_routes import create_task_router
+from hxy_product.training_repository import ProductTrainingRepository
 
 
 RepositoryFactory = Callable[[], Any]
@@ -384,6 +386,15 @@ def _default_task_repository_factory(database_url: str) -> RepositoryFactory:
         if not database_url:
             raise HTTPException(status_code=503, detail="HXY_DATABASE_URL is not configured")
         return TaskRepository(database_url)
+
+    return make_repository
+
+
+def _default_product_training_repository_factory(database_url: str) -> RepositoryFactory:
+    def make_repository() -> ProductTrainingRepository:
+        if not database_url:
+            raise HTTPException(status_code=503, detail="HXY_DATABASE_URL is not configured")
+        return ProductTrainingRepository(database_url)
 
     return make_repository
 
@@ -3099,6 +3110,96 @@ def _apply_training_compliance_preflight(result: dict[str, Any], preflight: dict
     result["dimensions"] = dimensions
 
 
+def _evaluate_training_content(
+    *,
+    request: TrainingEvaluateRequest,
+    model_router: Any,
+    root_dir: Path,
+) -> dict[str, Any]:
+    if not request.employee_answer.strip():
+        raise HTTPException(status_code=400, detail="employee_answer is required")
+    rule_result = evaluate_training_script(request)
+    result = _evaluate_training_with_model(
+        model_router=model_router,
+        request=request,
+        rule_result=rule_result,
+    )
+    training_preflight = _compliance_preflight_for_text(
+        request.employee_answer,
+        workflow_type="staff_script",
+        channel="员工话术",
+        audience="staff",
+        root_dir=root_dir,
+    )
+    _apply_training_compliance_preflight(result, training_preflight)
+    return result
+
+
+def _run_training_evaluation(
+    *,
+    request: TrainingEvaluateRequest,
+    model_router: Any,
+    root_dir: Path,
+    repository: Any,
+) -> dict[str, Any]:
+    result = _evaluate_training_content(
+        request=request,
+        model_router=model_router,
+        root_dir=root_dir,
+    )
+    review_task_id = repository.create_review_task(
+        {
+            "answer_id": None,
+            "question": result["customer_question"],
+            "intent": "training",
+            "reason": (
+                "training_retrain"
+                if result["needs_retrain"]
+                else "training_answer_card_candidate"
+            ),
+            "priority": "high" if result["needs_retrain"] else "low",
+            "note": result["employee_answer"],
+            "correction_package": result["correction_package"],
+            "answer_card_draft": (
+                None if result["needs_retrain"] else result["answer_card_draft"]
+            ),
+            "training_evaluation": {
+                "score": result["score"],
+                "level": result["level"],
+                "dimensions": result["dimensions"],
+            },
+        }
+    )
+    result["review_task_id"] = review_task_id
+    result["training_session_id"] = repository.save_training_session(
+        {
+            "employee_id": request.employee_id.strip() or "employee-local",
+            "employee_name": request.employee_name.strip() or "门店员工",
+            "store_id": request.store_id.strip() or "pilot-store",
+            "store_name": request.store_name.strip() or "荷小悦试点门店",
+            "training_item": result["training_item"],
+            "customer_question": result["customer_question"],
+            "employee_answer": result["employee_answer"],
+            "scenario": result["scenario"],
+            "role": result["role"],
+            "score": result["score"],
+            "level": result["level"],
+            "needs_retrain": result["needs_retrain"],
+            "dimensions": result["dimensions"],
+            "correction_points": result["correction_points"],
+            "follow_up_questions": result["follow_up_questions"],
+            "retraining_task": result["retraining_task"],
+            "answer_card_draft": result["answer_card_draft"],
+            "capability_profile": result.get("capability_profile") or {},
+            "adaptive_retrain_plan": result.get("adaptive_retrain_plan") or {},
+            "operating_metric_links": result.get("operating_metric_links") or [],
+            "review_task_id": review_task_id,
+            "payload": result,
+        }
+    )
+    return result
+
+
 AUTOMATION_TASK_CATALOG: list[dict[str, Any]] = [
     {
         "task_id": "automation_ingest_loop_manual",
@@ -3479,6 +3580,8 @@ def create_app(
     conversation_repository_factory: RepositoryFactory | None = None,
     material_repository_factory: RepositoryFactory | None = None,
     task_repository_factory: RepositoryFactory | None = None,
+    product_training_repository_factory: RepositoryFactory | None = None,
+    journey_training_evaluator: Callable[..., dict[str, Any]] | None = None,
     material_understanding_builder: Callable[..., dict[str, Any]] | None = None,
     product_auth_settings: ProductAuthSettings | None = None,
 ) -> FastAPI:
@@ -3505,6 +3608,10 @@ def create_app(
     make_task_repository = (
         task_repository_factory or _default_task_repository_factory(settings.database_url)
     )
+    make_product_training_repository = (
+        product_training_repository_factory
+        or _default_product_training_repository_factory(settings.database_url)
+    )
     build_product_material_understanding = (
         material_understanding_builder or build_material_understanding
     )
@@ -3526,6 +3633,25 @@ def create_app(
             make_product_identity_repository,
             resolved_product_auth_settings,
         )
+    )
+
+    def evaluate_journey_training(*, request: Any, principal: Any, assignment: Any) -> dict[str, Any]:
+        legacy_request = TrainingEvaluateRequest(
+            employee_answer=request.employee_answer,
+            customer_question=request.customer_question,
+            employee_id=principal.account_id,
+            employee_name=principal.display_name,
+            store_id=assignment.store_id or "organization",
+            store_name=assignment.store_name or assignment.organization_name,
+        )
+        return _evaluate_training_content(
+            request=legacy_request,
+            model_router=model_router,
+            root_dir=resolved_root,
+        )
+
+    resolved_journey_training_evaluator = (
+        journey_training_evaluator or evaluate_journey_training
     )
     answer_hooks = AnswerServiceHooks(
         classify_frontdoor=_classify_frontdoor,
@@ -3652,6 +3778,14 @@ def create_app(
         create_task_router(
             make_product_identity_repository,
             make_task_repository,
+        )
+    )
+    app.include_router(
+        create_journey_router(
+            make_product_identity_repository,
+            make_task_repository,
+            make_product_training_repository,
+            resolved_journey_training_evaluator,
         )
     )
 
@@ -4656,82 +4790,12 @@ def create_app(
 
     @app.post("/api/operating-brain/training/evaluate", dependencies=[Depends(require_api_token)])
     async def operating_brain_training_evaluate(request: TrainingEvaluateRequest) -> dict[str, Any]:
-        if not request.employee_answer.strip():
-            raise HTTPException(status_code=400, detail="employee_answer is required")
-        rule_result = evaluate_training_script(request)
-        result = _evaluate_training_with_model(model_router=model_router, request=request, rule_result=rule_result)
-        training_preflight = _compliance_preflight_for_text(
-            request.employee_answer,
-            workflow_type="staff_script",
-            channel="员工话术",
-            audience="staff",
+        return _run_training_evaluation(
+            request=request,
+            model_router=model_router,
             root_dir=resolved_root,
+            repository=make_repository(),
         )
-        _apply_training_compliance_preflight(result, training_preflight)
-        repo = make_repository()
-        if result["needs_retrain"]:
-            review_task_id = repo.create_review_task(
-                {
-                    "answer_id": None,
-                    "question": result["customer_question"],
-                    "intent": "training",
-                    "reason": "training_retrain",
-                    "priority": "high",
-                    "note": result["employee_answer"],
-                    "correction_package": result["correction_package"],
-                    "training_evaluation": {
-                        "score": result["score"],
-                        "level": result["level"],
-                        "dimensions": result["dimensions"],
-                    },
-                }
-            )
-        else:
-            review_task_id = repo.create_review_task(
-                {
-                    "answer_id": None,
-                    "question": result["customer_question"],
-                    "intent": "training",
-                    "reason": "training_answer_card_candidate",
-                    "priority": "low",
-                    "note": result["employee_answer"],
-                    "correction_package": result["correction_package"],
-                    "answer_card_draft": result["answer_card_draft"],
-                    "training_evaluation": {
-                        "score": result["score"],
-                        "level": result["level"],
-                        "dimensions": result["dimensions"],
-                    },
-                }
-            )
-        result["review_task_id"] = review_task_id
-        result["training_session_id"] = repo.save_training_session(
-            {
-                "employee_id": request.employee_id.strip() or "employee-local",
-                "employee_name": request.employee_name.strip() or "门店员工",
-                "store_id": request.store_id.strip() or "pilot-store",
-                "store_name": request.store_name.strip() or "荷小悦试点门店",
-                "training_item": result["training_item"],
-                "customer_question": result["customer_question"],
-                "employee_answer": result["employee_answer"],
-                "scenario": result["scenario"],
-                "role": result["role"],
-                "score": result["score"],
-                "level": result["level"],
-                "needs_retrain": result["needs_retrain"],
-                "dimensions": result["dimensions"],
-                "correction_points": result["correction_points"],
-                "follow_up_questions": result["follow_up_questions"],
-                "retraining_task": result["retraining_task"],
-                "answer_card_draft": result["answer_card_draft"],
-                "capability_profile": result.get("capability_profile") or {},
-                "adaptive_retrain_plan": result.get("adaptive_retrain_plan") or {},
-                "operating_metric_links": result.get("operating_metric_links") or [],
-                "review_task_id": review_task_id,
-                "payload": result,
-            }
-        )
-        return result
 
     @app.get("/api/operating-brain/training/manager-summary")
     async def operating_brain_training_manager_summary(

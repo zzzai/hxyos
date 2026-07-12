@@ -42,10 +42,36 @@ const MANAGER_SESSION = {
     role_label: "店长",
     capabilities: [
       "conversation:use",
+      "issues:create",
       "materials:create",
       "materials:read",
       "store:operate",
       "store:read",
+      "tasks:manage",
+      "tasks:read",
+    ],
+  },
+};
+
+const HQ_SESSION = {
+  ...TEST_SESSION,
+  user: {
+    account_id: "account-test-hq",
+    display_name: "测试总部运营",
+  },
+  active_assignment: {
+    ...TEST_SESSION.active_assignment,
+    assignment_id: "assignment-test-hq",
+    store: null,
+    role: "hq_operations" as const,
+    role_label: "总部运营",
+    capabilities: [
+      "conversation:use",
+      "materials:create",
+      "materials:read",
+      "operations:manage",
+      "organization:read",
+      "stores:read",
       "tasks:manage",
       "tasks:read",
     ],
@@ -178,6 +204,59 @@ function taskGateway(overrides: Record<string, unknown> = {}) {
         created_at: "2026-07-12T09:00:00Z",
         updated_at: "2026-07-12T10:00:00Z",
       },
+    }),
+    ...overrides,
+  };
+}
+
+function journeyGateway(overrides: Record<string, unknown> = {}) {
+  return {
+    loadSuggestions: vi.fn().mockResolvedValue({
+      items: [
+        { type: "ask", label: "询问该怎么说", prompt: "顾客这样问时我该怎么说？" },
+        { type: "training", label: "练习一次接待话术", prompt: null },
+        { type: "issue", label: "上报一个门店问题", prompt: null },
+      ],
+    }),
+    evaluateTraining: vi.fn().mockResolvedValue({
+      result_type: "training_result",
+      primary_result: {
+        score: 68,
+        level: "retrain",
+        needs_retrain: true,
+        standard_script: "可以说泡脚有助于放松，但不能替代医疗诊断或治疗。",
+        correction_points: ["不要承诺治疗效果", "先回应顾客感受"],
+      },
+      actions: [{ type: "training", label: "再练一次合规表达" }],
+      sources: [],
+      limitations: ["训练结果用于岗位练习，不替代店长现场验收。"],
+      artifact: { type: "training_session", id: "training-one" },
+    }),
+    reportIssue: vi.fn().mockResolvedValue({
+      result_type: "issue_report",
+      primary_result: {
+        task: {
+          id: "task-from-issue",
+          title: "顾客听不懂项目区别",
+          details: "连续两位顾客提出相同问题。",
+          priority: "normal",
+          status: "open",
+          visibility: "store",
+          store_id: "store-test",
+          assignee_assignment_id: null,
+          source_conversation_id: null,
+          source_message_id: null,
+          result: null,
+          due_at: null,
+          completed_at: null,
+          created_at: "2026-07-12T12:00:00Z",
+          updated_at: "2026-07-12T12:00:00Z",
+        },
+      },
+      actions: [{ type: "tasks", label: "查看门店待办" }],
+      sources: [],
+      limitations: ["问题已进入当前门店待办，处理结论需由负责人填写。"],
+      artifact: { type: "task", id: "task-from-issue" },
     }),
     ...overrides,
   };
@@ -398,6 +477,64 @@ describe("HXYOS product shell", () => {
     ).toBeVisible();
   });
 
+  it("creates a useful founder task from the task action without next actions", async () => {
+    const user = userEvent.setup();
+    const baseResponse = await conversationGateway().sendMessage();
+    const conversations = conversationGateway({
+      sendMessage: vi.fn().mockResolvedValue({
+        ...baseResponse,
+        assistant_message: {
+          ...baseResponse.assistant_message,
+          content: "首店已进入现场验收阶段。",
+          next_actions: [],
+          actions: [{ type: "tasks", label: "转为下一项任务" }],
+        },
+      }),
+    });
+    const tasks = taskGateway({
+      listTasks: vi.fn().mockResolvedValue({ items: [], count: 0 }),
+      createTask: vi.fn().mockResolvedValue({
+        task: {
+          id: "task-founder-follow-up",
+          title: "跟进本次回答",
+          details: "首店已进入现场验收阶段。",
+          priority: "normal",
+          status: "open",
+          visibility: "assignee",
+          store_id: null,
+          assignee_assignment_id: "assignment-test-manager",
+          source_conversation_id: "conversation-new",
+          source_message_id: "message-assistant",
+          result: null,
+          due_at: null,
+          completed_at: null,
+          created_at: "2026-07-12T09:00:00Z",
+          updated_at: "2026-07-12T09:00:00Z",
+        },
+      }),
+    });
+    render(
+      <App
+        initialSession={MANAGER_SESSION}
+        conversationClient={conversations}
+        taskClient={tasks}
+      />,
+    );
+
+    await user.type(
+      screen.getByRole("textbox", { name: "告诉 HXYOS 你要做什么" }),
+      "开业进度怎么样？",
+    );
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    await user.click(
+      await screen.findByRole("button", { name: "转为下一项任务" }),
+    );
+
+    expect(tasks.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "跟进本次回答" }),
+    );
+  });
+
   it("does not let an older task request overwrite a newer refresh", async () => {
     const user = userEvent.setup();
     let resolveOlder: ((value: unknown) => void) | undefined;
@@ -487,6 +624,309 @@ describe("HXYOS product shell", () => {
     );
     expect(suggestions.length).toBeGreaterThan(0);
     expect(suggestions.length).toBeLessThanOrEqual(3);
+  });
+
+  it("respects an intentionally empty server suggestion set", async () => {
+    const journeys = journeyGateway({
+      loadSuggestions: vi.fn().mockResolvedValue({ items: [] }),
+    });
+    render(<App initialSession={TEST_SESSION} journeyClient={journeys} />);
+
+    await waitFor(() => expect(journeys.loadSuggestions).toHaveBeenCalled());
+    expect(screen.queryByTestId("suggestions")).not.toBeInTheDocument();
+  });
+
+  it("does not show a fallback action outside the assignment capabilities", async () => {
+    const journeys = journeyGateway({
+      loadSuggestions: vi.fn().mockRejectedValue(new Error("unavailable")),
+    });
+    render(<App initialSession={HQ_SESSION} journeyClient={journeys} />);
+
+    expect(await screen.findByRole("button", { name: "查看门店待办" })).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "上报一个运营问题" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens training directly from a server-provided role action", async () => {
+    const user = userEvent.setup();
+    const journeys = journeyGateway();
+    render(<App initialSession={TEST_SESSION} journeyClient={journeys} />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "练习一次接待话术" }),
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "接待话术练习" }),
+    ).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "顾客的问题" })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "我的回答" })).toBeVisible();
+  });
+
+  it("scores a practice answer and shows concrete correction", async () => {
+    const user = userEvent.setup();
+    const journeys = journeyGateway();
+    render(<App initialSession={TEST_SESSION} journeyClient={journeys} />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "练习一次接待话术" }),
+    );
+    await user.clear(screen.getByRole("textbox", { name: "顾客的问题" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "顾客的问题" }),
+      "这个能治疗失眠吗？",
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "我的回答" }),
+      "肯定可以治好。",
+    );
+    await user.click(screen.getByRole("button", { name: "提交练习" }));
+
+    expect(await screen.findByText("68 分")).toBeVisible();
+    expect(screen.getByText("不要承诺治疗效果")).toBeVisible();
+    expect(
+      screen.getByText("可以说泡脚有助于放松，但不能替代医疗诊断或治疗。"),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "再练一次合规表达" })).toBeVisible();
+    expect(
+      screen.getByText("训练结果用于岗位练习，不替代店长现场验收。"),
+    ).toBeVisible();
+    expect(journeys.evaluateTraining).toHaveBeenCalledWith({
+      customer_question: "这个能治疗失眠吗？",
+      employee_answer: "肯定可以治好。",
+    });
+  });
+
+  it("starts answer practice with the actual customer question", async () => {
+    const user = userEvent.setup();
+    const baseResponse = await conversationGateway().sendMessage();
+    const conversations = conversationGateway({
+      sendMessage: vi.fn().mockResolvedValue({
+        ...baseResponse,
+        assistant_message: {
+          ...baseResponse.assistant_message,
+          actions: [{ type: "training", label: "练习这个说法" }],
+        },
+      }),
+    });
+    render(
+      <App initialSession={TEST_SESSION} conversationClient={conversations} />,
+    );
+
+    const question = "顾客皮肤敏感，应该怎么介绍泡脚服务？";
+    await user.type(
+      screen.getByRole("textbox", { name: "告诉 HXYOS 你要做什么" }),
+      question,
+    );
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    await user.click(
+      await screen.findByRole("button", { name: "练习这个说法" }),
+    );
+
+    expect(screen.getByRole("textbox", { name: "顾客的问题" })).toHaveValue(
+      question,
+    );
+  });
+
+  it("reports a store issue and moves it into visible tasks", async () => {
+    const user = userEvent.setup();
+    const journeys = journeyGateway();
+    const tasks = taskGateway({
+      listTasks: vi.fn().mockResolvedValue({ items: [], count: 0 }),
+    });
+    render(
+      <App
+        initialSession={TEST_SESSION}
+        journeyClient={journeys}
+        taskClient={tasks}
+      />,
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: "上报一个门店问题" }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "问题标题" }),
+      "顾客听不懂项目区别",
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "问题详情" }),
+      "连续两位顾客提出相同问题。",
+    );
+    await user.click(screen.getByRole("button", { name: "提交问题" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "顾客听不懂项目区别" }),
+    ).toBeVisible();
+    expect(journeys.reportIssue).toHaveBeenCalledWith({
+      title: "顾客听不懂项目区别",
+      details: "连续两位顾客提出相同问题。",
+    });
+  });
+
+  it("links a manager issue to the task it came from", async () => {
+    const user = userEvent.setup();
+    const journeys = journeyGateway();
+    render(
+      <App
+        initialSession={MANAGER_SESSION}
+        journeyClient={journeys}
+        taskClient={taskGateway()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "待办" }));
+    await user.click(
+      await screen.findByRole("button", { name: "反馈完成今日开店检查的问题" }),
+    );
+    expect(screen.getByText("关联待办：完成今日开店检查")).toBeVisible();
+    await user.type(screen.getByRole("textbox", { name: "问题标题" }), "物料不足");
+    await user.type(screen.getByRole("textbox", { name: "问题详情" }), "缺少顾客须知");
+    await user.click(screen.getByRole("button", { name: "提交问题" }));
+
+    expect(journeys.reportIssue).toHaveBeenCalledWith({
+      title: "物料不足",
+      details: "缺少顾客须知",
+      source_task_id: "task-one",
+    });
+  });
+
+  it("ignores a late issue response after the user leaves that journey", async () => {
+    const user = userEvent.setup();
+    let resolveIssue: ((value: unknown) => void) | undefined;
+    const pendingIssue = new Promise((resolve) => {
+      resolveIssue = resolve;
+    });
+    const journeys = journeyGateway({
+      reportIssue: vi.fn().mockReturnValue(pendingIssue),
+    });
+    render(<App initialSession={TEST_SESSION} journeyClient={journeys} />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "上报一个门店问题" }),
+    );
+    await user.type(screen.getByRole("textbox", { name: "问题标题" }), "旧问题");
+    await user.type(screen.getByRole("textbox", { name: "问题详情" }), "旧详情");
+    await user.click(screen.getByRole("button", { name: "提交问题" }));
+    await user.click(screen.getByRole("button", { name: "返回对话" }));
+    await user.click(screen.getByRole("button", { name: "练习一次接待话术" }));
+
+    await act(async () => {
+      resolveIssue?.(await journeyGateway().reportIssue());
+    });
+
+    expect(screen.getByRole("heading", { name: "接待话术练习" })).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "顾客听不懂项目区别" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("ignores a late issue response after starting a new conversation", async () => {
+    const user = userEvent.setup();
+    let resolveIssue: ((value: unknown) => void) | undefined;
+    const pendingIssue = new Promise((resolve) => {
+      resolveIssue = resolve;
+    });
+    const baseResponse = await conversationGateway().sendMessage();
+    const conversations = conversationGateway({
+      sendMessage: vi.fn().mockResolvedValue({
+        ...baseResponse,
+        assistant_message: {
+          ...baseResponse.assistant_message,
+          actions: [{ type: "issue", label: "上报现场问题" }],
+        },
+      }),
+    });
+    const journeys = journeyGateway({
+      reportIssue: vi.fn().mockReturnValue(pendingIssue),
+    });
+    render(
+      <App
+        initialSession={TEST_SESSION}
+        conversationClient={conversations}
+        journeyClient={journeys}
+      />,
+    );
+
+    await user.type(
+      screen.getByRole("textbox", { name: "告诉 HXYOS 你要做什么" }),
+      "今天遇到一个问题",
+    );
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    await user.click(await screen.findByRole("button", { name: "上报现场问题" }));
+    await user.type(screen.getByRole("textbox", { name: "问题标题" }), "旧问题");
+    await user.type(screen.getByRole("textbox", { name: "问题详情" }), "旧详情");
+    await user.click(screen.getByRole("button", { name: "提交问题" }));
+    await user.click(screen.getByRole("button", { name: "新建对话" }));
+
+    await act(async () => {
+      resolveIssue?.(await journeyGateway().reportIssue());
+    });
+
+    expect(screen.getByRole("heading", { name: "今天想先处理什么？" })).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "顾客听不懂项目区别" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides persisted journey actions outside current capabilities", async () => {
+    const conversations = conversationGateway({
+      listConversations: vi.fn().mockResolvedValue({
+        items: [
+          {
+            id: "conversation-old-role",
+            title: "旧岗位对话",
+            created_at: "2026-07-12T09:00:00Z",
+            updated_at: "2026-07-12T09:00:00Z",
+            last_message_at: "2026-07-12T09:00:00Z",
+            message_count: 1,
+            last_message: null,
+          },
+        ],
+      }),
+      getConversation: vi.fn().mockResolvedValue({
+        conversation: {
+          id: "conversation-old-role",
+          title: "旧岗位对话",
+          created_at: "2026-07-12T09:00:00Z",
+          updated_at: "2026-07-12T09:00:00Z",
+          last_message_at: "2026-07-12T09:00:00Z",
+          message_count: 1,
+          last_message: null,
+        },
+        messages: [
+          {
+            id: "message-old-role",
+            conversation_id: "conversation-old-role",
+            role: "assistant",
+            content: "旧岗位回答",
+            created_at: "2026-07-12T09:00:00Z",
+            answer_id: null,
+            answer_status: "AI 草稿",
+            confidence: "medium",
+            needs_review: true,
+            sources: [],
+            next_actions: [],
+            actions: [
+              { type: "training", label: "练习这个说法" },
+              { type: "issue", label: "上报现场问题" },
+            ],
+          },
+        ],
+      }),
+    });
+    render(
+      <App initialSession={HQ_SESSION} conversationClient={conversations} />,
+    );
+
+    expect(await screen.findByText("旧岗位回答")).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "练习这个说法" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "上报现场问题" }),
+    ).not.toBeInTheDocument();
   });
 
   it("derives role, store, and suggestions from the authenticated session", () => {

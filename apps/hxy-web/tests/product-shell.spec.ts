@@ -19,6 +19,88 @@ const TEST_SESSION = {
   available_assignments: [],
 };
 
+const ROLE_SESSIONS = {
+  founder: {
+    user: { account_id: "account-founder", display_name: "测试创始人" },
+    active_assignment: {
+      assignment_id: "assignment-founder",
+      organization: { id: "organization-e2e", name: "荷小悦" },
+      store: null,
+      role: "founder",
+      role_label: "创始人",
+      capabilities: [
+        "conversation:use",
+        "materials:create",
+        "materials:read",
+        "organization:read",
+        "stores:read",
+        "tasks:manage",
+        "tasks:read",
+      ],
+    },
+    available_assignments: [],
+  },
+  store_manager: {
+    user: { account_id: "account-manager", display_name: "测试店长" },
+    active_assignment: {
+      assignment_id: "assignment-manager",
+      organization: { id: "organization-e2e", name: "荷小悦" },
+      store: { id: "store-e2e", name: "首店" },
+      role: "store_manager",
+      role_label: "店长",
+      capabilities: [
+        "conversation:use",
+        "issues:create",
+        "materials:create",
+        "materials:read",
+        "store:operate",
+        "store:read",
+        "tasks:manage",
+        "tasks:read",
+      ],
+    },
+    available_assignments: [],
+  },
+  store_employee: {
+    user: { account_id: "account-employee", display_name: "测试店员" },
+    active_assignment: {
+      assignment_id: "assignment-employee",
+      organization: { id: "organization-e2e", name: "荷小悦" },
+      store: { id: "store-e2e", name: "首店" },
+      role: "store_employee",
+      role_label: "门店员工",
+      capabilities: [
+        "conversation:use",
+        "issues:create",
+        "materials:create",
+        "materials:read",
+        "store:read",
+        "tasks:read",
+        "training:practice",
+      ],
+    },
+    available_assignments: [],
+  },
+} as const;
+
+const OPENING_TASK = {
+  id: "task-opening",
+  title: "检查开业物料",
+  details: "核对接待区和员工用品。",
+  priority: "high",
+  status: "open",
+  visibility: "store",
+  store_id: "store-e2e",
+  assignee_assignment_id: null,
+  source_conversation_id: null,
+  source_message_id: null,
+  result: null,
+  due_at: null,
+  completed_at: null,
+  created_at: "2026-07-12T09:00:00Z",
+  updated_at: "2026-07-12T09:00:00Z",
+};
+
 const PROCESSING_MATERIAL = {
   id: "70000000-0000-0000-0000-000000000001",
   file_name: "首店接待流程.md",
@@ -141,6 +223,164 @@ async function mockProductApi(page: Page) {
       json: { material: PROCESSING_MATERIAL },
     });
   });
+}
+
+async function mockRoleJourneyApi(
+  page: Page,
+  role: keyof typeof ROLE_SESSIONS,
+) {
+  await mockProductApi(page);
+  const session = ROLE_SESSIONS[role];
+  let tasks: Array<Record<string, unknown>> =
+    role === "store_manager" ? [OPENING_TASK] : [];
+  let lastIssueRequest: Record<string, unknown> | null = null;
+
+  await page.route("**/api/v1/me", (route) =>
+    route.fulfill({ status: 200, json: session }),
+  );
+  await page.route("**/api/v1/journeys/suggestions", (route) => {
+    const items = {
+      founder: [
+        { type: "ask", label: "询问当前开业进度", prompt: "现在开业进度怎么样？" },
+        { type: "tasks", label: "查看今天的关键事项" },
+      ],
+      store_manager: [
+        { type: "tasks", label: "打开今天的待办" },
+        { type: "issue", label: "上报一个门店问题" },
+      ],
+      store_employee: [
+        { type: "ask", label: "询问该怎么说", prompt: "顾客这样问时我该怎么说？" },
+        { type: "training", label: "练习一次接待话术" },
+        { type: "issue", label: "上报一个门店问题" },
+      ],
+    }[role];
+    return route.fulfill({ status: 200, json: { items } });
+  });
+  await page.route("**/api/v1/tasks", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({ status: 200, json: { items: tasks, count: tasks.length } });
+      return;
+    }
+    const request = route.request().postDataJSON();
+    const task = {
+      ...OPENING_TASK,
+      id: "task-from-answer",
+      title: request.title,
+      details: request.details,
+      visibility: request.visibility,
+      store_id: null,
+      assignee_assignment_id: request.assignee_assignment_id,
+      source_conversation_id: request.source_conversation_id,
+      source_message_id: request.source_message_id,
+    };
+    tasks = [task, ...tasks];
+    await route.fulfill({ status: 201, json: { task } });
+  });
+  await page.route("**/api/v1/issues", async (route) => {
+    const request = route.request().postDataJSON();
+    lastIssueRequest = request;
+    const task = {
+      ...OPENING_TASK,
+      id: "task-from-issue",
+      title: request.title,
+      details: request.details,
+      priority: "normal",
+    };
+    tasks = [task, ...tasks];
+    await route.fulfill({
+      status: 201,
+      json: {
+        result_type: "issue_report",
+        primary_result: { task },
+        actions: [{ type: "tasks", label: "查看门店待办" }],
+        sources: [],
+        limitations: ["问题已进入当前门店待办，处理结论需由负责人填写。"],
+        artifact: { type: "task", id: task.id },
+      },
+    });
+  });
+  await page.route("**/api/v1/journeys/training/evaluate", (route) =>
+    route.fulfill({
+      status: 200,
+      json: {
+        result_type: "training_result",
+        primary_result: {
+          score: 68,
+          level: "retrain",
+          needs_retrain: true,
+          standard_script: "可以说泡脚有助于放松，但不能替代医疗诊断或治疗。",
+          correction_points: ["不要承诺治疗效果", "先回应顾客感受"],
+        },
+        actions: [{ type: "training", label: "再练一次合规表达" }],
+        sources: [],
+        limitations: ["训练结果用于岗位练习，不替代店长现场验收。"],
+        artifact: { type: "training_session", id: "training-e2e" },
+      },
+    }),
+  );
+  await page.route("**/api/v1/conversations/*/messages", async (route) => {
+    const request = route.request().postDataJSON();
+    const employee = role === "store_employee";
+    await route.fulfill({
+      status: 200,
+      json: {
+        conversation: {
+          id: "60000000-0000-0000-0000-000000000001",
+          title: request.content,
+          created_at: "2026-07-12T10:00:00Z",
+          updated_at: "2026-07-12T10:00:02Z",
+          last_message_at: "2026-07-12T10:00:02Z",
+          message_count: 2,
+          last_message: null,
+        },
+        user_message: {
+          id: "message-role-user",
+          conversation_id: "60000000-0000-0000-0000-000000000001",
+          role: "user",
+          content: request.content,
+          created_at: "2026-07-12T10:00:01Z",
+          answer_id: null,
+          answer_status: null,
+          confidence: null,
+          needs_review: null,
+          sources: [],
+          next_actions: [],
+        },
+        assistant_message: {
+          id: "message-role-assistant",
+          conversation_id: "60000000-0000-0000-0000-000000000001",
+          role: "assistant",
+          content: employee
+            ? "可以先了解顾客感受，再说明泡脚有助于放松，不承诺治疗效果。"
+            : "首店开业准备已进入物料核对阶段，下一步完成现场验收。",
+          created_at: "2026-07-12T10:00:02Z",
+          answer_id: "answer-role",
+          answer_status: "已批准",
+          confidence: "high",
+          needs_review: false,
+          sources: [
+            {
+              title: employee ? "员工标准话术" : "首店开业计划",
+              excerpt: employee ? "不承诺治疗效果" : "物料核对后进行现场验收",
+              strength: "high",
+              url: null,
+            },
+          ],
+          next_actions: [],
+          result_type: employee ? "frontdesk_answer" : "decision_support",
+          actions: employee
+            ? [
+                { type: "training", label: "练习这个说法" },
+                { type: "issue", label: "上报现场问题" },
+              ]
+            : [{ type: "tasks", label: "转为下一项任务" }],
+        },
+      },
+    });
+  });
+  return {
+    lastIssueRequest: () => lastIssueRequest,
+  };
 }
 
 test.describe("HXYOS product shell viewport contract", () => {
@@ -319,6 +559,7 @@ test.describe("HXYOS product shell viewport contract", () => {
     await expect(page.getByText("正在理解")).toBeVisible();
     await expect(page.getByText("资料已收到，系统正在继续理解。")).toBeVisible();
     await expect(page.getByRole("link", { name: "查看原文" })).toBeVisible();
+    await page.getByRole("link", { name: "查看原文" }).click({ trial: true });
 
     const composerBox = await page.getByTestId("composer").boundingBox();
     const navigationBox = await page
@@ -332,5 +573,71 @@ test.describe("HXYOS product shell viewport contract", () => {
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth),
     ).toBeLessThanOrEqual(390);
+  });
+
+  test("lets the founder turn an evidence-backed answer into work", async ({ page }) => {
+    await mockRoleJourneyApi(page, "founder");
+    await page.goto("/");
+
+    await page.getByRole("button", { name: "询问当前开业进度" }).click();
+    await page.getByRole("button", { name: "发送" }).click();
+    await expect(page.getByText("首店开业准备已进入物料核对阶段，下一步完成现场验收。"))
+      .toBeVisible();
+    await page.getByRole("button", { name: "查看当前对话详情" }).click();
+    await expect(page.getByText("首店开业计划")).toBeVisible();
+    await page.getByRole("button", { name: "关闭当前对话详情" }).click();
+    await page.getByRole("button", { name: "转为下一项任务" }).click();
+    await expect(page.getByRole("heading", { name: "跟进本次回答" })).toBeVisible();
+  });
+
+  test("lets a store manager move from current work to a follow-up issue", async ({ page }) => {
+    const api = await mockRoleJourneyApi(page, "store_manager");
+    await page.goto("/");
+
+    await page.getByRole("button", { name: "打开今天的待办" }).click();
+    await expect(page.getByRole("heading", { name: "检查开业物料" })).toBeVisible();
+    await page.getByRole("button", { name: "反馈检查开业物料的问题" }).click();
+    await expect(page.getByText("关联待办：检查开业物料")).toBeVisible();
+    await page.getByRole("textbox", { name: "问题标题" }).fill("接待区物料不足");
+    await page.getByRole("textbox", { name: "问题详情" }).fill("缺少两套顾客须知。");
+    await page.getByRole("button", { name: "提交问题" }).click();
+    await expect(page.getByRole("heading", { name: "接待区物料不足" })).toBeVisible();
+    expect(api.lastIssueRequest()).toEqual({
+      title: "接待区物料不足",
+      details: "缺少两套顾客须知。",
+      source_task_id: "task-opening",
+    });
+  });
+
+  test("lets an employee answer, practice, correct, and report a live issue", async ({ page }) => {
+    await mockRoleJourneyApi(page, "store_employee");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/");
+
+    const composer = page.getByRole("textbox", { name: "告诉 HXYOS 你要做什么" });
+    await composer.fill("顾客问泡脚能不能治失眠，我该怎么说？");
+    await page.getByRole("button", { name: "发送" }).click();
+    await expect(page.getByText("可以先了解顾客感受，再说明泡脚有助于放松，不承诺治疗效果。"))
+      .toBeVisible();
+    await page.getByRole("button", { name: "练习这个说法" }).click();
+    await page.getByRole("textbox", { name: "我的回答" }).fill("肯定可以治好。");
+    await page.getByRole("button", { name: "提交练习" }).click();
+    await expect(page.getByText("68 分")).toBeVisible();
+    await expect(page.getByText("不要承诺治疗效果")).toBeVisible();
+    await page.getByRole("button", { name: "返回对话" }).click();
+    await page.getByRole("button", { name: "上报现场问题" }).click();
+    await page.getByRole("textbox", { name: "问题标题" }).fill("顾客反复询问疗效");
+    await page
+      .getByRole("textbox", { name: "问题详情" })
+      .fill("今天连续三位顾客询问是否能治疗失眠。");
+    await page.getByRole("button", { name: "提交问题" }).click();
+    await expect(page.getByRole("heading", { name: "顾客反复询问疗效" })).toBeVisible();
+
+    const navigationBox = await page.getByRole("navigation", { name: "主要导航" }).boundingBox();
+    const taskBox = await page.getByRole("heading", { name: "顾客反复询问疗效" }).boundingBox();
+    expect(taskBox).not.toBeNull();
+    expect(navigationBox).not.toBeNull();
+    expect(taskBox!.y + taskBox!.height).toBeLessThan(navigationBox!.y);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   });
 });

@@ -34,6 +34,12 @@ import {
   productMaterialClient,
 } from "./api/materials";
 import {
+  type JourneyClient,
+  type JourneySuggestion,
+  type TrainingJourneyResult,
+  productJourneyClient,
+} from "./api/journeys";
+import {
   type HxyTask,
   type TaskClient,
   productTaskClient,
@@ -46,12 +52,27 @@ import {
 
 type PrimaryView = "conversation" | "tasks" | "profile";
 
-const roleSuggestions: Record<CanonicalRole, readonly string[]> = {
-  founder: ["询问当前开业进度", "查看今天的关键事项", "创建下一项任务"],
-  hq_operations: ["查看门店待办", "跟进一个运营问题", "创建后续事项"],
-  store_manager: ["打开今天的待办", "处理一个门店问题", "创建后续事项"],
-  store_employee: ["询问该怎么说", "练习一次接待话术", "上报一个门店问题"],
-  system_admin: ["查看系统待办", "报告一个系统问题", "创建跟进事项"],
+const roleSuggestions: Record<CanonicalRole, readonly JourneySuggestion[]> = {
+  founder: [
+    { type: "ask", label: "询问当前开业进度", prompt: "现在开业进度怎么样？" },
+    { type: "tasks", label: "查看今天的关键事项" },
+  ],
+  hq_operations: [
+    { type: "tasks", label: "查看门店待办" },
+    { type: "issue", label: "上报一个运营问题" },
+  ],
+  store_manager: [
+    { type: "tasks", label: "打开今天的待办" },
+    { type: "issue", label: "上报一个门店问题" },
+  ],
+  store_employee: [
+    { type: "ask", label: "询问该怎么说", prompt: "顾客这样问时我该怎么说？" },
+    { type: "training", label: "练习一次接待话术" },
+    { type: "issue", label: "上报一个门店问题" },
+  ],
+  system_admin: [
+    { type: "ask", label: "询问系统状态", prompt: "当前系统有哪些需要处理的问题？" },
+  ],
 };
 
 const navigationItems = [
@@ -81,6 +102,7 @@ interface ProductShellProps {
   conversationClient: ConversationClient;
   materialClient: MaterialClient;
   taskClient: TaskClient;
+  journeyClient: JourneyClient;
   clientMessageIdFactory: () => string;
   materialUploadIdFactory: () => string;
 }
@@ -89,6 +111,7 @@ function ProductShell({
   conversationClient,
   materialClient,
   taskClient,
+  journeyClient,
   clientMessageIdFactory,
   materialUploadIdFactory,
 }: ProductShellProps) {
@@ -122,6 +145,25 @@ function ProductShell({
   const [completingTaskId, setCompletingTaskId] = useState<string | null>(null);
   const [completionResult, setCompletionResult] = useState("");
   const [taskActionPending, setTaskActionPending] = useState(false);
+  const [journeySuggestions, setJourneySuggestions] = useState<{
+    assignmentId: string | null;
+    items: JourneySuggestion[] | null;
+  }>({ assignmentId: null, items: null });
+  const [journeyMode, setJourneyMode] = useState<"training" | "issue" | null>(null);
+  const [customerQuestion, setCustomerQuestion] = useState(
+    "顾客问：这个能不能治疗失眠？",
+  );
+  const [employeeAnswer, setEmployeeAnswer] = useState("");
+  const [trainingResult, setTrainingResult] =
+    useState<TrainingJourneyResult | null>(null);
+  const [issueTitle, setIssueTitle] = useState("");
+  const [issueDetails, setIssueDetails] = useState("");
+  const [issueSourceTask, setIssueSourceTask] = useState<{
+    id: string;
+    title: string;
+  } | null>(null);
+  const [journeyPending, setJourneyPending] = useState(false);
+  const [journeyError, setJourneyError] = useState(false);
   const materialInputRef = useRef<HTMLInputElement>(null);
   const detailsTriggerRef = useRef<HTMLButtonElement>(null);
   const detailsDrawerRef = useRef<HTMLElement>(null);
@@ -131,11 +173,12 @@ function ProductShell({
   const historyRequestVersionRef = useRef(0);
   const materialRequestVersionRef = useRef(0);
   const taskRequestVersionRef = useRef(0);
+  const journeyRequestVersionRef = useRef(0);
+  const journeyMutationVersionRef = useRef(0);
+  const activeAssignmentIdRef = useRef<string | null>(null);
   const assignment = session?.active_assignment;
+  activeAssignmentIdRef.current = assignment?.assignment_id ?? null;
   const isAuthenticated = status === "authenticated" && assignment !== undefined;
-  const suggestions = assignment
-    ? roleSuggestions[assignment.role].slice(0, 3)
-    : [];
   const canCreateMaterials =
     assignment?.capabilities.includes("materials:create") ?? false;
   const canReadMaterials =
@@ -143,6 +186,24 @@ function ProductShell({
   const canReadTasks = assignment?.capabilities.includes("tasks:read") ?? false;
   const canManageTasks =
     assignment?.capabilities.includes("tasks:manage") ?? false;
+  const canPracticeTraining =
+    assignment?.capabilities.includes("training:practice") ?? false;
+  const canCreateIssues =
+    assignment?.capabilities.includes("issues:create") ?? false;
+  const isJourneyActionAllowed = (action: JourneySuggestion) => {
+    if (action.type === "tasks") return canReadTasks;
+    if (action.type === "training") return canPracticeTraining;
+    if (action.type === "issue") return canCreateIssues;
+    return assignment?.capabilities.includes("conversation:use") ?? false;
+  };
+  const suggestions = assignment
+    ? (
+        journeySuggestions.assignmentId === assignment.assignment_id
+          ? journeySuggestions.items
+          : null
+      ) ?? roleSuggestions[assignment.role]
+    : [];
+  const visibleSuggestions = suggestions.filter(isJourneyActionAllowed).slice(0, 3);
   const roleLabel =
     assignment?.role_label ??
     (status === "loading"
@@ -155,7 +216,7 @@ function ProductShell({
     assignment?.organization.name ??
     (status === "loading" ? "HXYOS" : "请重试");
   const isConversationEmpty =
-    activeView === "conversation" && messages.length === 0;
+    activeView === "conversation" && messages.length === 0 && journeyMode === null;
 
   const latestAnswer = [...messages]
     .reverse()
@@ -283,6 +344,30 @@ function ProductShell({
   }, [assignment?.assignment_id, canReadTasks, isAuthenticated, taskClient]);
 
   useEffect(() => {
+    const requestVersion = journeyRequestVersionRef.current + 1;
+    journeyRequestVersionRef.current = requestVersion;
+    journeyMutationVersionRef.current += 1;
+    setJourneyPending(false);
+    setJourneySuggestions({
+      assignmentId: assignment?.assignment_id ?? null,
+      items: null,
+    });
+    setJourneyMode(null);
+    setTrainingResult(null);
+    setJourneyError(false);
+    if (!isAuthenticated || !assignment) return;
+    const assignmentId = assignment.assignment_id;
+    void journeyClient
+      .loadSuggestions()
+      .then(({ items }) => {
+        if (journeyRequestVersionRef.current === requestVersion) {
+          setJourneySuggestions({ assignmentId, items: items.slice(0, 3) });
+        }
+      })
+      .catch(() => undefined);
+  }, [assignment?.assignment_id, isAuthenticated, journeyClient]);
+
+  useEffect(() => {
     if (
       !isAuthenticated ||
       !canReadMaterials ||
@@ -392,7 +477,10 @@ function ProductShell({
         ...current.filter(
           (message) => message.id !== pending.localMessageId,
         ),
-        result.user_message,
+        {
+          ...result.user_message,
+          content: pending.content,
+        },
         result.assistant_message,
       ]);
       setPendingMessage(null);
@@ -438,11 +526,17 @@ function ProductShell({
 
   const startNewConversation = () => {
     historyRequestVersionRef.current += 1;
+    journeyMutationVersionRef.current += 1;
     setConversationId(null);
     setMessages([]);
     setPendingMessage(null);
     setSendError(false);
     setIsDetailsOpen(false);
+    setJourneyPending(false);
+    setJourneyMode(null);
+    setIssueSourceTask(null);
+    setTrainingResult(null);
+    setJourneyError(false);
   };
 
   const completeTask = async (task: HxyTask) => {
@@ -472,7 +566,7 @@ function ProductShell({
   };
 
   const createTaskFromAnswer = async (message: ConversationMessage) => {
-    const title = message.next_actions[0]?.trim();
+    const title = message.next_actions[0]?.trim() || "跟进本次回答";
     if (!assignment || !title || taskActionPending) return;
     taskRequestVersionRef.current += 1;
     setIsTasksLoading(false);
@@ -494,6 +588,153 @@ function ProductShell({
       setTasksError(true);
     } finally {
       setTaskActionPending(false);
+    }
+  };
+
+  const openJourneyAction = (
+    action: JourneySuggestion,
+    contextQuestion?: string,
+  ) => {
+    if (!isJourneyActionAllowed(action)) return;
+    journeyMutationVersionRef.current += 1;
+    setJourneyPending(false);
+    setJourneyError(false);
+    setIssueSourceTask(null);
+    if (action.type === "tasks") {
+      setActiveView("tasks");
+      return;
+    }
+    setActiveView("conversation");
+    if (action.type === "ask") {
+      setJourneyMode(null);
+      setDraft(action.prompt || action.label);
+      return;
+    }
+    if (action.type === "training") {
+      setJourneyMode("training");
+      if (contextQuestion?.trim()) {
+        setCustomerQuestion(contextQuestion.trim());
+      }
+      setTrainingResult(null);
+      setEmployeeAnswer("");
+      return;
+    }
+    setJourneyMode("issue");
+    setIssueSourceTask(null);
+    setIssueTitle("");
+    setIssueDetails("");
+  };
+
+  const openTaskIssue = (task: HxyTask) => {
+    journeyMutationVersionRef.current += 1;
+    setJourneyPending(false);
+    setJourneyError(false);
+    setActiveView("conversation");
+    setJourneyMode("issue");
+    setIssueSourceTask({ id: task.id, title: task.title });
+    setIssueTitle("");
+    setIssueDetails("");
+  };
+
+  const closeJourney = () => {
+    journeyMutationVersionRef.current += 1;
+    setJourneyPending(false);
+    setJourneyMode(null);
+    setIssueSourceTask(null);
+    setJourneyError(false);
+  };
+
+  const selectPrimaryView = (view: PrimaryView) => {
+    journeyMutationVersionRef.current += 1;
+    setJourneyPending(false);
+    setJourneyMode(null);
+    setIssueSourceTask(null);
+    setJourneyError(false);
+    setActiveView(view);
+  };
+
+  const submitTraining = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const question = customerQuestion.trim();
+    const answer = employeeAnswer.trim();
+    const assignmentId = assignment?.assignment_id;
+    if (!question || !answer || !assignmentId || journeyPending) return;
+    const requestVersion = journeyMutationVersionRef.current + 1;
+    journeyMutationVersionRef.current = requestVersion;
+    setJourneyPending(true);
+    setJourneyError(false);
+    try {
+      const result = await journeyClient.evaluateTraining({
+        customer_question: question,
+        employee_answer: answer,
+      });
+      if (
+        journeyMutationVersionRef.current !== requestVersion ||
+        activeAssignmentIdRef.current !== assignmentId
+      ) {
+        return;
+      }
+      setTrainingResult(result);
+    } catch {
+      if (journeyMutationVersionRef.current === requestVersion) {
+        setJourneyError(true);
+      }
+    } finally {
+      if (journeyMutationVersionRef.current === requestVersion) {
+        setJourneyPending(false);
+      }
+    }
+  };
+
+  const submitIssue = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const title = issueTitle.trim();
+    const details = issueDetails.trim();
+    const assignmentId = assignment?.assignment_id;
+    if (!title || !details || !assignmentId || journeyPending) return;
+    const requestVersion = journeyMutationVersionRef.current + 1;
+    journeyMutationVersionRef.current = requestVersion;
+    setJourneyPending(true);
+    setJourneyError(false);
+    try {
+      const response = await journeyClient.reportIssue({
+        title,
+        details,
+        ...(issueSourceTask ? { source_task_id: issueSourceTask.id } : {}),
+      });
+      if (
+        journeyMutationVersionRef.current !== requestVersion ||
+        activeAssignmentIdRef.current !== assignmentId
+      ) {
+        return;
+      }
+      taskRequestVersionRef.current += 1;
+      setIsTasksLoading(false);
+      const reportedTask: HxyTask = {
+        ...response.primary_result.task,
+        visibility: "store",
+        store_id: assignment?.store?.id ?? null,
+        assignee_assignment_id: null,
+        source_conversation_id: null,
+        source_message_id: null,
+      };
+      setTasks((current) => [
+        reportedTask,
+        ...current.filter((task) => task.id !== reportedTask.id),
+      ]);
+      setJourneyMode(null);
+      setIssueSourceTask(null);
+      setIssueTitle("");
+      setIssueDetails("");
+      setActiveView("tasks");
+    } catch {
+      if (journeyMutationVersionRef.current === requestVersion) {
+        setJourneyError(true);
+      }
+    } finally {
+      if (journeyMutationVersionRef.current === requestVersion) {
+        setJourneyPending(false);
+      }
     }
   };
 
@@ -563,7 +804,7 @@ function ProductShell({
               aria-current={activeView === id ? "page" : undefined}
               title={label}
               disabled={!isAuthenticated}
-              onClick={() => setActiveView(id)}
+              onClick={() => selectPrimaryView(id)}
             >
               <Icon aria-hidden="true" />
               <span>{label}</span>
@@ -692,6 +933,17 @@ function ProductShell({
                       {task.result ? (
                         <p className="task-result">结果：{task.result}</p>
                       ) : null}
+                      {canCreateIssues &&
+                      (task.status === "open" || task.status === "in_progress") ? (
+                        <button
+                          className="task-feedback-button"
+                          type="button"
+                          aria-label={`反馈${task.title}的问题`}
+                          onClick={() => openTaskIssue(task)}
+                        >
+                          反馈问题
+                        </button>
+                      ) : null}
                       {task.status === "open" || task.status === "in_progress" ? (
                         completingTaskId === task.id ? (
                           <div className="task-completion">
@@ -745,21 +997,158 @@ function ProductShell({
               <h1>{viewHeadings[activeView]}</h1>
               <p className="empty-note">个人信息尚未接入</p>
             </div>
+          ) : journeyMode === "training" ? (
+            <div className="journey-panel">
+              <div className="journey-heading">
+                <div>
+                  <span>门店练习</span>
+                  <h1>接待话术练习</h1>
+                </div>
+                <button type="button" onClick={closeJourney}>
+                  返回对话
+                </button>
+              </div>
+              <form className="journey-form" onSubmit={submitTraining}>
+                <label>
+                  顾客的问题
+                  <textarea
+                    rows={2}
+                    aria-label="顾客的问题"
+                    value={customerQuestion}
+                    onChange={(event) => setCustomerQuestion(event.target.value)}
+                  />
+                </label>
+                <label>
+                  我的回答
+                  <textarea
+                    rows={4}
+                    aria-label="我的回答"
+                    value={employeeAnswer}
+                    onChange={(event) => setEmployeeAnswer(event.target.value)}
+                  />
+                </label>
+                <button
+                  type="submit"
+                  disabled={!customerQuestion.trim() || !employeeAnswer.trim() || journeyPending}
+                >
+                  {journeyPending ? "正在评分" : "提交练习"}
+                </button>
+              </form>
+              {journeyError ? <p role="alert">练习没有完成，请重试</p> : null}
+              {trainingResult ? (
+                <article className="training-result">
+                  <div className="training-score">
+                    <strong>{trainingResult.primary_result.score} 分</strong>
+                    <span>
+                      {trainingResult.primary_result.needs_retrain
+                        ? "需要再练"
+                        : "本次通过"}
+                    </span>
+                  </div>
+                  {trainingResult.primary_result.correction_points.length > 0 ? (
+                    <section>
+                      <h2>需要调整</h2>
+                      <ul>
+                        {trainingResult.primary_result.correction_points.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    </section>
+                  ) : null}
+                  {trainingResult.primary_result.standard_script ? (
+                    <section>
+                      <h2>参考说法</h2>
+                      <p>{trainingResult.primary_result.standard_script}</p>
+                    </section>
+                  ) : null}
+                  {trainingResult.actions
+                    .filter(
+                      (action) =>
+                        action.type === "training" &&
+                        isJourneyActionAllowed({
+                          type: "training",
+                          label: action.label,
+                        }),
+                    )
+                    .map((action) => (
+                      <button
+                        className="journey-next-button"
+                        type="button"
+                        key={`${action.type}-${action.label}`}
+                        onClick={() =>
+                          openJourneyAction({
+                            type: "training",
+                            label: action.label,
+                          })
+                        }
+                      >
+                        {action.label}
+                      </button>
+                    ))}
+                  {trainingResult.limitations.map((limitation) => (
+                    <p className="journey-limit" key={limitation}>
+                      {limitation}
+                    </p>
+                  ))}
+                </article>
+              ) : null}
+            </div>
+          ) : journeyMode === "issue" ? (
+            <div className="journey-panel">
+              <div className="journey-heading">
+                <div>
+                  <span>现场反馈</span>
+                  <h1>上报门店问题</h1>
+                </div>
+                <button type="button" onClick={closeJourney}>
+                  返回对话
+                </button>
+              </div>
+              <form className="journey-form" onSubmit={submitIssue}>
+                {issueSourceTask ? (
+                  <p className="journey-context">关联待办：{issueSourceTask.title}</p>
+                ) : null}
+                <label>
+                  问题标题
+                  <input
+                    aria-label="问题标题"
+                    value={issueTitle}
+                    onChange={(event) => setIssueTitle(event.target.value)}
+                  />
+                </label>
+                <label>
+                  问题详情
+                  <textarea
+                    rows={5}
+                    aria-label="问题详情"
+                    value={issueDetails}
+                    onChange={(event) => setIssueDetails(event.target.value)}
+                  />
+                </label>
+                <button
+                  type="submit"
+                  disabled={!issueTitle.trim() || !issueDetails.trim() || journeyPending}
+                >
+                  {journeyPending ? "正在提交" : "提交问题"}
+                </button>
+              </form>
+              {journeyError ? <p role="alert">问题没有提交，请重试</p> : null}
+            </div>
           ) : messages.length === 0 ? (
             <div className="empty-state">
               <div className="empty-symbol" aria-hidden="true">
                 <MessageSquare />
               </div>
               <h1>{viewHeadings.conversation}</h1>
-              {isAuthenticated ? (
+              {isAuthenticated && visibleSuggestions.length > 0 ? (
                 <div className="suggestions" data-testid="suggestions">
-                  {suggestions.map((suggestion) => (
+                  {visibleSuggestions.map((suggestion) => (
                     <button
                       type="button"
-                      key={suggestion}
-                      onClick={() => setDraft(suggestion)}
+                      key={`${suggestion.type}-${suggestion.label}`}
+                      onClick={() => openJourneyAction(suggestion)}
                     >
-                      {suggestion}
+                      {suggestion.label}
                     </button>
                   ))}
                 </div>
@@ -767,7 +1156,7 @@ function ProductShell({
             </div>
           ) : (
             <div className="message-list" aria-label="当前对话">
-              {messages.map((message) =>
+              {messages.map((message, messageIndex) =>
                 message.role === "user" ? (
                   <p className="user-message" key={message.id}>
                     {message.content}
@@ -778,16 +1167,53 @@ function ProductShell({
                     key={message.id}
                   >
                     <p>{message.content}</p>
-                    {canManageTasks && message.next_actions.length > 0 ? (
+                    {canManageTasks &&
+                    (message.next_actions.length > 0 ||
+                      (message.actions || []).some((action) => action.type === "tasks")) ? (
                       <button
                         className="answer-task-button"
                         type="button"
                         disabled={taskActionPending}
                         onClick={() => void createTaskFromAnswer(message)}
                       >
-                        转为待办
+                        {(message.actions || []).find((action) => action.type === "tasks")
+                          ?.label || "转为待办"}
                       </button>
                     ) : null}
+                    {(message.actions || [])
+                      .filter(
+                        (action) => {
+                          if (action.type !== "training" && action.type !== "issue") {
+                            return false;
+                          }
+                          return isJourneyActionAllowed({
+                            type: action.type,
+                            label: action.label,
+                          });
+                        },
+                      )
+                      .map((action) => (
+                        <button
+                          className="answer-journey-button"
+                          type="button"
+                          key={`${message.id}-${action.type}`}
+                          onClick={() =>
+                            openJourneyAction({
+                              type: action.type as "training" | "issue",
+                              label: action.label,
+                            },
+                            action.type === "training"
+                              ? messages
+                                  .slice(0, messageIndex)
+                                  .reverse()
+                                  .find((candidate) => candidate.role === "user")
+                                  ?.content
+                              : undefined)
+                          }
+                        >
+                          {action.label}
+                        </button>
+                      ))}
                   </article>
                 ),
               )}
@@ -1020,6 +1446,7 @@ interface AppProps {
   conversationClient?: ConversationClient;
   materialClient?: MaterialClient;
   taskClient?: TaskClient;
+  journeyClient?: JourneyClient;
   clientMessageIdFactory?: () => string;
   materialUploadIdFactory?: () => string;
 }
@@ -1030,6 +1457,7 @@ export default function App({
   conversationClient = productConversationClient,
   materialClient = productMaterialClient,
   taskClient = productTaskClient,
+  journeyClient = productJourneyClient,
   clientMessageIdFactory = () => crypto.randomUUID(),
   materialUploadIdFactory = () => crypto.randomUUID(),
 }: AppProps) {
@@ -1039,6 +1467,7 @@ export default function App({
         conversationClient={conversationClient}
         materialClient={materialClient}
         taskClient={taskClient}
+        journeyClient={journeyClient}
         clientMessageIdFactory={clientMessageIdFactory}
         materialUploadIdFactory={materialUploadIdFactory}
       />
