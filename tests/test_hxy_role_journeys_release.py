@@ -2018,6 +2018,24 @@ def test_internal_runbook_validates_previous_before_setting_pointer_and_stopping
         "gate_7",
         (
             'HXY_PREVIOUS_RELEASE_PATH="$(readlink -f /root/hxy/releases/current)"',
+            'HXY_PREVIOUS_GIT_TOPLEVEL="$(git -C "$HXY_PREVIOUS_RELEASE_PATH" rev-parse --show-toplevel)"',
+            'HXY_PREVIOUS_GIT_TOPLEVEL="$(readlink -f "$HXY_PREVIOUS_GIT_TOPLEVEL")"',
+            'test "$HXY_PREVIOUS_GIT_TOPLEVEL" = "$HXY_PREVIOUS_RELEASE_PATH"',
+            'test -f "$HXY_PREVIOUS_RELEASE_PATH/.git"',
+            'HXY_PREVIOUS_GIT_DIR="$(git -C "$HXY_PREVIOUS_RELEASE_PATH" rev-parse --absolute-git-dir)"',
+            'test "$(cat "$HXY_PREVIOUS_RELEASE_PATH/.git")" = "gitdir: $HXY_PREVIOUS_GIT_DIR"',
+            'test -z "$(git -C "$HXY_PREVIOUS_RELEASE_PATH" symbolic-ref -q HEAD || true)"',
+            'HXY_PREVIOUS_RELEASE_COMMIT="$(git -C "$HXY_PREVIOUS_RELEASE_PATH" rev-parse HEAD)"',
+        ),
+    )
+    standard_start = sections["gate_7"].index(
+        'HXY_PREVIOUS_RELEASE_COMMIT="$(git -C "$HXY_PREVIOUS_RELEASE_PATH" rev-parse HEAD)"'
+    )
+    standard_sections = {"gate_7_standard": sections["gate_7"][standard_start:]}
+    _assert_section_order(
+        standard_sections,
+        "gate_7_standard",
+        (
             'HXY_PREVIOUS_RELEASE_COMMIT="$(git -C "$HXY_PREVIOUS_RELEASE_PATH" rev-parse HEAD)"',
             'test -f "$HXY_PREVIOUS_RELEASE_PATH/apps/hxy-web/dist/index.html"',
             'test "$(cat "$HXY_PREVIOUS_RELEASE_PATH/apps/hxy-web/dist/release-commit.txt")" = "$HXY_PREVIOUS_RELEASE_COMMIT"',
@@ -2043,6 +2061,103 @@ def test_internal_runbook_validates_previous_before_setting_pointer_and_stopping
     )
 
     assert "旧 release 无法满足任一前置验证时禁止发布" in sections["gate_7"]
+
+
+def test_previous_identity_contract_rejects_directory_resolved_from_parent_repo(
+    tmp_path: Path,
+) -> None:
+    parent = tmp_path / "parent"
+    legacy = parent / "releases" / "legacy"
+    legacy.mkdir(parents=True)
+    subprocess.run(["git", "init", "--quiet"], cwd=parent, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "hxy-release@example.invalid"],
+        cwd=parent,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "HXY Release Test"],
+        cwd=parent,
+        check=True,
+    )
+    (parent / "tracked.txt").write_text("parent\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=parent, check=True)
+    subprocess.run(
+        ["git", "commit", "--quiet", "-m", "parent"],
+        cwd=parent,
+        check=True,
+    )
+
+    inherited_head = subprocess.run(
+        ["git", "-C", str(legacy), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    resolved_top = Path(
+        subprocess.run(
+            ["git", "-C", str(legacy), "rev-parse", "--show-toplevel"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    ).resolve()
+
+    assert len(inherited_head) == 40
+    assert resolved_top == parent.resolve()
+    assert resolved_top != legacy.resolve()
+    assert not (legacy / ".git").is_file()
+
+
+def test_internal_runbook_stops_and_rebuilds_legacy_previous_candidate() -> None:
+    runbook = (
+        ROOT / "docs" / "operations" / "hxy-role-journeys-release.md"
+    ).read_text(encoding="utf-8")
+    sections = _slice_release_runbook_sections(runbook)
+
+    _assert_section_order(
+        sections,
+        "gate_7",
+        (
+            "身份检查失败必须立即停止当前发布",
+            "首次受控发布",
+            "legacy release",
+            "负责人批准的 last-known-good 40 位 commit",
+            "按 Gate 1 和 Gate 2 流程重建",
+            "测试、build、release-commit.txt、seal 和只读",
+            "备用端口 canary",
+            "禁止给 legacy 目录伪造 commit/marker",
+        ),
+    )
+    _assert_section_contains(
+        sections,
+        "gate_7",
+        (
+            "HXY_PREVIOUS_CANARY_API_PORT=28081",
+            "HXY_PREVIOUS_CANARY_WEB_PORT=28084",
+            'test "$(readlink -f "/proc/${HXY_PREVIOUS_CANARY_API_PID}/cwd")" = "$HXY_PREVIOUS_RELEASE_PATH"',
+            'test "$(readlink -f "/proc/${HXY_PREVIOUS_CANARY_WEB_PID}/cwd")" = "$HXY_PREVIOUS_RELEASE_PATH/apps/hxy-web/dist"',
+            'test "$HXY_PREVIOUS_CANARY_WEB_COMMIT" = "$HXY_PREVIOUS_RELEASE_COMMIT"',
+        ),
+    )
+
+
+def test_internal_runbook_keeps_migration_snapshots_outside_sealed_release() -> None:
+    runbook = (
+        ROOT / "docs" / "operations" / "hxy-role-journeys-release.md"
+    ).read_text(encoding="utf-8")
+    sections = _slice_release_runbook_sections(runbook)
+
+    _assert_section_contains(
+        sections,
+        "gate_5",
+        (
+            "/root/hxy/data/release-tmp",
+            "snapshot temp",
+            "sealed release 内不写入",
+        ),
+    )
+    assert "/root/hxy/releases/current/data/release-tmp" not in runbook
 
 
 def test_internal_runbook_verifies_both_services_and_markers_after_switch() -> None:

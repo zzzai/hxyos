@@ -173,6 +173,10 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python scripts/hxy-role-journeys-release.py 
   --confirm APPLY-HXY-015-016
 ```
 
+apply 为精确 migration bytes 创建的 snapshot temp 只能位于持久数据根
+`/root/hxy/data/release-tmp`，权限为 `0700`，并在执行后清理。sealed release 内不写入
+snapshot temp，也不得为了 apply 临时恢复任何可写权限。
+
 通过标准：工具在执行任何 SQL 前重新检查 clean worktree、commit、manifest、数据库身份、
 恢复验证和 migration checksum；随后只执行 `015_hxy_product_tasks.sql` 与
 `016_hxy_product_training.sql`。两份 migration 必须通过 `--single-transaction`、
@@ -257,6 +261,110 @@ export HXY_WEB_RELEASE_MARKER_URL='https://hxyos.hexiaoyue.com/release-commit.tx
 export HXY_PREVIOUS_RELEASE_PATH="$(readlink -f /root/hxy/releases/current)"
 test -d "$HXY_PREVIOUS_RELEASE_PATH"
 test "$HXY_PREVIOUS_RELEASE_PATH" != "$HXY_RELEASE_PATH"
+export HXY_PREVIOUS_GIT_TOPLEVEL="$(git -C "$HXY_PREVIOUS_RELEASE_PATH" rev-parse --show-toplevel)"
+export HXY_PREVIOUS_GIT_TOPLEVEL="$(readlink -f "$HXY_PREVIOUS_GIT_TOPLEVEL")"
+test "$HXY_PREVIOUS_GIT_TOPLEVEL" = "$HXY_PREVIOUS_RELEASE_PATH"
+test -f "$HXY_PREVIOUS_RELEASE_PATH/.git"
+test ! -L "$HXY_PREVIOUS_RELEASE_PATH/.git"
+export HXY_PREVIOUS_GIT_DIR="$(git -C "$HXY_PREVIOUS_RELEASE_PATH" rev-parse --absolute-git-dir)"
+export HXY_PREVIOUS_GIT_DIR="$(readlink -f "$HXY_PREVIOUS_GIT_DIR")"
+case "$HXY_PREVIOUS_GIT_DIR" in
+  /root/hxy/.git/worktrees/*) ;;
+  *) false ;;
+esac
+test "$(cat "$HXY_PREVIOUS_RELEASE_PATH/.git")" = "gitdir: $HXY_PREVIOUS_GIT_DIR"
+export HXY_PREVIOUS_GIT_COMMON_DIR="$(git -C "$HXY_PREVIOUS_RELEASE_PATH" rev-parse --path-format=absolute --git-common-dir)"
+test "$(readlink -f "$HXY_PREVIOUS_GIT_COMMON_DIR")" = "$(readlink -f /root/hxy/.git)"
+test -z "$(git -C "$HXY_PREVIOUS_RELEASE_PATH" symbolic-ref -q HEAD || true)"
+```
+
+上述身份检查必须先于任何 `rev-parse HEAD`。它们证明 resolved top-level 精确是
+previous path，`.git` 是指向 `/root/hxy/.git/worktrees/*` 的常规文件，common dir 是
+HXY 仓库，且 HEAD 处于 detached 状态。身份检查失败必须立即停止当前发布，不得继续读取
+commit、生成 seal 或设置 `previous` 指针。
+
+首次受控发布如果当前 `current` 是 legacy release，而不是上述独立 detached worktree，
+该 legacy 目录不能作为 previous。立即结束当前尝试，使用负责人批准的 last-known-good 40 位 commit，
+在独立准备会话中按 Gate 1 和 Gate 2 流程重建一个
+可回滚 previous 候选。候选必须完成测试、build、release-commit.txt、seal 和只读检查，
+然后在备用端口 canary 通过后才能回到本 Gate：
+
+```bash
+export HXY_PREVIOUS_CANDIDATE_COMMIT='<approved-last-known-good-40-character-commit>'
+test "${#HXY_PREVIOUS_CANDIDATE_COMMIT}" -eq 40
+git -C /root/hxy rev-parse --verify "${HXY_PREVIOUS_CANDIDATE_COMMIT}^{commit}"
+export HXY_PREVIOUS_CANDIDATE_PATH="/root/hxy/releases/role-journeys/${HXY_PREVIOUS_CANDIDATE_COMMIT}"
+```
+
+在独立准备会话中，临时将 Gate 1/2 的 `HXY_RELEASE_COMMIT` 与 `HXY_RELEASE_PATH` 分别设为
+`$HXY_PREVIOUS_CANDIDATE_COMMIT` 与 `$HXY_PREVIOUS_CANDIDATE_PATH`，原样执行 Gate 1 和 Gate 2，
+不得省略测试、构建、marker、排序 SHA-256 seal 和 `chmod -R a-w`。然后在原发布会话中：
+
+```bash
+export HXY_PREVIOUS_RELEASE_PATH="$HXY_PREVIOUS_CANDIDATE_PATH"
+export HXY_PREVIOUS_RELEASE_COMMIT="$HXY_PREVIOUS_CANDIDATE_COMMIT"
+export HXY_PREVIOUS_SEAL="/root/hxy/data/releases/role-journeys/${HXY_PREVIOUS_RELEASE_COMMIT}.sha256"
+cd "$HXY_PREVIOUS_RELEASE_PATH"
+sha256sum -c "$HXY_PREVIOUS_SEAL"
+test -z "$(find "$HXY_PREVIOUS_RELEASE_PATH" -xdev -type f -perm /222 -print -quit)"
+test -z "$(find "$HXY_PREVIOUS_RELEASE_PATH" -xdev -type d -perm /222 -print -quit)"
+export HXY_PREVIOUS_CANARY_API_PORT=28081
+export HXY_PREVIOUS_CANARY_WEB_PORT=28084
+HXY_PREVIOUS_CANARY_API_PID=''
+HXY_PREVIOUS_CANARY_WEB_PID=''
+cleanup_previous_canary() {
+  test -z "${HXY_PREVIOUS_CANARY_WEB_PID:-}" || kill "$HXY_PREVIOUS_CANARY_WEB_PID" 2>/dev/null || true
+  test -z "${HXY_PREVIOUS_CANARY_API_PID:-}" || kill "$HXY_PREVIOUS_CANARY_API_PID" 2>/dev/null || true
+  test -z "${HXY_PREVIOUS_CANARY_WEB_PID:-}" || wait "$HXY_PREVIOUS_CANARY_WEB_PID" 2>/dev/null || true
+  test -z "${HXY_PREVIOUS_CANARY_API_PID:-}" || wait "$HXY_PREVIOUS_CANARY_API_PID" 2>/dev/null || true
+}
+trap cleanup_previous_canary EXIT
+(
+  cd "$HXY_PREVIOUS_RELEASE_PATH"
+  set -a
+  source /root/hxy/ops/env/hxy-knowledge-api.env
+  set +a
+  export HXY_ROOT_DIR=/root/hxy
+  export PYTHONPATH="$HXY_PREVIOUS_RELEASE_PATH/apps/api"
+  export PYTHONDONTWRITEBYTECODE=1
+  exec "$HXY_PREVIOUS_RELEASE_PATH/.venv/bin/python" -m uvicorn \
+    apps.api.hxy_knowledge_api:app --host 127.0.0.1 --port "$HXY_PREVIOUS_CANARY_API_PORT"
+) &
+HXY_PREVIOUS_CANARY_API_PID="$!"
+(
+  cd "$HXY_PREVIOUS_RELEASE_PATH/apps/hxy-web/dist"
+  exec /usr/bin/python3 -m http.server "$HXY_PREVIOUS_CANARY_WEB_PORT" \
+    --bind 127.0.0.1 --directory "$HXY_PREVIOUS_RELEASE_PATH/apps/hxy-web/dist"
+) &
+HXY_PREVIOUS_CANARY_WEB_PID="$!"
+for _attempt in $(seq 1 30); do
+  curl --fail --silent "http://127.0.0.1:${HXY_PREVIOUS_CANARY_API_PORT}/health" && break
+  sleep 1
+done
+curl --fail --silent "http://127.0.0.1:${HXY_PREVIOUS_CANARY_API_PORT}/health"
+test "$(readlink -f "/proc/${HXY_PREVIOUS_CANARY_API_PID}/cwd")" = "$HXY_PREVIOUS_RELEASE_PATH"
+test "$(readlink -f "/proc/${HXY_PREVIOUS_CANARY_WEB_PID}/cwd")" = "$HXY_PREVIOUS_RELEASE_PATH/apps/hxy-web/dist"
+HXY_PREVIOUS_CANARY_WEB_COMMIT="$(
+  curl --fail --silent --show-error \
+    "http://127.0.0.1:${HXY_PREVIOUS_CANARY_WEB_PORT}/release-commit.txt"
+)"
+test "$HXY_PREVIOUS_CANARY_WEB_COMMIT" = "$HXY_PREVIOUS_RELEASE_COMMIT"
+cleanup_previous_canary
+trap - EXIT
+cd "$HXY_PREVIOUS_RELEASE_PATH"
+sha256sum -c "$HXY_PREVIOUS_SEAL"
+test -z "$(find "$HXY_PREVIOUS_RELEASE_PATH" -xdev -type f -perm /222 -print -quit)"
+test -z "$(find "$HXY_PREVIOUS_RELEASE_PATH" -xdev -type d -perm /222 -print -quit)"
+```
+
+候选还必须重新执行上文 `show-toplevel`/`.git`/detached 身份检查。任一构建、seal、只读或
+canary 验证失败都立即停止。禁止给 legacy 目录伪造 commit/marker，也不得把父仓库
+`HEAD` 或 `.git` 元数据复制进 legacy 目录。
+
+只有标准 current 通过身份检查，或首次受控发布的候选完成重建与 canary 后，才能读取
+previous commit 并继续完整性验证：
+
+```bash
 export HXY_PREVIOUS_RELEASE_COMMIT="$(git -C "$HXY_PREVIOUS_RELEASE_PATH" rev-parse HEAD)"
 test "${#HXY_PREVIOUS_RELEASE_COMMIT}" -eq 40
 test "$(git -C "$HXY_PREVIOUS_RELEASE_PATH" rev-parse HEAD)" = "$HXY_PREVIOUS_RELEASE_COMMIT"
