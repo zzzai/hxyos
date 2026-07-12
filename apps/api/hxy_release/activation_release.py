@@ -38,8 +38,11 @@ ACTIVATION_MIGRATIONS = (
     "014_hxy_knowledge_activation.sql",
 )
 APPLY_CONFIRMATION = "APPLY-HXY-009-014"
-BACKUP_VERSION = "hxy-activation-backup.v1"
+BACKUP_VERSION = "hxy-activation-backup.v2"
 _DEFAULT_TRUSTED_ROOT = Path("/root/hxy")
+_DEFAULT_BACKUP_ROOT = (
+    _DEFAULT_TRUSTED_ROOT / "data" / "backups" / "knowledge-activation"
+)
 
 ACTIVATION_RELEASE = MigrationReleaseSpec(
     release_id="hxy-knowledge-activation-009-014",
@@ -467,9 +470,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "preflight":
             result = run_preflight(args.root_dir, database_url)
         elif args.command == "backup":
-            output_root = args.output_root or (
-                args.root_dir / "data" / "backups" / "knowledge-activation"
-            )
+            output_root = args.output_root or _DEFAULT_BACKUP_ROOT
             result = create_backup(
                 args.root_dir,
                 database_url,
@@ -486,6 +487,16 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             result = run_postflight(args.root_dir, database_url)
+    except ReleasePostflightError as exc:
+        result = {
+            "status": "failed",
+            "phase": args.command,
+            "error_type": "ReleaseExecutionError",
+            "error_code": "postflight_failed_after_apply",
+            "error": str(exc),
+            "applied": exc.applied,
+            "postflight": exc.postflight,
+        }
     except (
         ReleaseAuthorizationError,
         ReleaseBackupError,

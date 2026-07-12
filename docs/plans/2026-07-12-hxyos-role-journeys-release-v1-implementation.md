@@ -111,7 +111,9 @@ Add or retain tests proving:
 ```text
 ACTIVATION_MIGRATIONS = 009-014
 confirmation = APPLY-HXY-009-014
-manifest version remains hxy-activation-backup.v1
+manifest version is `hxy-activation-backup.v2`; v1 manifests are intentionally
+incompatible because they predate mandatory connection fingerprints, so the
+maintenance window must create a new backup before apply
 dump filename remains hxy-before-activation.dump
 CLI JSON and exit codes remain unchanged
 ```

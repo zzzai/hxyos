@@ -14,6 +14,7 @@ import pytest
 from apps.api.hxy_release.activation_release import (
     ACTIVATION_MIGRATIONS,
     APPLY_CONFIRMATION,
+    BACKUP_VERSION,
     ReleaseAuthorizationError,
     ReleaseBackupError,
     ReleaseBoundaryError,
@@ -50,6 +51,7 @@ def activation_root(tmp_path: Path) -> Path:
 
 
 def test_activation_release_allows_only_migrations_009_through_014() -> None:
+    assert BACKUP_VERSION == "hxy-activation-backup.v2"
     assert ACTIVATION_MIGRATIONS == (
         "009_hxy_product_identity.sql",
         "010_hxy_product_conversations.sql",
@@ -175,6 +177,79 @@ def test_activation_release_cli_preserves_json_status_and_exit_codes(
     assert activation_release.main(["preflight"]) == 0
     passed = json.loads(capsys.readouterr().out)
     assert passed == {"phase": "preflight", "status": "passed"}
+
+
+def test_activation_cli_uses_the_production_trusted_backup_root_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, Path] = {}
+    monkeypatch.setenv("HXY_DATABASE_URL", DATABASE_URL)
+
+    def backup(
+        _root_dir: Path,
+        _database_url: str,
+        *,
+        output_root: Path,
+    ) -> dict[str, str]:
+        captured["output_root"] = output_root
+        return {"status": "passed", "phase": "backup"}
+
+    monkeypatch.setattr(activation_release, "create_backup", backup)
+
+    exit_code = activation_release.main(
+        [
+            "--root-dir",
+            "/root/hxy/.worktrees/release-review",
+            "backup",
+        ]
+    )
+
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "passed"
+    assert captured["output_root"] == Path(
+        "/root/hxy/data/backups/knowledge-activation"
+    )
+
+
+def test_activation_cli_marks_postflight_failure_as_applied_without_retry_signal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    postflight = {
+        "status": "failed",
+        "checks": [{"detail": "x" * 2000} for _index in range(150)],
+    }
+    monkeypatch.setenv("HXY_DATABASE_URL", DATABASE_URL)
+    monkeypatch.setattr(
+        activation_release,
+        "apply_activation_migrations",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ReleasePostflightError(postflight)
+        ),
+    )
+
+    exit_code = activation_release.main(
+        [
+            "apply",
+            "--backup-manifest",
+            str(tmp_path / "manifest.json"),
+            "--confirm",
+            APPLY_CONFIRMATION,
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 2
+    assert payload["status"] == "failed"
+    assert payload["phase"] == "apply"
+    assert payload["error_type"] == "ReleaseExecutionError"
+    assert payload["error_code"] == "postflight_failed_after_apply"
+    assert payload["applied"] is True
+    assert payload["postflight"]["status"] == "failed"
+    assert len(payload["postflight"]["checks"]) == 100
+    assert len(payload["postflight"]["checks"][0]["detail"]) == 500
 
 
 class FakeResult:
@@ -498,7 +573,7 @@ def test_backup_uses_environment_credentials_and_writes_verified_manifest(
     manifest_path = Path(result["manifest_path"])
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     dump_path = manifest_path.parent / manifest["dump"]["file"]
-    assert manifest["version"] == "hxy-activation-backup.v1"
+    assert manifest["version"] == "hxy-activation-backup.v2"
     assert manifest["database"] == database_identity(DATABASE_URL)
     assert manifest["git_commit"] == GIT_COMMIT
     assert manifest["dump"]["verified"] is True
@@ -636,6 +711,26 @@ def test_backup_manifest_rejects_stale_database_or_changed_migrations(
     manifest["migrations"][0]["sha256"] = "0" * 64
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(ReleaseBackupError, match="migration"):
+        validate_backup_manifest(
+            activation_root,
+            DATABASE_URL,
+            manifest_path,
+            now=NOW,
+            git_commit=GIT_COMMIT,
+            trusted_root=activation_root,
+        )
+
+
+def test_activation_v1_manifest_requires_a_new_maintenance_window_backup(
+    activation_root: Path,
+) -> None:
+    result = _make_backup(activation_root, FakeCommandRunner())
+    manifest_path = Path(result["manifest_path"])
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["version"] = "hxy-activation-backup.v1"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ReleaseBackupError, match="version"):
         validate_backup_manifest(
             activation_root,
             DATABASE_URL,

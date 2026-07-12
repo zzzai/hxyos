@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import secrets
+import stat
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -92,16 +93,64 @@ def migration_inventory(
     *,
     trusted_root: Path = _DEFAULT_TRUSTED_ROOT,
 ) -> list[dict[str, str]]:
-    migration_dir = (
-        _validate_release_root(root_dir, trusted_root) / "data" / "migrations"
-    )
     inventory: list[dict[str, str]] = []
+    for name, path in zip(
+        spec.migrations,
+        _migration_paths(spec, root_dir, trusted_root=trusted_root),
+        strict=True,
+    ):
+        inventory.append({"name": name, "sha256": _sha256_file(path)})
+    return inventory
+
+
+def _migration_paths(
+    spec: MigrationReleaseSpec,
+    root_dir: Path,
+    *,
+    trusted_root: Path,
+) -> tuple[Path, ...]:
+    release_root = _validate_release_root(root_dir, trusted_root)
+    migration_dir = release_root / "data" / "migrations"
+    try:
+        resolved_migration_dir = migration_dir.resolve(strict=True)
+    except OSError as exc:
+        raise ReleaseBoundaryError(
+            "migration directory must be a real directory within release root"
+        ) from exc
+    if (
+        migration_dir.is_symlink()
+        or resolved_migration_dir != migration_dir
+        or not resolved_migration_dir.is_dir()
+    ):
+        raise ReleaseBoundaryError(
+            "migration directory must be a real directory within release root"
+        )
+
+    paths: list[Path] = []
     for name in spec.migrations:
         if not name or Path(name).name != name:
             raise ReleaseBoundaryError("migration path must be a filename")
         path = migration_dir / name
-        inventory.append({"name": name, "sha256": _sha256_file(path)})
-    return inventory
+        if path.is_symlink():
+            raise ReleaseBoundaryError(
+                "migration must be a real regular file within release root"
+            )
+        try:
+            metadata = path.stat(follow_symlinks=False)
+            resolved = path.resolve(strict=True)
+        except OSError as exc:
+            raise ReleaseBoundaryError(
+                "migration must be a real regular file within release root"
+            ) from exc
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or resolved.parent != resolved_migration_dir
+        ):
+            raise ReleaseBoundaryError(
+                "migration must be a real regular file within release root"
+            )
+        paths.append(resolved)
+    return tuple(paths)
 
 
 def _reject_implicit_libpq_environment() -> None:
@@ -555,6 +604,11 @@ def apply_release_migrations(
         git_commit=git_commit,
         trusted_root=trusted_root,
     )
+    migration_paths = _migration_paths(
+        spec,
+        root_dir,
+        trusted_root=trusted_root,
+    )
     command_runner = runner or _default_command_runner
     command_env = _postgres_environment(database_url)
     restore_result = command_runner(
@@ -574,11 +628,11 @@ def apply_release_migrations(
         "--command",
         f"SELECT pg_advisory_xact_lock(hashtext('{advisory_lock}'))",
     ]
-    for migration in spec.migrations:
+    for migration_path in migration_paths:
         command.extend(
             [
                 "--file",
-                str(root_dir.resolve() / "data" / "migrations" / migration),
+                str(migration_path),
             ]
         )
     result = command_runner(command, command_env)

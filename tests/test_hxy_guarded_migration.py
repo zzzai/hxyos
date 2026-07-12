@@ -167,6 +167,59 @@ def test_migration_inventory_is_ordered_and_checksum_bound_to_spec(
     assert all(item["name"] != "014.sql" for item in inventory)
 
 
+@pytest.mark.parametrize(
+    "target_kind",
+    ["sibling", "htops"],
+)
+def test_migration_inventory_rejects_symlinks_before_checksum(
+    release_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    target_kind: str,
+) -> None:
+    migration_path = release_root / "data" / "migrations" / "015.sql"
+    migration_path.unlink()
+    if target_kind == "sibling":
+        target = tmp_path / "outside-015.sql"
+        target.write_text("SELECT 15;\n", encoding="utf-8")
+    else:
+        target = Path("/root/htops/never-read-015.sql")
+    migration_path.symlink_to(target)
+    checksum_calls: list[Path] = []
+
+    def checksum(path: Path) -> str:
+        checksum_calls.append(path)
+        return "0" * 64
+
+    monkeypatch.setattr(guarded_migration, "_sha256_file", checksum)
+
+    with pytest.raises(ReleaseBoundaryError, match="regular file"):
+        migration_inventory(SPEC, release_root, trusted_root=release_root)
+
+    assert checksum_calls == []
+
+
+def test_migration_inventory_rejects_non_regular_files_before_checksum(
+    release_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    migration_path = release_root / "data" / "migrations" / "015.sql"
+    migration_path.unlink()
+    migration_path.mkdir()
+    checksum_calls: list[Path] = []
+
+    def checksum(path: Path) -> str:
+        checksum_calls.append(path)
+        return "0" * 64
+
+    monkeypatch.setattr(guarded_migration, "_sha256_file", checksum)
+
+    with pytest.raises(ReleaseBoundaryError, match="regular file"):
+        migration_inventory(SPEC, release_root, trusted_root=release_root)
+
+    assert checksum_calls == []
+
+
 def test_database_identity_and_boundary_are_hxy_owned_without_credentials(
     release_root: Path,
 ) -> None:
@@ -844,6 +897,34 @@ def test_apply_uses_one_locked_transaction_and_only_profile_migrations(
     assert "release-secret-value" not in command_text
     assert env["PGPASSWORD"] == "release-secret-value"
     assert "HXY_DATABASE_URL" not in env
+
+
+def test_apply_rejects_migration_symlink_before_any_runner_command(
+    release_root: Path,
+    tmp_path: Path,
+) -> None:
+    backup, _backup_runner = make_backup(release_root, tmp_path)
+    migration_path = release_root / "data" / "migrations" / "015.sql"
+    outside_path = tmp_path / "outside-015.sql"
+    migration_path.replace(outside_path)
+    migration_path.symlink_to(outside_path)
+    runner = RecordingRunner()
+
+    with pytest.raises(ReleaseBoundaryError, match="regular file"):
+        apply_release_migrations(
+            SPEC,
+            release_root,
+            DATABASE_URL,
+            manifest_path=Path(str(backup["manifest_path"])),
+            confirmation=SPEC.confirmation,
+            runner=runner,
+            now=NOW,
+            git_commit=GIT_COMMIT,
+            trusted_root=release_root,
+            postflight_inspector=passed_inspector,
+        )
+
+    assert runner.calls == []
 
 
 def test_apply_stops_on_migration_failure_without_postflight(
