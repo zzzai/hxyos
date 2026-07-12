@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import stat
@@ -37,6 +38,22 @@ from apps.api.hxy_release import activation_release, guarded_migration
 ROOT = Path(__file__).resolve().parents[1]
 RUNBOOK = ROOT / "docs" / "operations" / "hxy-knowledge-activation-release.md"
 GIT_COMMIT = "a" * 40
+INSTANCE_A = {
+    "system_identifier": "7400000000000000001",
+    "server_addr": "127.0.0.1",
+    "server_port": "55433",
+    "database": "hxy_release_test",
+    "server_major": "16",
+}
+
+
+@pytest.fixture(autouse=True)
+def fixed_database_instance(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        guarded_migration,
+        "database_instance_identity",
+        lambda _database_url: dict(INSTANCE_A),
+    )
 
 
 @pytest.fixture
@@ -80,6 +97,30 @@ def test_activation_wrapper_requires_an_explicit_trusted_root_for_test_roots(
     )
 
     assert [item["name"] for item in inventory] == list(ACTIVATION_MIGRATIONS)
+
+
+def test_activation_inventory_hashes_bytes_from_supplied_head_loader() -> None:
+    blobs = {
+        name: f"-- HEAD {name}\n".encode("utf-8")
+        for name in ACTIVATION_MIGRATIONS
+    }
+    calls: list[tuple[Path, str]] = []
+
+    def loader(root: Path, name: str) -> bytes:
+        calls.append((root, name))
+        return blobs[name]
+
+    inventory = migration_inventory(
+        ROOT,
+        trusted_root=Path("/root/hxy"),
+        migration_loader=loader,
+    )
+
+    assert inventory == [
+        {"name": name, "sha256": hashlib.sha256(blobs[name]).hexdigest()}
+        for name in ACTIVATION_MIGRATIONS
+    ]
+    assert [name for _root, name in calls] == list(ACTIVATION_MIGRATIONS)
 
 
 def test_database_identity_omits_password_and_complete_dsn() -> None:
@@ -171,12 +212,42 @@ def test_activation_release_cli_preserves_json_status_and_exit_codes(
     monkeypatch.setattr(
         activation_release,
         "run_preflight",
-        lambda _root, _database_url: {"status": "passed", "phase": "preflight"},
+        lambda _root, _database_url, **_kwargs: {
+            "status": "passed",
+            "phase": "preflight",
+        },
     )
 
     assert activation_release.main(["preflight"]) == 0
     passed = json.loads(capsys.readouterr().out)
     assert passed == {"phase": "preflight", "status": "passed"}
+
+
+def test_activation_cli_supplies_git_head_loader_to_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, Any] = {}
+    monkeypatch.setenv("HXY_DATABASE_URL", DATABASE_URL)
+
+    def loader(_root: Path, _name: str) -> bytes:
+        return b"SELECT 'HEAD';\n"
+
+    def preflight(
+        _root: Path,
+        _database_url: str,
+        *,
+        migration_loader,
+    ) -> dict[str, str]:
+        captured["loader"] = migration_loader
+        return {"status": "passed", "phase": "preflight"}
+
+    monkeypatch.setattr(activation_release, "git_head_migration_loader", loader, raising=False)
+    monkeypatch.setattr(activation_release, "run_preflight", preflight)
+
+    assert activation_release.main(["preflight"]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "passed"
+    assert captured["loader"] is loader
 
 
 def test_activation_cli_uses_the_production_trusted_backup_root_by_default(
@@ -191,6 +262,7 @@ def test_activation_cli_uses_the_production_trusted_backup_root_by_default(
         _database_url: str,
         *,
         output_root: Path,
+        **_kwargs,
     ) -> dict[str, str]:
         captured["output_root"] = output_root
         return {"status": "passed", "phase": "backup"}
@@ -269,6 +341,9 @@ class FakeInspectionConnection:
         self.activated = activated
         self.read_only = False
         self.queries: list[str] = []
+        self.current_schema = "public"
+        self.constraint_overrides: dict[str, dict[str, Any]] = {}
+        self.index_overrides: dict[str, dict[str, Any]] = {}
 
     def __enter__(self):
         return self
@@ -286,6 +361,7 @@ class FakeInspectionConnection:
                     "server_version_num": "160013",
                     "database": "hxy_release_test",
                     "user": "hxy_app",
+                    "current_schema": self.current_schema,
                 }
             )
         if "hxy_release:relations" in sql:
@@ -315,54 +391,112 @@ class FakeInspectionConnection:
                 else []
             )
         if "hxy_release:constraints" in sql:
-            return FakeResult(
-                rows=[
-                    {
-                        "table_name": "staff_sessions",
-                        "constraint_type": "f",
-                        "definition": (
-                            "FOREIGN KEY (assignment_id) "
-                            "REFERENCES hxy_role_assignments(assignment_id)"
-                        ),
-                    },
-                    {
-                        "table_name": "hxy_product_materials",
-                        "constraint_type": "c",
-                        "definition": "CHECK ((official_use_allowed = false))",
-                    },
-                    {
-                        "table_name": "hxy_material_artifacts",
-                        "constraint_type": "c",
-                        "definition": "CHECK ((official_use_allowed = false))",
-                    },
-                    {
-                        "table_name": "hxy_material_chunks",
-                        "constraint_type": "c",
-                        "definition": "CHECK ((official_use_allowed = false))",
-                    },
-                    {
-                        "table_name": "hxy_material_chunks",
-                        "constraint_type": "f",
-                        "definition": (
-                            "FOREIGN KEY (assignment_id, material_id) "
-                            "REFERENCES hxy_product_materials(assignment_id, material_id)"
-                        ),
-                    },
-                    {
-                        "table_name": "hxy_product_answer_traces",
-                        "constraint_type": "u",
-                        "definition": "UNIQUE (assistant_message_id)",
-                    },
-                ]
-            )
+            rows = []
+            for row in _activation_constraint_rows():
+                updated = dict(row)
+                updated.update(self.constraint_overrides.get(row["marker"], {}))
+                rows.append(updated)
+            return FakeResult(rows=rows if self.activated else [])
         if "hxy_release:indexes" in sql:
-            return FakeResult(
-                rows=[
-                    {"index_name": "idx_hxy_material_chunks_content_trgm"},
-                    {"index_name": "idx_staff_sessions_assignment_expires"},
-                ]
-            )
+            rows = []
+            for row in _activation_index_rows():
+                updated = dict(row)
+                updated.update(self.index_overrides.get(row["index_name"], {}))
+                rows.append(updated)
+            return FakeResult(rows=rows if self.activated else [])
         raise AssertionError(normalized)
+
+
+def _activation_constraint_rows() -> list[dict[str, Any]]:
+    rows = [
+        {
+            "marker": f"{table}_official_use_allowed",
+            "constraint_type": "c",
+            "source_schema": "public",
+            "source_table": table,
+            "source_columns": ["official_use_allowed"],
+            "target_schema": "",
+            "target_table": "",
+            "target_columns": [],
+            "convalidated": True,
+            "confdeltype": " ",
+            "check_expression": "(official_use_allowed = false)",
+        }
+        for table in (
+            "hxy_product_materials",
+            "hxy_material_artifacts",
+            "hxy_material_chunks",
+        )
+    ]
+    rows.extend(
+        [
+            {
+                "marker": "staff_assignment_fk",
+                "constraint_type": "f",
+                "source_schema": "public",
+                "source_table": "staff_sessions",
+                "source_columns": ["assignment_id"],
+                "target_schema": "public",
+                "target_table": "hxy_role_assignments",
+                "target_columns": ["assignment_id"],
+                "convalidated": True,
+                "confdeltype": "c",
+                "check_expression": None,
+            },
+            {
+                "marker": "chunk_owner_fk",
+                "constraint_type": "f",
+                "source_schema": "public",
+                "source_table": "hxy_material_chunks",
+                "source_columns": ["assignment_id", "material_id"],
+                "target_schema": "public",
+                "target_table": "hxy_product_materials",
+                "target_columns": ["assignment_id", "material_id"],
+                "convalidated": True,
+                "confdeltype": "c",
+                "check_expression": None,
+            },
+            {
+                "marker": "trace_assistant_unique",
+                "constraint_type": "u",
+                "source_schema": "public",
+                "source_table": "hxy_product_answer_traces",
+                "source_columns": ["assistant_message_id"],
+                "target_schema": "",
+                "target_table": "",
+                "target_columns": [],
+                "convalidated": True,
+                "confdeltype": " ",
+                "check_expression": None,
+            },
+        ]
+    )
+    return rows
+
+
+def _activation_index_rows() -> list[dict[str, Any]]:
+    return [
+        {
+            "table_schema": "public",
+            "table_name": "hxy_material_chunks",
+            "index_name": "idx_hxy_material_chunks_content_trgm",
+            "access_method": "gin",
+            "index_columns": ["content"],
+            "opclasses": ["gin_trgm_ops"],
+            "predicate": None,
+            "indisvalid": True,
+        },
+        {
+            "table_schema": "public",
+            "table_name": "staff_sessions",
+            "index_name": "idx_staff_sessions_assignment_expires",
+            "access_method": "btree",
+            "index_columns": ["assignment_id", "expires_at"],
+            "opclasses": ["uuid_ops", "timestamptz_ops"],
+            "predicate": "(assignment_id IS NOT NULL)",
+            "indisvalid": True,
+        },
+    ]
 
 
 def _inspection_factory(connection: FakeInspectionConnection):
@@ -432,6 +566,21 @@ def test_preflight_fails_for_wrong_postgres_major_or_missing_baseline() -> None:
     _assert_queries_are_read_only(connection.queries)
 
 
+def test_preflight_requires_public_current_schema_before_migration() -> None:
+    connection = FakeInspectionConnection(activated=False)
+    connection.current_schema = "private"
+
+    result = run_preflight(
+        ROOT,
+        DATABASE_URL,
+        connect_factory=_inspection_factory(connection),
+    )
+
+    assert result["status"] == "failed"
+    failed = {item["name"] for item in result["checks"] if item["status"] == "failed"}
+    assert "current_schema" in failed
+
+
 def test_postflight_requires_governed_activation_schema() -> None:
     connection = FakeInspectionConnection(activated=True)
     result = run_postflight(
@@ -459,7 +608,7 @@ def test_postflight_fails_without_private_chunk_governance() -> None:
                 row
                 for row in result.rows
                 if not (
-                    row["table_name"] == "hxy_material_chunks"
+                    row["source_table"] == "hxy_material_chunks"
                     and row["constraint_type"] == "c"
                 )
             ]
@@ -499,6 +648,99 @@ def test_postflight_fails_without_assignment_scoped_staff_sessions() -> None:
     assert result["status"] == "failed"
     failed = {item["name"] for item in result["checks"] if item["status"] == "failed"}
     assert "assignment_session_scope" in failed
+
+
+@pytest.mark.parametrize(
+    ("marker", "override", "failed_check"),
+    [
+        (
+            "hxy_product_materials_official_use_allowed",
+            {"source_schema": "private"},
+            "material_non_authority",
+        ),
+        (
+            "hxy_material_artifacts_official_use_allowed",
+            {"convalidated": False},
+            "artifact_non_authority",
+        ),
+        (
+            "hxy_material_chunks_official_use_allowed",
+            {"check_expression": "official_use_allowed = false OR true"},
+            "private_chunk_non_authority",
+        ),
+        (
+            "staff_assignment_fk",
+            {"target_table": "hxy_role_assignments_shadow"},
+            "assignment_session_scope",
+        ),
+        (
+            "staff_assignment_fk",
+            {"confdeltype": "r"},
+            "assignment_session_scope",
+        ),
+        (
+            "chunk_owner_fk",
+            {"source_columns": ["material_id", "assignment_id"]},
+            "private_chunk_assignment_owner",
+        ),
+        (
+            "chunk_owner_fk",
+            {"target_schema": "private"},
+            "private_chunk_assignment_owner",
+        ),
+        (
+            "trace_assistant_unique",
+            {"source_columns": ["assistant_message_id", "assignment_id"]},
+            "answer_trace_one_per_assistant",
+        ),
+    ],
+)
+def test_postflight_rejects_catalog_false_positive_constraints(
+    marker: str,
+    override: dict[str, Any],
+    failed_check: str,
+) -> None:
+    connection = FakeInspectionConnection(activated=True)
+    connection.constraint_overrides[marker] = override
+
+    result = run_postflight(
+        ROOT,
+        DATABASE_URL,
+        connect_factory=_inspection_factory(connection),
+    )
+
+    assert result["status"] == "failed"
+    failed = {item["name"] for item in result["checks"] if item["status"] == "failed"}
+    assert failed_check in failed
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"table_schema": "private"},
+        {"table_name": "hxy_material_chunks_shadow"},
+        {"index_columns": ["heading"]},
+        {"opclasses": ["text_ops"]},
+        {"access_method": "btree"},
+        {"predicate": "content <> ''"},
+        {"indisvalid": False},
+    ],
+)
+def test_postflight_rejects_false_positive_trigram_index(
+    override: dict[str, Any],
+) -> None:
+    connection = FakeInspectionConnection(activated=True)
+    connection.index_overrides["idx_hxy_material_chunks_content_trgm"] = override
+
+    result = run_postflight(
+        ROOT,
+        DATABASE_URL,
+        connect_factory=_inspection_factory(connection),
+    )
+
+    assert result["status"] == "failed"
+    failed = {item["name"] for item in result["checks"] if item["status"] == "failed"}
+    assert "private_chunk_trigram_index" in failed
 
 
 class FakeCommandRunner:

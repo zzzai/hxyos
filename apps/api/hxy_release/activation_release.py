@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
@@ -13,6 +14,7 @@ from psycopg.rows import dict_row
 from .guarded_migration import (
     CommandRunner,
     InspectionRunner,
+    MigrationLoader,
     MigrationReleaseSpec,
     ReleaseAuthorizationError,
     ReleaseBackupError,
@@ -22,6 +24,7 @@ from .guarded_migration import (
     apply_release_migrations,
     create_release_backup,
     database_identity as guarded_database_identity,
+    git_head_migration_loader,
     migration_inventory as guarded_migration_inventory,
     render_result,
     validate_hxy_boundary as guarded_validate_hxy_boundary,
@@ -74,11 +77,13 @@ def migration_inventory(
     root_dir: Path,
     *,
     trusted_root: Path = _DEFAULT_TRUSTED_ROOT,
+    migration_loader: MigrationLoader | None = None,
 ) -> list[dict[str, str]]:
     return guarded_migration_inventory(
         ACTIVATION_RELEASE,
         root_dir,
         trusted_root=trusted_root,
+        migration_loader=migration_loader,
     )
 
 
@@ -117,10 +122,11 @@ def _inspect_database(
     *,
     phase: str,
     connect_factory: ConnectFactory | None,
+    migration_loader: MigrationLoader | None,
 ) -> dict[str, Any]:
     identity = database_identity(database_url)
     validate_hxy_boundary(root_dir, identity)
-    inventory = migration_inventory(root_dir)
+    inventory = migration_inventory(root_dir, migration_loader=migration_loader)
     connection_factory = connect_factory or _default_connect
     with connection_factory(database_url) as connection:
         connection.read_only = True
@@ -129,7 +135,8 @@ def _inspect_database(
             /* hxy_release:server */
             SELECT current_setting('server_version_num') AS server_version_num,
                    current_database() AS database,
-                   current_user AS user
+                   current_user AS user,
+                   current_schema() AS current_schema
             """
         ).fetchone()
         relation_rows = connection.execute(
@@ -137,7 +144,7 @@ def _inspect_database(
             /* hxy_release:relations */
             SELECT relation_name AS name
             FROM unnest(%s::text[]) AS relation_name
-            WHERE to_regclass(relation_name) IS NOT NULL
+            WHERE to_regclass('public.' || relation_name) IS NOT NULL
             ORDER BY relation_name
             """,
             (list(_BASELINE_TABLES + _ACTIVATION_TABLES),),
@@ -151,7 +158,7 @@ def _inspect_database(
                 /* hxy_release:columns */
                 SELECT table_name, column_name
                 FROM information_schema.columns
-                WHERE table_schema = current_schema()
+                WHERE table_schema = 'public'
                   AND table_name = 'staff_sessions'
                   AND column_name = 'assignment_id'
                 """
@@ -159,26 +166,86 @@ def _inspect_database(
             constraints = connection.execute(
                 """
                 /* hxy_release:constraints */
-                SELECT relation.relname AS table_name,
-                       constraint_row.contype AS constraint_type,
-                       pg_get_constraintdef(constraint_row.oid) AS definition
+                SELECT constraint_row.contype AS constraint_type,
+                       source_namespace.nspname AS source_schema,
+                       source_relation.relname AS source_table,
+                       ARRAY(
+                         SELECT source_attribute.attname
+                         FROM unnest(constraint_row.conkey) WITH ORDINALITY
+                           AS source_key(attnum, position)
+                         JOIN pg_attribute AS source_attribute
+                           ON source_attribute.attrelid = constraint_row.conrelid
+                          AND source_attribute.attnum = source_key.attnum
+                         ORDER BY source_key.position
+                       ) AS source_columns,
+                       COALESCE(target_namespace.nspname, '') AS target_schema,
+                       COALESCE(target_relation.relname, '') AS target_table,
+                       COALESCE(ARRAY(
+                         SELECT target_attribute.attname
+                         FROM unnest(constraint_row.confkey) WITH ORDINALITY
+                           AS target_key(attnum, position)
+                         JOIN pg_attribute AS target_attribute
+                           ON target_attribute.attrelid = constraint_row.confrelid
+                          AND target_attribute.attnum = target_key.attnum
+                         ORDER BY target_key.position
+                       ), ARRAY[]::name[]) AS target_columns,
+                       constraint_row.convalidated,
+                       constraint_row.confdeltype,
+                       CASE WHEN constraint_row.contype = 'c'
+                         THEN pg_get_expr(constraint_row.conbin, constraint_row.conrelid)
+                         ELSE NULL
+                       END AS check_expression
                 FROM pg_constraint AS constraint_row
-                JOIN pg_class AS relation ON relation.oid = constraint_row.conrelid
-                JOIN pg_namespace AS namespace_row ON namespace_row.oid = relation.relnamespace
-                WHERE namespace_row.nspname = current_schema()
-                  AND relation.relname = ANY(%s::text[])
-                ORDER BY relation.relname, constraint_row.contype, constraint_row.conname
+                JOIN pg_class AS source_relation
+                  ON source_relation.oid = constraint_row.conrelid
+                JOIN pg_namespace AS source_namespace
+                  ON source_namespace.oid = source_relation.relnamespace
+                LEFT JOIN pg_class AS target_relation
+                  ON target_relation.oid = constraint_row.confrelid
+                LEFT JOIN pg_namespace AS target_namespace
+                  ON target_namespace.oid = target_relation.relnamespace
+                WHERE source_namespace.nspname = 'public'
+                  AND source_relation.relname = ANY(%s::text[])
+                  AND constraint_row.contype IN ('c', 'f', 'u')
+                ORDER BY source_relation.relname, constraint_row.contype,
+                         constraint_row.conname
                 """,
                 (list(_ACTIVATION_TABLES + ("staff_sessions",)),),
             ).fetchall()
             indexes = connection.execute(
                 """
                 /* hxy_release:indexes */
-                SELECT indexname AS index_name
-                FROM pg_indexes
-                WHERE schemaname = current_schema()
-                  AND tablename = ANY(%s::text[])
-                ORDER BY indexname
+                SELECT namespace_row.nspname AS table_schema,
+                       table_relation.relname AS table_name,
+                       index_relation.relname AS index_name,
+                       access_method.amname AS access_method,
+                       ARRAY(
+                         SELECT pg_get_indexdef(index_relation.oid, position, true)
+                         FROM generate_series(1, index_row.indnkeyatts) AS position
+                         ORDER BY position
+                       ) AS index_columns,
+                       ARRAY(
+                         SELECT operator_class.opcname
+                         FROM unnest(index_row.indclass::oid[]) WITH ORDINALITY
+                           AS class_key(opclass_oid, position)
+                         JOIN pg_opclass AS operator_class
+                           ON operator_class.oid = class_key.opclass_oid
+                         ORDER BY class_key.position
+                       ) AS opclasses,
+                       pg_get_expr(index_row.indpred, index_row.indrelid) AS predicate,
+                       index_row.indisvalid
+                FROM pg_index AS index_row
+                JOIN pg_class AS table_relation
+                  ON table_relation.oid = index_row.indrelid
+                JOIN pg_class AS index_relation
+                  ON index_relation.oid = index_row.indexrelid
+                JOIN pg_namespace AS namespace_row
+                  ON namespace_row.oid = table_relation.relnamespace
+                JOIN pg_am AS access_method
+                  ON access_method.oid = index_relation.relam
+                WHERE namespace_row.nspname = 'public'
+                  AND table_relation.relname = ANY(%s::text[])
+                ORDER BY index_relation.relname
                 """,
                 (list(_ACTIVATION_TABLES + ("staff_sessions",)),),
             ).fetchall()
@@ -194,6 +261,11 @@ def _inspect_database(
             "database_identity",
             str(server.get("database") or "") == identity["database"],
             "connected database matches target identity",
+        ),
+        _check(
+            "current_schema",
+            str(server.get("current_schema") or "") == "public",
+            f"schema={str(server.get('current_schema') or 'unknown')}",
         ),
         _check(
             "baseline_tables",
@@ -224,73 +296,109 @@ def _postflight_checks(
     constraints: list[dict[str, Any]],
     indexes: list[dict[str, Any]],
 ) -> list[dict[str, str]]:
-    normalized_constraints = [
-        {
-            "table": str(row.get("table_name") or ""),
-            "type": str(row.get("constraint_type") or ""),
-            "definition": " ".join(str(row.get("definition") or "").lower().split()),
-        }
-        for row in constraints
-    ]
+    def row_columns(row: dict[str, Any], key: str) -> tuple[str, ...]:
+        return tuple(str(item) for item in row.get(key) or ())
 
-    def has_constraint(table: str, constraint_type: str, required: tuple[str, ...]) -> bool:
+    def exact_check(table: str) -> bool:
         return any(
-            item["table"] == table
-            and item["type"] == constraint_type
-            and all(fragment in item["definition"] for fragment in required)
-            for item in normalized_constraints
+            str(row.get("constraint_type") or "") == "c"
+            and str(row.get("source_schema") or "") == "public"
+            and str(row.get("source_table") or "") == table
+            and row_columns(row, "source_columns") == ("official_use_allowed",)
+            and row.get("convalidated") is True
+            and _canonical_check_expression(row.get("check_expression"))
+            == "official_use_allowed=false"
+            for row in constraints
+        )
+
+    def exact_constraint(
+        constraint_type: str,
+        source_table: str,
+        source_columns: tuple[str, ...],
+        target_table: str = "",
+        target_columns: tuple[str, ...] = (),
+        delete_action: str = " ",
+    ) -> bool:
+        return any(
+            str(row.get("constraint_type") or "") == constraint_type
+            and str(row.get("source_schema") or "") == "public"
+            and str(row.get("source_table") or "") == source_table
+            and row_columns(row, "source_columns") == source_columns
+            and str(row.get("target_schema") or "")
+            == ("public" if target_table else "")
+            and str(row.get("target_table") or "") == target_table
+            and row_columns(row, "target_columns") == target_columns
+            and row.get("convalidated") is True
+            and str(row.get("confdeltype") or " ") == delete_action
+            for row in constraints
         )
 
     official_checks = [
         (
             "material_non_authority",
-            has_constraint(
-                "hxy_product_materials",
-                "c",
-                ("official_use_allowed", "false"),
-            ),
+            exact_check("hxy_product_materials"),
         ),
         (
             "artifact_non_authority",
-            has_constraint(
-                "hxy_material_artifacts",
-                "c",
-                ("official_use_allowed", "false"),
-            ),
+            exact_check("hxy_material_artifacts"),
         ),
         (
             "private_chunk_non_authority",
-            has_constraint(
-                "hxy_material_chunks",
-                "c",
-                ("official_use_allowed", "false"),
-            ),
+            exact_check("hxy_material_chunks"),
         ),
     ]
-    chunk_owner = has_constraint(
-        "hxy_material_chunks",
+    chunk_owner = exact_constraint(
         "f",
-        ("foreign key (assignment_id, material_id)", "hxy_product_materials"),
+        "hxy_material_chunks",
+        ("assignment_id", "material_id"),
+        "hxy_product_materials",
+        ("assignment_id", "material_id"),
+        "c",
     )
-    trace_unique = has_constraint(
-        "hxy_product_answer_traces",
+    trace_unique = exact_constraint(
         "u",
-        ("unique (assistant_message_id)",),
+        "hxy_product_answer_traces",
+        ("assistant_message_id",),
     )
-    index_names = {str(row.get("index_name") or "") for row in indexes}
     assignment_session_column = any(
         str(row.get("table_name") or "") == "staff_sessions"
         and str(row.get("column_name") or "") == "assignment_id"
         for row in columns
     )
-    assignment_session_fk = has_constraint(
-        "staff_sessions",
+    assignment_session_fk = exact_constraint(
         "f",
-        ("foreign key (assignment_id)", "hxy_role_assignments(assignment_id)"),
+        "staff_sessions",
+        ("assignment_id",),
+        "hxy_role_assignments",
+        ("assignment_id",),
+        "c",
     )
-    assignment_session_index = "idx_staff_sessions_assignment_expires" in index_names
+    assignment_session_index = any(
+        str(row.get("table_schema") or "") == "public"
+        and str(row.get("table_name") or "") == "staff_sessions"
+        and str(row.get("index_name") or "")
+        == "idx_staff_sessions_assignment_expires"
+        and str(row.get("access_method") or "") == "btree"
+        and row_columns(row, "index_columns") == ("assignment_id", "expires_at")
+        and _canonical_predicate(row.get("predicate"))
+        == "assignment_idisnotnull"
+        and row.get("indisvalid") is True
+        for row in indexes
+    )
     assignment_session_scope = (
         assignment_session_column and assignment_session_fk and assignment_session_index
+    )
+    trigram_index = any(
+        str(row.get("table_schema") or "") == "public"
+        and str(row.get("table_name") or "") == "hxy_material_chunks"
+        and str(row.get("index_name") or "")
+        == "idx_hxy_material_chunks_content_trgm"
+        and str(row.get("access_method") or "") == "gin"
+        and row_columns(row, "index_columns") == ("content",)
+        and row_columns(row, "opclasses") == ("gin_trgm_ops",)
+        and row.get("predicate") in (None, "")
+        and row.get("indisvalid") is True
+        for row in indexes
     )
     return [
         _check(
@@ -321,12 +429,24 @@ def _postflight_checks(
         ),
         _check(
             "private_chunk_trigram_index",
-            "idx_hxy_material_chunks_content_trgm" in index_names,
-            "index present"
-            if "idx_hxy_material_chunks_content_trgm" in index_names
-            else "index missing",
+            trigram_index,
+            "index present" if trigram_index else "index missing",
         ),
     ]
+
+
+def _canonical_check_expression(value: Any) -> str:
+    normalized = str(value or "").lower().replace('"', "")
+    normalized = re.sub(r"::(?:boolean|bool)", "", normalized)
+    return re.sub(r"[\s()]", "", normalized)
+
+
+def _canonical_predicate(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    normalized = str(value).lower().replace('"', "")
+    normalized = re.sub(r"::[a-z ]+", "", normalized)
+    return re.sub(r"[\s()]", "", normalized)
 
 
 def run_preflight(
@@ -334,12 +454,14 @@ def run_preflight(
     database_url: str,
     *,
     connect_factory: ConnectFactory | None = None,
+    migration_loader: MigrationLoader | None = None,
 ) -> dict[str, Any]:
     return _inspect_database(
         root_dir,
         database_url,
         phase="preflight",
         connect_factory=connect_factory,
+        migration_loader=migration_loader,
     )
 
 
@@ -348,12 +470,14 @@ def run_postflight(
     database_url: str,
     *,
     connect_factory: ConnectFactory | None = None,
+    migration_loader: MigrationLoader | None = None,
 ) -> dict[str, Any]:
     return _inspect_database(
         root_dir,
         database_url,
         phase="postflight",
         connect_factory=connect_factory,
+        migration_loader=migration_loader,
     )
 
 
@@ -376,17 +500,26 @@ def create_backup(
     git_commit: str | None = None,
     preflight_runner: InspectionRunner = run_preflight,
     trusted_root: Path = _DEFAULT_TRUSTED_ROOT,
+    migration_loader: MigrationLoader | None = None,
 ) -> dict[str, Any]:
+    preflight_inspector = preflight_runner
+    if preflight_runner is run_preflight:
+        preflight_inspector = lambda root, dsn: run_preflight(
+            root,
+            dsn,
+            migration_loader=migration_loader,
+        )
     result = create_release_backup(
         ACTIVATION_RELEASE,
         root_dir,
         database_url,
         output_root=output_root,
-        preflight_inspector=preflight_runner,
+        preflight_inspector=preflight_inspector,
         runner=runner,
         now=now,
         git_commit=git_commit,
         trusted_root=trusted_root,
+        migration_loader=migration_loader,
     )
     result.pop("release_id", None)
     return result
@@ -401,6 +534,7 @@ def validate_backup_manifest(
     max_age: timedelta = timedelta(hours=24),
     git_commit: str | None = None,
     trusted_root: Path = _DEFAULT_TRUSTED_ROOT,
+    migration_loader: MigrationLoader | None = None,
 ) -> dict[str, Any]:
     result = validate_release_backup_manifest(
         ACTIVATION_RELEASE,
@@ -411,6 +545,7 @@ def validate_backup_manifest(
         max_age=max_age,
         git_commit=git_commit,
         trusted_root=trusted_root,
+        migration_loader=migration_loader,
     )
     for key in ("release_id", "git_commit", "connection_fingerprint"):
         result.pop(key, None)
@@ -428,18 +563,27 @@ def apply_activation_migrations(
     git_commit: str | None = None,
     postflight_runner: InspectionRunner = run_postflight,
     trusted_root: Path = _DEFAULT_TRUSTED_ROOT,
+    migration_loader: MigrationLoader | None = None,
 ) -> dict[str, Any]:
+    postflight_inspector = postflight_runner
+    if postflight_runner is run_postflight:
+        postflight_inspector = lambda root, dsn: run_postflight(
+            root,
+            dsn,
+            migration_loader=migration_loader,
+        )
     result = apply_release_migrations(
         ACTIVATION_RELEASE,
         root_dir,
         database_url,
         manifest_path=manifest_path,
         confirmation=confirmation,
-        postflight_inspector=postflight_runner,
+        postflight_inspector=postflight_inspector,
         runner=runner,
         now=now,
         git_commit=git_commit,
         trusted_root=trusted_root,
+        migration_loader=migration_loader,
     )
     for key in ("release_id", "git_commit"):
         result.pop(key, None)
@@ -468,13 +612,18 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         if args.command == "preflight":
-            result = run_preflight(args.root_dir, database_url)
+            result = run_preflight(
+                args.root_dir,
+                database_url,
+                migration_loader=git_head_migration_loader,
+            )
         elif args.command == "backup":
             output_root = args.output_root or _DEFAULT_BACKUP_ROOT
             result = create_backup(
                 args.root_dir,
                 database_url,
                 output_root=output_root,
+                migration_loader=git_head_migration_loader,
             )
         elif args.command == "apply":
             if args.backup_manifest is None:
@@ -484,9 +633,14 @@ def main(argv: list[str] | None = None) -> int:
                 database_url,
                 manifest_path=args.backup_manifest,
                 confirmation=args.confirm,
+                migration_loader=git_head_migration_loader,
             )
         else:
-            result = run_postflight(args.root_dir, database_url)
+            result = run_postflight(
+                args.root_dir,
+                database_url,
+                migration_loader=git_head_migration_loader,
+            )
     except ReleasePostflightError as exc:
         result = {
             "status": "failed",
