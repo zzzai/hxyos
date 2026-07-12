@@ -1748,8 +1748,8 @@ def test_internal_runbook_enforces_release_stop_gate_order() -> None:
         "## Gate 4: Verified Restorable Backup",
         "## Gate 5: Transactional Apply 015-016",
         "## Gate 6: Read-Only Postflight",
-        "## Gate 7: API Activation From Versioned Release",
-        "## Gate 8: Web Activation From Same Commit",
+        "## Gate 7: Maintenance And Atomic Activation",
+        "## Gate 8: Joint Runtime Verification",
         "## Gate 9: Role Canaries",
         "## Gate 10: Mobile Smoke",
         "## Gate 11: Completion Record",
@@ -1800,8 +1800,12 @@ def test_internal_runbook_is_private_code_only_and_contains_no_secret_values() -
         ROOT / "docs" / "operations" / "hxy-role-journeys-release.md"
     ).read_text(encoding="utf-8")
 
-    assert "GitHub 仅用于内部代码仓" in runbook
-    assert "不创建公开项目描述" in runbook
+    assert "GitHub 仅用于代码协作" in runbook
+    assert "不需要项目描述" in runbook
+    assert "visibility/description 属于仓库管理外部前置" in runbook
+    assert "当前未登录 HTTP 可达" in runbook
+    assert "不等于本 runbook 要修改 visibility" in runbook
+    assert "不作为本次 DB/app release 的自动 Gate" in runbook
     assert "不得记录密码、token、完整 DSN 或私有资料" in runbook
     assert "## 项目介绍" not in runbook
     assert "public roadmap" not in runbook.lower()
@@ -1838,6 +1842,13 @@ def test_internal_runbook_places_required_terms_in_exact_release_sections() -> N
             "npm test",
             "python3 scripts/check-hxy-secrets.py",
             "python3 scripts/check-hxy-public-release.py",
+            'rm -rf "$HXY_RELEASE_PATH/node_modules"',
+            'rm -rf "$HXY_RELEASE_PATH/apps/hxy-web/node_modules"',
+            "/root/hxy/data/releases/role-journeys",
+            "find -L . -xdev -type f -print0",
+            "LC_ALL=C sort -z",
+            "xargs -0 -r sha256sum",
+            'chmod -R a-w "$HXY_RELEASE_PATH"',
         ),
     )
     _assert_section_contains(
@@ -1892,7 +1903,87 @@ appendix body
     assert sections["rollback_boundary"] == "rollback body"
 
 
-def test_internal_runbook_binds_runtime_marker_and_rollback_evidence_to_sections() -> None:
+def test_internal_runbook_seals_release_after_build_and_before_database_gates() -> None:
+    runbook = (
+        ROOT / "docs" / "operations" / "hxy-role-journeys-release.md"
+    ).read_text(encoding="utf-8")
+    sections = _slice_release_runbook_sections(runbook)
+
+    _assert_section_order(
+        sections,
+        "gate_2",
+        (
+            "printf '%s\\n' \"$HXY_RELEASE_COMMIT\"",
+            'rm -rf "$HXY_RELEASE_PATH/node_modules"',
+            'rm -rf "$HXY_RELEASE_PATH/apps/hxy-web/node_modules"',
+            "find -L . -xdev -type f -print0",
+            'mv -T "$HXY_RELEASE_SEAL_TMP" "$HXY_RELEASE_SEAL"',
+            'chmod 0444 "$HXY_RELEASE_SEAL"',
+            'chmod -R a-w "$HXY_RELEASE_PATH"',
+            'sha256sum -c "$HXY_RELEASE_SEAL"',
+            'find "$HXY_RELEASE_PATH" -xdev -type f -perm /222 -print -quit',
+        ),
+    )
+    for gate in ("gate_3", "gate_5", "gate_7"):
+        _assert_section_order(
+            sections,
+            gate,
+            (
+                'sha256sum -c "$HXY_RELEASE_SEAL"',
+                'find "$HXY_RELEASE_PATH" -xdev -type f -perm /222 -print -quit',
+            ),
+        )
+
+    assert "source、`dist/` 和 `.venv/`" in sections["gate_2"]
+
+
+def test_release_seal_pipeline_hashes_files_through_venv_directory_symlink(
+    tmp_path: Path,
+) -> None:
+    release = tmp_path / "release"
+    library = release / ".venv" / "lib"
+    library.mkdir(parents=True)
+    (release / "source.py").write_text("source\n", encoding="utf-8")
+    (library / "runtime.py").write_text("runtime\n", encoding="utf-8")
+    (release / ".venv" / "lib64").symlink_to("lib", target_is_directory=True)
+
+    result = subprocess.run(
+        "find -L . -xdev -type f -print0 "
+        "| LC_ALL=C sort -z "
+        "| xargs -0 -r sha256sum",
+        cwd=release,
+        check=False,
+        shell=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "./.venv/lib/runtime.py" in result.stdout
+    assert "./.venv/lib64/runtime.py" in result.stdout
+    assert "./source.py" in result.stdout
+
+
+def test_release_seal_contract_rejects_freeze_before_marker() -> None:
+    misordered_runbook = """\
+## Gate 2: Code
+chmod -R a-w "$HXY_RELEASE_PATH"
+printf '%s\\n' "$HXY_RELEASE_COMMIT"
+"""
+    sections = _slice_release_runbook_sections(misordered_runbook)
+
+    with pytest.raises(AssertionError, match="out of order in gate_2"):
+        _assert_section_order(
+            sections,
+            "gate_2",
+            (
+                "printf '%s\\n' \"$HXY_RELEASE_COMMIT\"",
+                'chmod -R a-w "$HXY_RELEASE_PATH"',
+            ),
+        )
+
+
+def test_internal_runbook_keeps_code_and_persistent_data_roots_separate() -> None:
     runbook = (
         ROOT / "docs" / "operations" / "hxy-role-journeys-release.md"
     ).read_text(encoding="utf-8")
@@ -1900,62 +1991,142 @@ def test_internal_runbook_binds_runtime_marker_and_rollback_evidence_to_sections
 
     _assert_section_contains(
         sections,
-        "gate_2",
+        "gate_7",
         (
-            "printf '%s\\n' \"$HXY_RELEASE_COMMIT\"",
-            "$HXY_RELEASE_PATH/apps/hxy-web/dist/release-commit.txt",
-            "只写 `$HXY_RELEASE_COMMIT`",
+            "WorkingDirectory=/root/hxy/releases/current",
+            "Environment=HXY_ROOT_DIR=/root/hxy",
+            "Environment=PYTHONPATH=/root/hxy/releases/current/apps/api",
+            "exec /root/hxy/releases/current/.venv/bin/python -m uvicorn",
+            "WorkingDirectory=/root/hxy/releases/current/apps/hxy-web/dist",
+            "hxy-product-web.service",
+            "HXY_ROOT_DIR 是 `/root/hxy` 持久数据根",
         ),
     )
-    _assert_section_contains(
+
+    assert "Environment=HXY_ROOT_DIR=/root/hxy/releases/current" not in runbook
+    assert "/root/hxy/releases/current/data/" not in runbook
+
+
+def test_internal_runbook_validates_previous_before_setting_pointer_and_stopping() -> None:
+    runbook = (
+        ROOT / "docs" / "operations" / "hxy-role-journeys-release.md"
+    ).read_text(encoding="utf-8")
+    sections = _slice_release_runbook_sections(runbook)
+
+    _assert_section_order(
         sections,
         "gate_7",
         (
-            'HXY_API_MAIN_PID="$(systemctl show --property MainPID --value hxy-knowledge-api)"',
-            'test "$(readlink -f "/proc/${HXY_API_MAIN_PID}/cwd")" = "$HXY_RELEASE_PATH"',
-            'test "$(readlink -f /root/hxy/releases/current)" = "$HXY_RELEASE_PATH"',
+            'HXY_PREVIOUS_RELEASE_PATH="$(readlink -f /root/hxy/releases/current)"',
+            'HXY_PREVIOUS_RELEASE_COMMIT="$(git -C "$HXY_PREVIOUS_RELEASE_PATH" rev-parse HEAD)"',
+            'test -f "$HXY_PREVIOUS_RELEASE_PATH/apps/hxy-web/dist/index.html"',
+            'test "$(cat "$HXY_PREVIOUS_RELEASE_PATH/apps/hxy-web/dist/release-commit.txt")" = "$HXY_PREVIOUS_RELEASE_COMMIT"',
+            'test -x "$HXY_PREVIOUS_RELEASE_PATH/.venv/bin/python"',
+            'test -f "$HXY_PREVIOUS_RELEASE_PATH/apps/api/requirements.txt"',
+            '"$HXY_PREVIOUS_RELEASE_PATH/.venv/bin/python" -m pip install --dry-run --no-index --requirement "$HXY_PREVIOUS_RELEASE_PATH/apps/api/requirements.txt"',
+            '"$HXY_PREVIOUS_RELEASE_PATH/.venv/bin/python" -m pip check',
+            'curl --fail --silent http://127.0.0.1:18081/health',
+            'test "$(readlink -f "/proc/${HXY_PREVIOUS_API_MAIN_PID}/cwd")" = "$HXY_PREVIOUS_RELEASE_PATH"',
+            'test "$(readlink -f "/proc/${HXY_PREVIOUS_WEB_MAIN_PID}/cwd")" = "$HXY_PREVIOUS_RELEASE_PATH/apps/hxy-web/dist"',
+            'test "$HXY_PREVIOUS_WEB_COMMIT" = "$HXY_PREVIOUS_RELEASE_COMMIT"',
+            'mv -T "$HXY_PREVIOUS_SEAL_TMP" "$HXY_PREVIOUS_SEAL"',
+            'chmod -R a-w "$HXY_PREVIOUS_RELEASE_PATH"',
+            'sha256sum -c "$HXY_PREVIOUS_SEAL"',
+            'mv -Tf /root/hxy/releases/previous.next /root/hxy/releases/previous',
+            "systemctl stop hxy-product-web hxy-knowledge-api",
+            'test "$(systemctl is-active hxy-product-web || true)" = inactive',
+            'test "$(systemctl is-active hxy-knowledge-api || true)" = inactive',
+            "mv -Tf /root/hxy/releases/current.next /root/hxy/releases/current",
+            "systemctl start hxy-knowledge-api",
+            "systemctl start hxy-product-web",
         ),
     )
-    _assert_section_contains(
+
+    assert "旧 release 无法满足任一前置验证时禁止发布" in sections["gate_7"]
+
+
+def test_internal_runbook_verifies_both_services_and_markers_after_switch() -> None:
+    runbook = (
+        ROOT / "docs" / "operations" / "hxy-role-journeys-release.md"
+    ).read_text(encoding="utf-8")
+    sections = _slice_release_runbook_sections(runbook)
+
+    _assert_section_order(
         sections,
         "gate_8",
         (
-            "HXY_WEB_RELEASE_MARKER_URL='https://hxyos.hexiaoyue.com/release-commit.txt'",
-            "--header 'Cache-Control: no-cache'",
-            'test "$HXY_WEB_RELEASE_COMMIT" = "$HXY_RELEASE_COMMIT"',
-            "HTTP marker 是最终证据",
-            "失败立即执行 Rollback Boundary 的应用回滚",
-        ),
-    )
-    _assert_section_contains(
-        sections,
-        "rollback_boundary",
-        (
-            'ln -sfn "$HXY_ROLLBACK_PATH" /root/hxy/releases/current.next',
-            "mv -Tf /root/hxy/releases/current.next /root/hxy/releases/current",
-            "systemctl restart hxy-knowledge-api",
-            'HXY_ROLLBACK_API_MAIN_PID="$(systemctl show --property MainPID --value hxy-knowledge-api)"',
-            'test "$(readlink -f "/proc/${HXY_ROLLBACK_API_MAIN_PID}/cwd")" = "$HXY_ROLLBACK_PATH"',
-            "systemctl reload nginx",
+            'HXY_API_MAIN_PID="$(systemctl show --property MainPID --value hxy-knowledge-api)"',
+            'test "$(readlink -f "/proc/${HXY_API_MAIN_PID}/cwd")" = "$HXY_RELEASE_PATH"',
+            'HXY_WEB_MAIN_PID="$(systemctl show --property MainPID --value hxy-product-web)"',
+            'test "$(readlink -f "/proc/${HXY_WEB_MAIN_PID}/cwd")" = "$HXY_RELEASE_PATH/apps/hxy-web/dist"',
             "curl --fail --silent http://127.0.0.1:18081/health",
-            "--header 'Cache-Control: no-cache'",
-            'test "$HXY_ROLLBACK_WEB_COMMIT" = "$HXY_ROLLBACK_COMMIT"',
+            'test "$HXY_LOCAL_WEB_COMMIT" = "$HXY_RELEASE_COMMIT"',
+            'HXY_WEB_RELEASE_COMMIT="$(',
+            'test "$HXY_WEB_RELEASE_COMMIT" = "$HXY_RELEASE_COMMIT"',
         ),
     )
+
+    assert "systemctl reload nginx" not in runbook
+    assert "systemctl restart hxy-knowledge-api" not in runbook
+
+
+def test_internal_runbook_rollback_stops_switches_starts_and_verifies_in_order() -> None:
+    runbook = (
+        ROOT / "docs" / "operations" / "hxy-role-journeys-release.md"
+    ).read_text(encoding="utf-8")
+    sections = _slice_release_runbook_sections(runbook)
+
     _assert_section_order(
         sections,
         "rollback_boundary",
         (
+            'sha256sum -c "$HXY_ROLLBACK_SEAL"',
+            'find "$HXY_ROLLBACK_PATH" -xdev -type f -perm /222 -print -quit',
+            "HXY_WEB_RELEASE_MARKER_URL='https://hxyos.hexiaoyue.com/release-commit.txt'",
+            "systemctl stop hxy-product-web hxy-knowledge-api",
+            'test "$(systemctl is-active hxy-product-web || true)" = inactive',
+            'test "$(systemctl is-active hxy-knowledge-api || true)" = inactive',
+            'ln -sfn "$HXY_ROLLBACK_PATH" /root/hxy/releases/current.next',
             "mv -Tf /root/hxy/releases/current.next /root/hxy/releases/current",
-            "systemctl restart hxy-knowledge-api",
-            'HXY_ROLLBACK_API_MAIN_PID="$(systemctl show --property MainPID --value hxy-knowledge-api)"',
+            "systemctl start hxy-knowledge-api",
+            "systemctl start hxy-product-web",
             'test "$(readlink -f "/proc/${HXY_ROLLBACK_API_MAIN_PID}/cwd")" = "$HXY_ROLLBACK_PATH"',
+            'test "$(readlink -f "/proc/${HXY_ROLLBACK_WEB_MAIN_PID}/cwd")" = "$HXY_ROLLBACK_PATH/apps/hxy-web/dist"',
             "curl --fail --silent http://127.0.0.1:18081/health",
-            "systemctl reload nginx",
+            'test "$HXY_ROLLBACK_LOCAL_WEB_COMMIT" = "$HXY_ROLLBACK_COMMIT"',
             'HXY_ROLLBACK_WEB_COMMIT="$(',
             'test "$HXY_ROLLBACK_WEB_COMMIT" = "$HXY_ROLLBACK_COMMIT"',
         ),
     )
+    rollback = sections["rollback_boundary"]
+    seal_check = 'sha256sum -c "$HXY_ROLLBACK_SEAL"'
+    assert rollback.count(seal_check) == 2
+    assert rollback.rindex(seal_check) > rollback.index(
+        'test "$HXY_ROLLBACK_WEB_COMMIT" = "$HXY_ROLLBACK_COMMIT"'
+    )
+
+
+def test_rollback_order_contract_rejects_switch_before_services_are_inactive() -> None:
+    misordered_runbook = """\
+## Rollback Boundary
+systemctl stop hxy-product-web hxy-knowledge-api
+mv -Tf /root/hxy/releases/current.next /root/hxy/releases/current
+systemctl is-active --quiet hxy-product-web
+systemctl is-active --quiet hxy-knowledge-api
+"""
+    sections = _slice_release_runbook_sections(misordered_runbook)
+
+    with pytest.raises(AssertionError, match="out of order in rollback_boundary"):
+        _assert_section_order(
+            sections,
+            "rollback_boundary",
+            (
+                "systemctl stop hxy-product-web hxy-knowledge-api",
+                "systemctl is-active --quiet hxy-product-web",
+                "systemctl is-active --quiet hxy-knowledge-api",
+                "mv -Tf /root/hxy/releases/current.next /root/hxy/releases/current",
+            ),
+        )
 
 
 def test_release_section_contract_rejects_web_marker_evidence_in_gate_7() -> None:
@@ -1965,7 +2136,7 @@ HXY_WEB_RELEASE_MARKER_URL='https://hxyos.hexiaoyue.com/release-commit.txt'
 curl --header 'Cache-Control: no-cache'
 
 ## Gate 8: Web
-nginx -t
+systemctl start hxy-product-web
 """
     sections = _slice_release_runbook_sections(misplaced_runbook)
 
@@ -1977,10 +2148,10 @@ nginx -t
         )
 
 
-def test_release_section_order_contract_rejects_restart_before_atomic_switch() -> None:
+def test_release_section_order_contract_rejects_start_before_atomic_switch() -> None:
     misordered_runbook = """\
 ## Rollback Boundary
-systemctl restart hxy-knowledge-api
+systemctl start hxy-knowledge-api
 mv -Tf /root/hxy/releases/current.next /root/hxy/releases/current
 HXY_ROLLBACK_API_MAIN_PID="$(systemctl show --property MainPID --value hxy-knowledge-api)"
 curl --fail --silent http://127.0.0.1:18081/health
@@ -1993,7 +2164,7 @@ curl --fail --silent http://127.0.0.1:18081/health
             "rollback_boundary",
             (
                 "mv -Tf /root/hxy/releases/current.next /root/hxy/releases/current",
-                "systemctl restart hxy-knowledge-api",
+                "systemctl start hxy-knowledge-api",
                 'HXY_ROLLBACK_API_MAIN_PID="$(systemctl show --property MainPID --value hxy-knowledge-api)"',
                 "curl --fail --silent http://127.0.0.1:18081/health",
             ),
