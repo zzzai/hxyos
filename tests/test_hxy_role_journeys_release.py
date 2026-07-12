@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import subprocess
@@ -11,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from apps.api.hxy_release import role_journeys_release
+from apps.api.hxy_release import guarded_migration, role_journeys_release
 from apps.api.hxy_release.guarded_migration import (
     ReleaseAuthorizationError,
     ReleasePostflightError,
@@ -37,6 +38,22 @@ DATABASE_URL = (
 )
 GIT_COMMIT = "a" * 40
 NOW = datetime(2026, 7, 12, 2, 0, tzinfo=timezone.utc)
+INSTANCE_A = {
+    "system_identifier": "7400000000000000001",
+    "server_addr": "127.0.0.1",
+    "server_port": "55433",
+    "database": "hxy_release_test",
+    "server_major": "16",
+}
+
+
+@pytest.fixture(autouse=True)
+def fixed_database_instance(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        guarded_migration,
+        "database_instance_identity",
+        lambda _database_url: dict(INSTANCE_A),
+    )
 
 
 def _slice_release_runbook_sections(markdown: str) -> dict[str, str]:
@@ -109,6 +126,24 @@ def test_release_profile_is_isolated_to_015_and_016() -> None:
     assert all(len(item["sha256"]) == 64 for item in inventory)
 
 
+def test_role_inventory_hashes_supplied_head_blob_bytes() -> None:
+    blobs = {
+        name: f"-- HEAD {name}\n".encode("utf-8")
+        for name in ROLE_JOURNEYS_MIGRATIONS
+    }
+
+    inventory = migration_inventory(
+        ROOT,
+        trusted_root=Path("/root/hxy"),
+        migration_loader=lambda _root, name: blobs[name],
+    )
+
+    assert inventory == [
+        {"name": name, "sha256": hashlib.sha256(blobs[name]).hexdigest()}
+        for name in ROLE_JOURNEYS_MIGRATIONS
+    ]
+
+
 def test_cli_exposes_guarded_commands_and_expected_wrapper() -> None:
     parser = build_argument_parser()
 
@@ -145,6 +180,8 @@ class FakeInspectionConnection:
         self.constraint_overrides: dict[str, dict[str, Any]] = {}
         self.trigger_overrides: dict[str, dict[str, Any]] = {}
         self.index_overrides: dict[str, dict[str, Any]] = {}
+        self.column_overrides: dict[str, dict[str, Any]] = {}
+        self.current_schema = "public"
 
     def __enter__(self):
         return self
@@ -156,6 +193,8 @@ class FakeInspectionConnection:
         assert self.read_only is True
         normalized = " ".join(sql.split())
         self.queries.append(normalized)
+        if "hxy_role_release:schema" in sql:
+            return FakeResult(row={"current_schema": self.current_schema})
         if "hxy_role_release:relations" in sql:
             names = {
                 "hxy_product_tasks",
@@ -166,11 +205,17 @@ class FakeInspectionConnection:
                 names = set()
             return FakeResult(rows=[{"name": name} for name in sorted(names - self.omit)])
         if "hxy_role_release:columns" in sql:
+            rows = []
+            for row in _column_rows():
+                updated = dict(row)
+                updated.update(self.column_overrides.get(row["marker"], {}))
+                rows.append(updated)
             rows = [
-                {"table_name": "hxy_product_tasks", "column_name": "parent_task_id"}
+                row
+                for row in rows
+                if row["marker"] not in self.omit
+                and row["column_name"] not in self.omit
             ]
-            if "parent_task_id" in self.omit:
-                rows = []
             return FakeResult(rows=rows if self.released else [])
         if "hxy_role_release:constraints" in sql:
             rows = []
@@ -208,6 +253,67 @@ class FakeInspectionConnection:
         raise AssertionError(normalized)
 
 
+def _column_rows() -> list[dict[str, Any]]:
+    specifications = {
+        "hxy_product_tasks": (
+            ("task_id", "uuid", "NO", "gen_random_uuid()"),
+            ("organization_id", "uuid", "NO", None),
+            ("store_id", "text", "YES", None),
+            ("creator_assignment_id", "uuid", "NO", None),
+            ("assignee_assignment_id", "uuid", "YES", None),
+            ("source_conversation_id", "uuid", "YES", None),
+            ("source_message_id", "uuid", "YES", None),
+            ("title", "text", "NO", None),
+            ("details", "text", "NO", "''::text"),
+            ("priority", "text", "NO", "'normal'::text"),
+            ("visibility", "text", "NO", "'assignee'::text"),
+            ("status", "text", "NO", "'open'::text"),
+            ("result", "text", "YES", None),
+            ("due_at", "timestamp with time zone", "YES", None),
+            ("completed_at", "timestamp with time zone", "YES", None),
+            ("created_at", "timestamp with time zone", "NO", "now()"),
+            ("updated_at", "timestamp with time zone", "NO", "now()"),
+            ("parent_task_id", "uuid", "YES", None),
+        ),
+        "hxy_product_task_events": (
+            ("event_id", "uuid", "NO", "gen_random_uuid()"),
+            ("organization_id", "uuid", "NO", None),
+            ("task_id", "uuid", "NO", None),
+            ("actor_assignment_id", "uuid", "NO", None),
+            ("event_type", "text", "NO", None),
+            ("payload", "jsonb", "NO", "'{}'::jsonb"),
+            ("created_at", "timestamp with time zone", "NO", "now()"),
+        ),
+        "hxy_product_training_sessions": (
+            ("training_session_id", "uuid", "NO", "gen_random_uuid()"),
+            ("organization_id", "uuid", "NO", None),
+            ("store_id", "text", "NO", None),
+            ("assignment_id", "uuid", "NO", None),
+            ("customer_question", "text", "NO", None),
+            ("employee_answer", "text", "NO", None),
+            ("score", "integer", "NO", None),
+            ("level", "text", "NO", None),
+            ("needs_retrain", "boolean", "NO", None),
+            ("standard_script", "text", "NO", "''::text"),
+            ("correction_points", "jsonb", "NO", "'[]'::jsonb"),
+            ("created_at", "timestamp with time zone", "NO", "now()"),
+        ),
+    }
+    return [
+        {
+            "marker": f"{table}.{name}",
+            "table_schema": "public",
+            "table_name": table,
+            "column_name": name,
+            "data_type": data_type,
+            "is_nullable": nullable,
+            "column_default": default,
+        }
+        for table, columns in specifications.items()
+        for name, data_type, nullable, default in columns
+    ]
+
+
 def _constraint_rows() -> list[dict[str, Any]]:
     specifications = {
         "parent_store": (
@@ -221,6 +327,12 @@ def _constraint_rows() -> list[dict[str, Any]]:
             ("organization_id", "store_id"),
             "hxy_organization_stores",
             ("organization_id", "store_id"),
+        ),
+        "tasks_store": (
+            "hxy_product_tasks",
+            ("store_id",),
+            "stores",
+            ("store_id",),
         ),
         "tasks_org": (
             "hxy_product_tasks",
@@ -257,6 +369,22 @@ def _constraint_rows() -> list[dict[str, Any]]:
             ("organization_id", "store_id", "assignee_assignment_id"),
             "hxy_role_assignments",
             ("organization_id", "store_id", "assignment_id"),
+        ),
+        "tasks_source_conversation": (
+            "hxy_product_tasks",
+            ("creator_assignment_id", "source_conversation_id"),
+            "hxy_product_conversations",
+            ("assignment_id", "conversation_id"),
+        ),
+        "tasks_source_message": (
+            "hxy_product_tasks",
+            (
+                "creator_assignment_id",
+                "source_conversation_id",
+                "source_message_id",
+            ),
+            "hxy_product_messages",
+            ("assignment_id", "conversation_id", "message_id"),
         ),
         "events_task_org": (
             "hxy_product_task_events",
@@ -311,8 +439,10 @@ def _constraint_rows() -> list[dict[str, Any]]:
             "target_schema": "public",
             "target_table": target_table,
             "target_columns": list(target_columns),
+            "constraint_type": "f",
             "convalidated": True,
             "confdeltype": "r",
+            "check_expression": None,
         }
         for marker, (
             source_table,
@@ -320,7 +450,73 @@ def _constraint_rows() -> list[dict[str, Any]]:
             target_table,
             target_columns,
         ) in specifications.items()
+    ] + _key_and_check_constraint_rows()
+
+
+def _key_and_check_constraint_rows() -> list[dict[str, Any]]:
+    key_rows = [
+        ("tasks_pk", "p", "hxy_product_tasks", ("task_id",), None),
+        ("events_pk", "p", "hxy_product_task_events", ("event_id",), None),
+        (
+            "training_pk",
+            "p",
+            "hxy_product_training_sessions",
+            ("training_session_id",),
+            None,
+        ),
     ]
+    check_rows = [
+        ("tasks_title_check", "hxy_product_tasks", "char_length(btrim(title)) BETWEEN 1 AND 160"),
+        ("tasks_details_check", "hxy_product_tasks", "char_length(details) <= 5000"),
+        ("tasks_priority_check", "hxy_product_tasks", "priority IN ('low', 'normal', 'high', 'urgent')"),
+        ("tasks_visibility_check", "hxy_product_tasks", "visibility IN ('assignee', 'store')"),
+        ("tasks_status_check", "hxy_product_tasks", "status IN ('open', 'in_progress', 'completed', 'cancelled')"),
+        ("tasks_result_check", "hxy_product_tasks", "result IS NULL OR char_length(result) <= 5000"),
+        ("tasks_visibility_scope_check", "hxy_product_tasks", "(visibility = 'assignee' AND assignee_assignment_id IS NOT NULL) OR (visibility = 'store' AND store_id IS NOT NULL)"),
+        ("tasks_completion_check", "hxy_product_tasks", "(status = 'completed' AND completed_at IS NOT NULL) OR (status <> 'completed' AND completed_at IS NULL)"),
+        ("events_type_check", "hxy_product_task_events", "event_type IN ('created', 'in_progress', 'completed', 'cancelled')"),
+        ("training_question_check", "hxy_product_training_sessions", "char_length(btrim(customer_question)) BETWEEN 1 AND 1000"),
+        ("training_answer_check", "hxy_product_training_sessions", "char_length(btrim(employee_answer)) BETWEEN 1 AND 4000"),
+        ("training_score_check", "hxy_product_training_sessions", "score BETWEEN 0 AND 100"),
+        ("training_level_check", "hxy_product_training_sessions", "char_length(btrim(level)) BETWEEN 1 AND 80"),
+        ("training_script_check", "hxy_product_training_sessions", "char_length(standard_script) <= 4000"),
+        ("training_correction_array_check", "hxy_product_training_sessions", "jsonb_typeof(correction_points) = 'array'"),
+    ]
+    rows = [
+        {
+            "marker": marker,
+            "current_schema": "public",
+            "source_schema": "public",
+            "source_table": table,
+            "source_columns": list(columns),
+            "target_schema": "",
+            "target_table": "",
+            "target_columns": [],
+            "constraint_type": constraint_type,
+            "convalidated": True,
+            "confdeltype": " ",
+            "check_expression": expression,
+        }
+        for marker, constraint_type, table, columns, expression in key_rows
+    ]
+    rows.extend(
+        {
+            "marker": marker,
+            "current_schema": "public",
+            "source_schema": "public",
+            "source_table": table,
+            "source_columns": [],
+            "target_schema": "",
+            "target_table": "",
+            "target_columns": [],
+            "constraint_type": "c",
+            "convalidated": True,
+            "confdeltype": " ",
+            "check_expression": expression,
+        }
+        for marker, table, expression in check_rows
+    )
+    return rows
 
 
 def _function_definition(name: str, source: str) -> str:
@@ -406,6 +602,32 @@ def _trigger_rows() -> list[dict[str, Any]]:
 def _index_rows() -> list[dict[str, Any]]:
     return [
         {
+            "table_schema": "public",
+            "table_name": "hxy_product_tasks",
+            "index_name": "uq_hxy_product_tasks_organization_task",
+            "index_definition": (
+                "CREATE UNIQUE INDEX uq_hxy_product_tasks_organization_task "
+                "ON public.hxy_product_tasks USING btree (organization_id, task_id)"
+            ),
+            "indisvalid": True,
+            "indisunique": True,
+            "predicate": None,
+        },
+        {
+            "table_schema": "public",
+            "table_name": "hxy_product_tasks",
+            "index_name": "uq_hxy_product_tasks_organization_store_task",
+            "index_definition": (
+                "CREATE UNIQUE INDEX uq_hxy_product_tasks_organization_store_task "
+                "ON public.hxy_product_tasks USING btree "
+                "(organization_id, store_id, task_id)"
+            ),
+            "indisvalid": True,
+            "indisunique": True,
+            "predicate": None,
+        },
+        {
+            "table_schema": "public",
             "table_name": "hxy_product_tasks",
             "index_name": "idx_hxy_product_tasks_assignee_active",
             "index_definition": (
@@ -414,11 +636,13 @@ def _index_rows() -> list[dict[str, Any]]:
                 "(assignee_assignment_id, priority, updated_at DESC)"
             ),
             "indisvalid": True,
+            "indisunique": False,
             "predicate": (
                 "status = ANY (ARRAY['open'::text, 'in_progress'::text])"
             ),
         },
         {
+            "table_schema": "public",
             "table_name": "hxy_product_tasks",
             "index_name": "idx_hxy_product_tasks_store_active",
             "index_definition": (
@@ -427,12 +651,14 @@ def _index_rows() -> list[dict[str, Any]]:
                 "(organization_id, store_id, priority, updated_at DESC)"
             ),
             "indisvalid": True,
+            "indisunique": False,
             "predicate": (
                 "(visibility = 'store'::text) AND "
                 "(status = ANY (ARRAY['open'::text, 'in_progress'::text]))"
             ),
         },
         {
+            "table_schema": "public",
             "table_name": "hxy_product_training_sessions",
             "index_name": "idx_hxy_product_training_assignment_recent",
             "index_definition": (
@@ -441,9 +667,11 @@ def _index_rows() -> list[dict[str, Any]]:
                 "(assignment_id, created_at DESC)"
             ),
             "indisvalid": True,
+            "indisunique": False,
             "predicate": None,
         },
         {
+            "table_schema": "public",
             "table_name": "hxy_product_training_sessions",
             "index_name": "idx_hxy_product_training_store_recent",
             "index_definition": (
@@ -452,6 +680,7 @@ def _index_rows() -> list[dict[str, Any]]:
                 "(organization_id, store_id, created_at DESC)"
             ),
             "indisvalid": True,
+            "indisunique": False,
             "predicate": None,
         },
     ]
@@ -571,6 +800,23 @@ def test_preflight_fails_closed_on_prerequisite_or_git_failure(
     assert failed_check in failed
 
 
+def test_role_preflight_requires_public_current_schema() -> None:
+    connection = FakeInspectionConnection(released=False)
+    connection.current_schema = "private"
+
+    result = run_preflight(
+        ROOT,
+        DATABASE_URL,
+        connect_factory=_inspection_factory(connection),
+        activation_runner=_activation(),
+        git_inspector=_git(),
+    )
+
+    assert result["status"] == "failed"
+    failed = {item["name"] for item in result["checks"] if item["status"] == "failed"}
+    assert "current_schema" in failed
+
+
 def test_git_inspection_allows_only_explicit_untracked_dependency_symlinks(
     tmp_path: Path,
 ) -> None:
@@ -648,10 +894,98 @@ def test_postflight_verifies_role_journey_schema_guards() -> None:
         "training_scope_foreign_keys",
         "active_task_indexes",
         "training_indexes",
+        "role_journey_columns",
+        "role_journey_keys",
+        "role_journey_business_checks",
     }
     assert expected <= {item["name"] for item in result["checks"]}
     assert all(item["status"] == "passed" for item in result["checks"])
     _assert_queries_are_read_only(connection.queries)
+
+
+@pytest.mark.parametrize(
+    ("marker", "override"),
+    [
+        ("hxy_product_tasks.title", {"column_name": "legacy_title"}),
+        ("hxy_product_task_events.event_type", {"data_type": "integer"}),
+        ("hxy_product_training_sessions.customer_question", {"is_nullable": "YES"}),
+        ("hxy_product_training_sessions.score", {"data_type": "bigint"}),
+        ("hxy_product_task_events.payload", {"column_default": None}),
+    ],
+)
+def test_postflight_rejects_preexisting_tables_with_wrong_column_contract(
+    marker: str,
+    override: dict[str, Any],
+) -> None:
+    connection = FakeInspectionConnection(released=True)
+    connection.column_overrides[marker] = override
+
+    result = run_postflight(
+        ROOT,
+        DATABASE_URL,
+        connect_factory=_inspection_factory(connection),
+        activation_runner=_activation(),
+    )
+
+    assert result["status"] == "failed"
+    failed = {item["name"] for item in result["checks"] if item["status"] == "failed"}
+    assert "role_journey_columns" in failed
+
+
+@pytest.mark.parametrize(
+    ("omitted", "failed_check"),
+    [
+        ("tasks_pk", "role_journey_keys"),
+        ("events_pk", "role_journey_keys"),
+        ("uq_hxy_product_tasks_organization_task", "role_journey_keys"),
+        ("tasks_visibility_check", "role_journey_business_checks"),
+        ("tasks_status_check", "role_journey_business_checks"),
+        ("tasks_completion_check", "role_journey_business_checks"),
+        ("events_type_check", "role_journey_business_checks"),
+        ("training_question_check", "role_journey_business_checks"),
+        ("training_answer_check", "role_journey_business_checks"),
+        ("training_score_check", "role_journey_business_checks"),
+        ("training_correction_array_check", "role_journey_business_checks"),
+        ("tasks_source_conversation", "task_scope_foreign_keys"),
+        ("tasks_source_message", "task_scope_foreign_keys"),
+    ],
+)
+def test_postflight_requires_all_keys_checks_and_source_foreign_keys(
+    omitted: str,
+    failed_check: str,
+) -> None:
+    connection = FakeInspectionConnection(released=True)
+    connection.omit.add(omitted)
+
+    result = run_postflight(
+        ROOT,
+        DATABASE_URL,
+        connect_factory=_inspection_factory(connection),
+        activation_runner=_activation(),
+    )
+
+    assert result["status"] == "failed"
+    failed = {item["name"] for item in result["checks"] if item["status"] == "failed"}
+    assert failed_check in failed
+
+
+def test_postflight_rejects_unvalidated_or_nonpublic_business_contract() -> None:
+    connection = FakeInspectionConnection(released=True)
+    connection.constraint_overrides["training_score_check"] = {"convalidated": False}
+    connection.constraint_overrides["events_type_check"] = {
+        "source_schema": "private"
+    }
+
+    result = run_postflight(
+        ROOT,
+        DATABASE_URL,
+        connect_factory=_inspection_factory(connection),
+        activation_runner=_activation(),
+    )
+
+    assert result["status"] == "failed"
+    failed = {item["name"] for item in result["checks"] if item["status"] == "failed"}
+    assert "role_journey_business_checks" in failed
 
 
 @pytest.mark.parametrize(
@@ -1256,7 +1590,7 @@ def test_cli_defaults_backup_root_and_preserves_post_apply_failure_state(
     captured: dict[str, Path] = {}
     monkeypatch.setenv("HXY_DATABASE_URL", DATABASE_URL)
 
-    def backup(_root: Path, _dsn: str, *, output_root: Path):
+    def backup(_root: Path, _dsn: str, *, output_root: Path, **_kwargs):
         captured["output_root"] = output_root
         return {"status": "passed", "phase": "backup"}
 

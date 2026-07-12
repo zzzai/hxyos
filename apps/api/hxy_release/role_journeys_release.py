@@ -16,6 +16,7 @@ from . import activation_release
 from .guarded_migration import (
     CommandRunner,
     InspectionRunner,
+    MigrationLoader,
     MigrationReleaseSpec,
     ReleaseAuthorizationError,
     ReleaseBackupError,
@@ -25,6 +26,7 @@ from .guarded_migration import (
     apply_release_migrations,
     create_release_backup,
     database_identity as guarded_database_identity,
+    git_head_migration_loader,
     migration_inventory as guarded_migration_inventory,
     render_result,
     validate_hxy_boundary as guarded_validate_hxy_boundary,
@@ -70,11 +72,13 @@ def migration_inventory(
     root_dir: Path,
     *,
     trusted_root: Path = _DEFAULT_TRUSTED_ROOT,
+    migration_loader: MigrationLoader | None = None,
 ) -> list[dict[str, str]]:
     return guarded_migration_inventory(
         ROLE_JOURNEYS_RELEASE,
         root_dir,
         trusted_root=trusted_root,
+        migration_loader=migration_loader,
     )
 
 
@@ -204,25 +208,37 @@ def _inspect_database(
     activation_runner: ActivationRunner,
     git_inspector: GitInspector | None = None,
     trusted_root: Path = _DEFAULT_TRUSTED_ROOT,
+    migration_loader: MigrationLoader | None = None,
 ) -> dict[str, Any]:
     identity = database_identity(database_url)
     validate_hxy_boundary(root_dir, identity, trusted_root=trusted_root)
-    inventory = migration_inventory(root_dir, trusted_root=trusted_root)
+    inventory = migration_inventory(
+        root_dir,
+        trusted_root=trusted_root,
+        migration_loader=migration_loader,
+    )
     activation = activation_runner(
         root_dir,
         database_url,
         connect_factory=connect_factory,
+        migration_loader=migration_loader,
     )
     assignment_scope = _activation_check(activation, "assignment_session_scope")
     connection_factory = connect_factory or _default_connect
     with connection_factory(database_url) as connection:
         connection.read_only = True
+        schema_row = connection.execute(
+            """
+            /* hxy_role_release:schema */
+            SELECT current_schema() AS current_schema
+            """
+        ).fetchone()
         relation_rows = connection.execute(
             """
             /* hxy_role_release:relations */
             SELECT relation_name AS name
             FROM unnest(%s::text[]) AS relation_name
-            WHERE to_regclass(relation_name) IS NOT NULL
+            WHERE to_regclass('public.' || relation_name) IS NOT NULL
             ORDER BY relation_name
             """,
             (list(_ROLE_JOURNEY_TABLES),),
@@ -235,17 +251,20 @@ def _inspect_database(
             columns = connection.execute(
                 """
                 /* hxy_role_release:columns */
-                SELECT table_name, column_name
+                SELECT table_schema, table_name, column_name, data_type,
+                       is_nullable, column_default
                 FROM information_schema.columns
-                WHERE table_schema = current_schema()
-                  AND table_name = 'hxy_product_tasks'
-                  AND column_name = 'parent_task_id'
-                """
+                WHERE table_schema = 'public'
+                  AND table_name = ANY(%s::text[])
+                ORDER BY table_name, ordinal_position
+                """,
+                (list(_ROLE_JOURNEY_TABLES),),
             ).fetchall()
             constraints = connection.execute(
                 """
                 /* hxy_role_release:constraints */
                 SELECT current_schema() AS current_schema,
+                       constraint_row.contype AS constraint_type,
                        source_namespace.nspname AS source_schema,
                        source_relation.relname AS source_table,
                        ARRAY(
@@ -257,9 +276,9 @@ def _inspect_database(
                           AND source_attribute.attnum = source_key.attnum
                          ORDER BY source_key.position
                        ) AS source_columns,
-                       target_namespace.nspname AS target_schema,
-                       target_relation.relname AS target_table,
-                       ARRAY(
+                       COALESCE(target_namespace.nspname, '') AS target_schema,
+                       COALESCE(target_relation.relname, '') AS target_table,
+                       COALESCE(ARRAY(
                          SELECT target_attribute.attname
                          FROM unnest(constraint_row.confkey) WITH ORDINALITY
                            AS target_key(attnum, position)
@@ -267,21 +286,25 @@ def _inspect_database(
                            ON target_attribute.attrelid = constraint_row.confrelid
                           AND target_attribute.attnum = target_key.attnum
                          ORDER BY target_key.position
-                       ) AS target_columns,
+                       ), ARRAY[]::name[]) AS target_columns,
                        constraint_row.convalidated,
-                       constraint_row.confdeltype
+                       constraint_row.confdeltype,
+                       CASE WHEN constraint_row.contype = 'c'
+                         THEN pg_get_expr(constraint_row.conbin, constraint_row.conrelid)
+                         ELSE NULL
+                       END AS check_expression
                 FROM pg_constraint AS constraint_row
                 JOIN pg_class AS source_relation
                   ON source_relation.oid = constraint_row.conrelid
                 JOIN pg_namespace AS source_namespace
                   ON source_namespace.oid = source_relation.relnamespace
-                JOIN pg_class AS target_relation
+                LEFT JOIN pg_class AS target_relation
                   ON target_relation.oid = constraint_row.confrelid
-                JOIN pg_namespace AS target_namespace
+                LEFT JOIN pg_namespace AS target_namespace
                   ON target_namespace.oid = target_relation.relnamespace
-                WHERE source_namespace.nspname = current_schema()
+                WHERE source_namespace.nspname = 'public'
                   AND source_relation.relname = ANY(%s::text[])
-                  AND constraint_row.contype = 'f'
+                  AND constraint_row.contype IN ('p', 'u', 'c', 'f')
                 ORDER BY source_relation.relname, constraint_row.conname
                 """,
                 (list(_ROLE_JOURNEY_TABLES),),
@@ -307,7 +330,7 @@ def _inspect_database(
                   ON function_row.oid = trigger_row.tgfoid
                 JOIN pg_namespace AS function_namespace
                   ON function_namespace.oid = function_row.pronamespace
-                WHERE namespace_row.nspname = current_schema()
+                WHERE namespace_row.nspname = 'public'
                   AND relation.relname = ANY(%s::text[])
                   AND NOT trigger_row.tgisinternal
                 ORDER BY relation.relname, trigger_row.tgname
@@ -317,10 +340,12 @@ def _inspect_database(
             indexes = connection.execute(
                 """
                 /* hxy_role_release:indexes */
-                SELECT table_relation.relname AS table_name,
+                SELECT namespace_row.nspname AS table_schema,
+                       table_relation.relname AS table_name,
                        index_relation.relname AS index_name,
                        pg_get_indexdef(index_relation.oid) AS index_definition,
                        index_row.indisvalid,
+                       index_row.indisunique,
                        pg_get_expr(index_row.indpred, index_row.indrelid) AS predicate
                 FROM pg_index AS index_row
                 JOIN pg_class AS table_relation
@@ -329,7 +354,7 @@ def _inspect_database(
                   ON index_relation.oid = index_row.indexrelid
                 JOIN pg_namespace AS namespace_row
                   ON namespace_row.oid = table_relation.relnamespace
-                WHERE namespace_row.nspname = current_schema()
+                WHERE namespace_row.nspname = 'public'
                   AND table_relation.relname = ANY(%s::text[])
                 ORDER BY index_relation.relname
                 """,
@@ -342,6 +367,11 @@ def _inspect_database(
     checks = [
         _check("postgres_major", server_major == 16, f"major={server_major}"),
         _check("hxy_boundary", True, "repository and database are HXY-owned"),
+        _check(
+            "current_schema",
+            str((schema_row or {}).get("current_schema") or "") == "public",
+            f"schema={str((schema_row or {}).get('current_schema') or 'unknown')}",
+        ),
         _check(
             "activation_postflight",
             activation.get("status") == "passed",
@@ -479,6 +509,89 @@ def _function_definition_matches(definition: Any, expected_source: str) -> bool:
     )
 
 
+_ROLE_COLUMN_CONTRACT = {
+    "hxy_product_tasks": (
+        ("task_id", "uuid", "NO", "gen_random_uuid()"),
+        ("organization_id", "uuid", "NO", None),
+        ("store_id", "text", "YES", None),
+        ("creator_assignment_id", "uuid", "NO", None),
+        ("assignee_assignment_id", "uuid", "YES", None),
+        ("source_conversation_id", "uuid", "YES", None),
+        ("source_message_id", "uuid", "YES", None),
+        ("title", "text", "NO", None),
+        ("details", "text", "NO", "''::text"),
+        ("priority", "text", "NO", "'normal'::text"),
+        ("visibility", "text", "NO", "'assignee'::text"),
+        ("status", "text", "NO", "'open'::text"),
+        ("result", "text", "YES", None),
+        ("due_at", "timestamp with time zone", "YES", None),
+        ("completed_at", "timestamp with time zone", "YES", None),
+        ("created_at", "timestamp with time zone", "NO", "now()"),
+        ("updated_at", "timestamp with time zone", "NO", "now()"),
+        ("parent_task_id", "uuid", "YES", None),
+    ),
+    "hxy_product_task_events": (
+        ("event_id", "uuid", "NO", "gen_random_uuid()"),
+        ("organization_id", "uuid", "NO", None),
+        ("task_id", "uuid", "NO", None),
+        ("actor_assignment_id", "uuid", "NO", None),
+        ("event_type", "text", "NO", None),
+        ("payload", "jsonb", "NO", "'{}'::jsonb"),
+        ("created_at", "timestamp with time zone", "NO", "now()"),
+    ),
+    "hxy_product_training_sessions": (
+        ("training_session_id", "uuid", "NO", "gen_random_uuid()"),
+        ("organization_id", "uuid", "NO", None),
+        ("store_id", "text", "NO", None),
+        ("assignment_id", "uuid", "NO", None),
+        ("customer_question", "text", "NO", None),
+        ("employee_answer", "text", "NO", None),
+        ("score", "integer", "NO", None),
+        ("level", "text", "NO", None),
+        ("needs_retrain", "boolean", "NO", None),
+        ("standard_script", "text", "NO", "''::text"),
+        ("correction_points", "jsonb", "NO", "'[]'::jsonb"),
+        ("created_at", "timestamp with time zone", "NO", "now()"),
+    ),
+}
+
+_BUSINESS_CHECK_CONTRACT = {
+    "hxy_product_tasks": (
+        ("char_length(btrim(title)) BETWEEN 1 AND 160", "char_length(btrim(title)) >= 1 AND char_length(btrim(title)) <= 160"),
+        ("char_length(details) <= 5000",),
+        ("priority IN ('low', 'normal', 'high', 'urgent')", "priority = ANY (ARRAY['low', 'normal', 'high', 'urgent'])"),
+        ("visibility IN ('assignee', 'store')", "visibility = ANY (ARRAY['assignee', 'store'])"),
+        ("status IN ('open', 'in_progress', 'completed', 'cancelled')", "status = ANY (ARRAY['open', 'in_progress', 'completed', 'cancelled'])"),
+        ("result IS NULL OR char_length(result) <= 5000",),
+        ("(visibility = 'assignee' AND assignee_assignment_id IS NOT NULL) OR (visibility = 'store' AND store_id IS NOT NULL)",),
+        ("(status = 'completed' AND completed_at IS NOT NULL) OR (status <> 'completed' AND completed_at IS NULL)",),
+    ),
+    "hxy_product_task_events": (
+        ("event_type IN ('created', 'in_progress', 'completed', 'cancelled')", "event_type = ANY (ARRAY['created', 'in_progress', 'completed', 'cancelled'])"),
+    ),
+    "hxy_product_training_sessions": (
+        ("char_length(btrim(customer_question)) BETWEEN 1 AND 1000", "char_length(btrim(customer_question)) >= 1 AND char_length(btrim(customer_question)) <= 1000"),
+        ("char_length(btrim(employee_answer)) BETWEEN 1 AND 4000", "char_length(btrim(employee_answer)) >= 1 AND char_length(btrim(employee_answer)) <= 4000"),
+        ("score BETWEEN 0 AND 100", "score >= 0 AND score <= 100"),
+        ("char_length(btrim(level)) BETWEEN 1 AND 80", "char_length(btrim(level)) >= 1 AND char_length(btrim(level)) <= 80"),
+        ("char_length(standard_script) <= 4000",),
+        ("jsonb_typeof(correction_points) = 'array'",),
+    ),
+}
+
+
+def _canonical_contract_expression(value: Any) -> str:
+    normalized = str(value or "").lower().replace('"', "")
+    normalized = re.sub(r"::(?:text|character varying)", "", normalized)
+    return re.sub(r"[\s()]", "", normalized)
+
+
+def _canonical_default(value: Any) -> str | None:
+    if value is None:
+        return None
+    return "".join(str(value).lower().replace("public.", "").split())
+
+
 def _postflight_checks(
     pending_tables: list[str],
     columns: list[dict[str, Any]],
@@ -486,15 +599,99 @@ def _postflight_checks(
     triggers: list[dict[str, Any]],
     indexes: list[dict[str, Any]],
 ) -> list[dict[str, str]]:
+    actual_columns = {
+        (str(row.get("table_name") or ""), str(row.get("column_name") or "")): (
+            str(row.get("table_schema") or ""),
+            str(row.get("data_type") or ""),
+            str(row.get("is_nullable") or ""),
+            _canonical_default(row.get("column_default")),
+        )
+        for row in columns
+    }
+    column_contract = all(
+        actual_columns.get((table, name))
+        == ("public", data_type, nullable, _canonical_default(default))
+        for table, expected_columns in _ROLE_COLUMN_CONTRACT.items()
+        for name, data_type, nullable, default in expected_columns
+    )
+
+    def constraint_columns(row: dict[str, Any], key: str) -> tuple[str, ...]:
+        return tuple(str(item) for item in row.get(key) or ())
+
+    def has_local_constraint(
+        constraint_type: str,
+        table: str,
+        expected_columns: tuple[str, ...],
+    ) -> bool:
+        return any(
+            str(row.get("constraint_type") or "") == constraint_type
+            and str(row.get("source_schema") or "") == "public"
+            and str(row.get("source_table") or "") == table
+            and constraint_columns(row, "source_columns") == expected_columns
+            and row.get("convalidated") is True
+            for row in constraints
+        )
+
+    primary_keys = all(
+        has_local_constraint("p", table, expected_columns)
+        for table, expected_columns in (
+            ("hxy_product_tasks", ("task_id",)),
+            ("hxy_product_task_events", ("event_id",)),
+            ("hxy_product_training_sessions", ("training_session_id",)),
+        )
+    )
+
+    def has_unique_index(
+        name: str,
+        expected_columns: tuple[str, ...],
+    ) -> bool:
+        return any(
+            str(row.get("table_schema") or "") == "public"
+            and str(row.get("table_name") or "") == "hxy_product_tasks"
+            and str(row.get("index_name") or "") == name
+            and row.get("indisvalid") is True
+            and row.get("indisunique") is True
+            and _parse_index_columns(str(row.get("index_definition") or ""))
+            == expected_columns
+            and row.get("predicate") in (None, "")
+            for row in indexes
+        )
+
+    key_contract = primary_keys and has_unique_index(
+        "uq_hxy_product_tasks_organization_task",
+        ("organization_id", "task_id"),
+    ) and has_unique_index(
+        "uq_hxy_product_tasks_organization_store_task",
+        ("organization_id", "store_id", "task_id"),
+    )
+
+    actual_checks: dict[str, set[str]] = {}
+    for row in constraints:
+        if (
+            str(row.get("constraint_type") or "") == "c"
+            and str(row.get("source_schema") or "") == "public"
+            and row.get("convalidated") is True
+        ):
+            actual_checks.setdefault(str(row.get("source_table") or ""), set()).add(
+                _canonical_contract_expression(row.get("check_expression"))
+            )
+    business_checks = all(
+        any(
+            _canonical_contract_expression(variant) in actual_checks.get(table, set())
+            for variant in variants
+        )
+        for table, expected_checks in _BUSINESS_CHECK_CONTRACT.items()
+        for variants in expected_checks
+    )
+
     normalized_foreign_keys: set[
         tuple[str, tuple[str, ...], str, tuple[str, ...]]
     ] = set()
     for row in constraints:
-        current_schema = str(row.get("current_schema") or "")
         if (
-            current_schema != "public"
-            or str(row.get("source_schema") or "") != current_schema
-            or str(row.get("target_schema") or "") != current_schema
+            str(row.get("constraint_type") or "") != "f"
+            or str(row.get("source_schema") or "") != "public"
+            or str(row.get("target_schema") or "") != "public"
             or row.get("convalidated") is not True
             or str(row.get("confdeltype") or "") != "r"
         ):
@@ -524,6 +721,12 @@ def _postflight_checks(
     task_scope = all(
         has_fk(table, source, target, target_columns)
         for table, source, target, target_columns in (
+            (
+                "hxy_product_tasks",
+                ("store_id",),
+                "stores",
+                ("store_id",),
+            ),
             (
                 "hxy_product_tasks",
                 ("organization_id",),
@@ -565,6 +768,22 @@ def _postflight_checks(
                 ("organization_id", "store_id", "assignee_assignment_id"),
                 "hxy_role_assignments",
                 ("organization_id", "store_id", "assignment_id"),
+            ),
+            (
+                "hxy_product_tasks",
+                ("creator_assignment_id", "source_conversation_id"),
+                "hxy_product_conversations",
+                ("assignment_id", "conversation_id"),
+            ),
+            (
+                "hxy_product_tasks",
+                (
+                    "creator_assignment_id",
+                    "source_conversation_id",
+                    "source_message_id",
+                ),
+                "hxy_product_messages",
+                ("assignment_id", "conversation_id", "message_id"),
             ),
         )
     )
@@ -670,8 +889,8 @@ def _postflight_checks(
             and item["name"] == name
             and item["enabled"] in {"O", "A"}
             and item["condition"] is None
-            and item["table_schema"]
-            and item["function_schema"] == item["table_schema"]
+            and item["table_schema"] == "public"
+            and item["function_schema"] == "public"
             and item["function"] == function
             and item["function_source"] == function_source
             and _function_definition_matches(
@@ -726,9 +945,11 @@ def _postflight_checks(
         predicate: str | None,
     ) -> bool:
         return any(
-            str(row.get("table_name") or "") == table
+            str(row.get("table_schema") or "") == "public"
+            and str(row.get("table_name") or "") == table
             and str(row.get("index_name") or "") == name
             and row.get("indisvalid") is True
+            and row.get("indisunique") is False
             and _parse_index_columns(str(row.get("index_definition") or ""))
             == columns
             and _canonical_predicate(row.get("predicate")) == predicate
@@ -763,6 +984,21 @@ def _postflight_checks(
             "role_journey_tables",
             not pending_tables,
             "complete" if not pending_tables else f"missing={','.join(pending_tables)}",
+        ),
+        _check(
+            "role_journey_columns",
+            column_contract,
+            "complete" if column_contract else "missing or mismatched",
+        ),
+        _check(
+            "role_journey_keys",
+            key_contract,
+            "complete" if key_contract else "missing or mismatched",
+        ),
+        _check(
+            "role_journey_business_checks",
+            business_checks,
+            "complete" if business_checks else "missing or mismatched",
         ),
         _check(
             "parent_task_column",
@@ -820,6 +1056,7 @@ def run_preflight(
     activation_runner: ActivationRunner = activation_release.run_postflight,
     git_inspector: GitInspector | None = None,
     trusted_root: Path = _DEFAULT_TRUSTED_ROOT,
+    migration_loader: MigrationLoader | None = None,
 ) -> dict[str, Any]:
     return _inspect_database(
         root_dir,
@@ -829,6 +1066,7 @@ def run_preflight(
         activation_runner=activation_runner,
         git_inspector=git_inspector,
         trusted_root=trusted_root,
+        migration_loader=migration_loader,
     )
 
 
@@ -839,6 +1077,7 @@ def run_postflight(
     connect_factory: ConnectFactory | None = None,
     activation_runner: ActivationRunner = activation_release.run_postflight,
     trusted_root: Path = _DEFAULT_TRUSTED_ROOT,
+    migration_loader: MigrationLoader | None = None,
 ) -> dict[str, Any]:
     return _inspect_database(
         root_dir,
@@ -847,6 +1086,7 @@ def run_postflight(
         connect_factory=connect_factory,
         activation_runner=activation_runner,
         trusted_root=trusted_root,
+        migration_loader=migration_loader,
     )
 
 
@@ -872,17 +1112,26 @@ def create_backup(
     git_commit: str | None = None,
     preflight_runner: InspectionRunner = run_preflight,
     trusted_root: Path = _DEFAULT_TRUSTED_ROOT,
+    migration_loader: MigrationLoader | None = None,
 ) -> dict[str, Any]:
+    preflight_inspector = preflight_runner
+    if preflight_runner is run_preflight:
+        preflight_inspector = lambda root, dsn: run_preflight(
+            root,
+            dsn,
+            migration_loader=migration_loader,
+        )
     result = create_release_backup(
         ROLE_JOURNEYS_RELEASE,
         root_dir,
         database_url,
         output_root=output_root,
-        preflight_inspector=preflight_runner,
+        preflight_inspector=preflight_inspector,
         runner=runner,
         now=now,
         git_commit=git_commit,
         trusted_root=trusted_root,
+        migration_loader=migration_loader,
     )
     result.pop("release_id", None)
     return result
@@ -897,6 +1146,7 @@ def validate_backup_manifest(
     max_age: timedelta = timedelta(hours=24),
     git_commit: str | None = None,
     trusted_root: Path = _DEFAULT_TRUSTED_ROOT,
+    migration_loader: MigrationLoader | None = None,
 ) -> dict[str, Any]:
     result = validate_release_backup_manifest(
         ROLE_JOURNEYS_RELEASE,
@@ -907,6 +1157,7 @@ def validate_backup_manifest(
         max_age=max_age,
         git_commit=git_commit,
         trusted_root=trusted_root,
+        migration_loader=migration_loader,
     )
     for key in ("release_id", "git_commit", "connection_fingerprint"):
         result.pop(key, None)
@@ -925,6 +1176,7 @@ def apply_role_journeys_migrations(
     postflight_runner: InspectionRunner = run_postflight,
     git_inspector: GitInspector | None = None,
     trusted_root: Path = _DEFAULT_TRUSTED_ROOT,
+    migration_loader: MigrationLoader | None = None,
 ) -> dict[str, Any]:
     if confirmation != APPLY_CONFIRMATION:
         raise ReleaseAuthorizationError("exact migration confirmation is required")
@@ -939,17 +1191,25 @@ def apply_role_journeys_migrations(
         raise ReleaseAuthorizationError(
             "apply requires a real Git commit and clean worktree"
         )
+    postflight_inspector = postflight_runner
+    if postflight_runner is run_postflight:
+        postflight_inspector = lambda root, dsn: run_postflight(
+            root,
+            dsn,
+            migration_loader=migration_loader,
+        )
     result = apply_release_migrations(
         ROLE_JOURNEYS_RELEASE,
         root_dir,
         database_url,
         manifest_path=manifest_path,
         confirmation=confirmation,
-        postflight_inspector=postflight_runner,
+        postflight_inspector=postflight_inspector,
         runner=runner,
         now=now,
         git_commit=git_commit,
         trusted_root=trusted_root,
+        migration_loader=migration_loader,
     )
     for key in ("release_id", "git_commit"):
         result.pop(key, None)
@@ -978,12 +1238,17 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         if args.command == "preflight":
-            result = run_preflight(args.root_dir, database_url)
+            result = run_preflight(
+                args.root_dir,
+                database_url,
+                migration_loader=git_head_migration_loader,
+            )
         elif args.command == "backup":
             result = create_backup(
                 args.root_dir,
                 database_url,
                 output_root=args.output_root or _DEFAULT_BACKUP_ROOT,
+                migration_loader=git_head_migration_loader,
             )
         elif args.command == "apply":
             if args.backup_manifest is None:
@@ -993,9 +1258,14 @@ def main(argv: list[str] | None = None) -> int:
                 database_url,
                 manifest_path=args.backup_manifest,
                 confirmation=args.confirm,
+                migration_loader=git_head_migration_loader,
             )
         else:
-            result = run_postflight(args.root_dir, database_url)
+            result = run_postflight(
+                args.root_dir,
+                database_url,
+                migration_loader=git_head_migration_loader,
+            )
     except ReleasePostflightError as exc:
         result = {
             "status": "failed",
