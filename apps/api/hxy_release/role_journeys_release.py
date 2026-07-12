@@ -261,13 +261,21 @@ def _inspect_database(
             triggers = connection.execute(
                 """
                 /* hxy_role_release:triggers */
-                SELECT relation.relname AS table_name,
+                SELECT namespace_row.nspname AS table_schema,
+                       relation.relname AS table_name,
                        trigger_row.tgname AS trigger_name,
+                       trigger_row.tgenabled,
+                       function_namespace.nspname AS function_schema,
+                       function_row.proname AS function_name,
                        pg_get_triggerdef(trigger_row.oid) AS definition
                 FROM pg_trigger AS trigger_row
                 JOIN pg_class AS relation ON relation.oid = trigger_row.tgrelid
                 JOIN pg_namespace AS namespace_row
                   ON namespace_row.oid = relation.relnamespace
+                JOIN pg_proc AS function_row
+                  ON function_row.oid = trigger_row.tgfoid
+                JOIN pg_namespace AS function_namespace
+                  ON function_namespace.oid = function_row.pronamespace
                 WHERE namespace_row.nspname = current_schema()
                   AND relation.relname = ANY(%s::text[])
                   AND NOT trigger_row.tgisinternal
@@ -278,11 +286,21 @@ def _inspect_database(
             indexes = connection.execute(
                 """
                 /* hxy_role_release:indexes */
-                SELECT indexname AS index_name
-                FROM pg_indexes
-                WHERE schemaname = current_schema()
-                  AND tablename = ANY(%s::text[])
-                ORDER BY indexname
+                SELECT table_relation.relname AS table_name,
+                       index_relation.relname AS index_name,
+                       pg_get_indexdef(index_relation.oid) AS index_definition,
+                       index_row.indisvalid,
+                       pg_get_expr(index_row.indpred, index_row.indrelid) AS predicate
+                FROM pg_index AS index_row
+                JOIN pg_class AS table_relation
+                  ON table_relation.oid = index_row.indrelid
+                JOIN pg_class AS index_relation
+                  ON index_relation.oid = index_row.indexrelid
+                JOIN pg_namespace AS namespace_row
+                  ON namespace_row.oid = table_relation.relnamespace
+                WHERE namespace_row.nspname = current_schema()
+                  AND table_relation.relname = ANY(%s::text[])
+                ORDER BY index_relation.relname
                 """,
                 (list(_ROLE_JOURNEY_TABLES),),
             ).fetchall()
@@ -359,6 +377,65 @@ def _inspect_database(
     return result
 
 
+def _identifier_name(value: str) -> str:
+    return value.rsplit(".", 1)[-1].strip().strip('"').replace('""', '"').lower()
+
+
+def _identifier_columns(value: str) -> tuple[str, ...]:
+    return tuple(_identifier_name(item) for item in value.split(","))
+
+
+def _parse_foreign_key_definition(
+    definition: str,
+) -> tuple[tuple[str, ...], str, tuple[str, ...]] | None:
+    normalized = " ".join(definition.split())
+    match = re.match(
+        r"^FOREIGN KEY \(([^)]*)\) REFERENCES ([^\s(]+)\(([^)]*)\)",
+        normalized,
+        re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    return (
+        _identifier_columns(match.group(1)),
+        _identifier_name(match.group(2)),
+        _identifier_columns(match.group(3)),
+    )
+
+
+def _parse_index_columns(definition: str) -> tuple[str, ...] | None:
+    match = re.search(
+        r"\bUSING\s+btree\s*\(([^)]*)\)",
+        definition,
+        re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    columns = []
+    for item in match.group(1).split(","):
+        normalized = " ".join(item.replace('"', "").lower().split())
+        normalized = re.sub(r"\s+nulls\s+(first|last)$", "", normalized)
+        columns.append(normalized)
+    return tuple(columns)
+
+
+def _canonical_predicate(predicate: Any) -> str | None:
+    if predicate in (None, ""):
+        return None
+    normalized = str(predicate).lower().replace('"', "")
+    normalized = re.sub(r"::(?:text|character varying)", "", normalized)
+    normalized = re.sub(r"[\s()]", "", normalized)
+    normalized = normalized.replace(
+        "statusin'open','in_progress'",
+        "status_active",
+    )
+    normalized = normalized.replace(
+        "status=anyarray['open','in_progress']",
+        "status_active",
+    )
+    return normalized
+
+
 def _postflight_checks(
     pending_tables: list[str],
     columns: list[dict[str, Any]],
@@ -366,79 +443,141 @@ def _postflight_checks(
     triggers: list[dict[str, Any]],
     indexes: list[dict[str, Any]],
 ) -> list[dict[str, str]]:
-    normalized_constraints = [
-        {
-            "table": str(row.get("table_name") or ""),
-            "type": str(row.get("constraint_type") or ""),
-            "definition": " ".join(str(row.get("definition") or "").lower().split()),
-        }
-        for row in constraints
-    ]
+    normalized_foreign_keys: set[
+        tuple[str, tuple[str, ...], str, tuple[str, ...]]
+    ] = set()
+    for row in constraints:
+        if str(row.get("constraint_type") or "") != "f":
+            continue
+        parsed = _parse_foreign_key_definition(str(row.get("definition") or ""))
+        if parsed is not None:
+            source_columns, target_table, target_columns = parsed
+            normalized_foreign_keys.add(
+                (
+                    str(row.get("table_name") or ""),
+                    source_columns,
+                    target_table,
+                    target_columns,
+                )
+            )
 
-    def has_fk(table: str, required: tuple[str, ...]) -> bool:
-        return any(
-            item["table"] == table
-            and item["type"] == "f"
-            and all(fragment in item["definition"] for fragment in required)
-            for item in normalized_constraints
-        )
+    def has_fk(
+        table: str,
+        source_columns: tuple[str, ...],
+        target_table: str,
+        target_columns: tuple[str, ...],
+    ) -> bool:
+        return (
+            table,
+            source_columns,
+            target_table,
+            target_columns,
+        ) in normalized_foreign_keys
 
     task_scope = all(
-        has_fk("hxy_product_tasks", required)
-        for required in (
-            ("foreign key (organization_id)", "hxy_organizations(organization_id)"),
-            ("foreign key (organization_id, store_id)", "hxy_organization_stores"),
+        has_fk(table, source, target, target_columns)
+        for table, source, target, target_columns in (
             (
-                "foreign key (creator_assignment_id)",
-                "hxy_role_assignments(assignment_id)",
+                "hxy_product_tasks",
+                ("organization_id",),
+                "hxy_organizations",
+                ("organization_id",),
             ),
             (
-                "foreign key (organization_id, creator_assignment_id)",
+                "hxy_product_tasks",
+                ("organization_id", "store_id"),
+                "hxy_organization_stores",
+                ("organization_id", "store_id"),
+            ),
+            (
+                "hxy_product_tasks",
+                ("creator_assignment_id",),
                 "hxy_role_assignments",
+                ("assignment_id",),
             ),
             (
-                "foreign key (assignee_assignment_id)",
-                "hxy_role_assignments(assignment_id)",
-            ),
-            (
-                "foreign key (organization_id, assignee_assignment_id)",
+                "hxy_product_tasks",
+                ("organization_id", "creator_assignment_id"),
                 "hxy_role_assignments",
+                ("organization_id", "assignment_id"),
             ),
             (
-                "foreign key (organization_id, store_id, assignee_assignment_id)",
+                "hxy_product_tasks",
+                ("assignee_assignment_id",),
                 "hxy_role_assignments",
+                ("assignment_id",),
+            ),
+            (
+                "hxy_product_tasks",
+                ("organization_id", "assignee_assignment_id"),
+                "hxy_role_assignments",
+                ("organization_id", "assignment_id"),
+            ),
+            (
+                "hxy_product_tasks",
+                ("organization_id", "store_id", "assignee_assignment_id"),
+                "hxy_role_assignments",
+                ("organization_id", "store_id", "assignment_id"),
             ),
         )
     )
     event_scope = all(
-        has_fk("hxy_product_task_events", required)
-        for required in (
-            ("foreign key (organization_id)", "hxy_organizations(organization_id)"),
-            ("foreign key (organization_id, task_id)", "hxy_product_tasks"),
+        has_fk(table, source, target, target_columns)
+        for table, source, target, target_columns in (
             (
-                "foreign key (organization_id, actor_assignment_id)",
+                "hxy_product_task_events",
+                ("organization_id",),
+                "hxy_organizations",
+                ("organization_id",),
+            ),
+            (
+                "hxy_product_task_events",
+                ("organization_id", "task_id"),
+                "hxy_product_tasks",
+                ("organization_id", "task_id"),
+            ),
+            (
+                "hxy_product_task_events",
+                ("organization_id", "actor_assignment_id"),
                 "hxy_role_assignments",
+                ("organization_id", "assignment_id"),
             ),
         )
     )
     training_scope = all(
-        has_fk("hxy_product_training_sessions", required)
-        for required in (
-            ("foreign key (organization_id)", "hxy_organizations(organization_id)"),
-            ("foreign key (organization_id, store_id)", "hxy_organization_stores"),
-            ("foreign key (organization_id, assignment_id)", "hxy_role_assignments"),
+        has_fk(table, source, target, target_columns)
+        for table, source, target, target_columns in (
             (
-                "foreign key (organization_id, store_id, assignment_id)",
+                "hxy_product_training_sessions",
+                ("organization_id",),
+                "hxy_organizations",
+                ("organization_id",),
+            ),
+            (
+                "hxy_product_training_sessions",
+                ("organization_id", "store_id"),
+                "hxy_organization_stores",
+                ("organization_id", "store_id"),
+            ),
+            (
+                "hxy_product_training_sessions",
+                ("organization_id", "assignment_id"),
                 "hxy_role_assignments",
+                ("organization_id", "assignment_id"),
+            ),
+            (
+                "hxy_product_training_sessions",
+                ("organization_id", "store_id", "assignment_id"),
+                "hxy_role_assignments",
+                ("organization_id", "store_id", "assignment_id"),
             ),
         )
     )
     parent_fk = has_fk(
         "hxy_product_tasks",
-        (
-            "foreign key (organization_id, store_id, parent_task_id)",
-            "hxy_product_tasks(organization_id, store_id, task_id)",
-        ),
+        ("organization_id", "store_id", "parent_task_id"),
+        "hxy_product_tasks",
+        ("organization_id", "store_id", "task_id"),
     )
     parent_column = any(
         str(row.get("table_name") or "") == "hxy_product_tasks"
@@ -446,40 +585,99 @@ def _postflight_checks(
         for row in columns
     )
 
-    normalized_triggers = {
-        str(row.get("trigger_name") or ""): " ".join(
-            str(row.get("definition") or "").lower().split()
-        )
+    normalized_triggers = [
+        {
+            "table_schema": str(row.get("table_schema") or ""),
+            "table": str(row.get("table_name") or ""),
+            "name": str(row.get("trigger_name") or ""),
+            "enabled": str(row.get("tgenabled") or "").upper(),
+            "function_schema": str(row.get("function_schema") or ""),
+            "function": str(row.get("function_name") or ""),
+            "definition": " ".join(
+                str(row.get("definition") or "").lower().split()
+            ),
+        }
         for row in triggers
-    }
+    ]
 
-    def trigger_has(name: str, fragments: tuple[str, ...]) -> bool:
-        definition = normalized_triggers.get(name, "")
-        return all(fragment in definition for fragment in fragments)
+    def has_trigger(
+        table: str,
+        name: str,
+        function: str,
+        fragments: tuple[str, ...],
+    ) -> bool:
+        return any(
+            item["table"] == table
+            and item["name"] == name
+            and item["enabled"] in {"O", "A"}
+            and item["table_schema"]
+            and item["function_schema"] == item["table_schema"]
+            and item["function"] == function
+            and all(fragment in item["definition"] for fragment in fragments)
+            for item in normalized_triggers
+        )
 
-    task_append_only = trigger_has(
+    task_append_only = has_trigger(
+        "hxy_product_task_events",
         "trg_hxy_product_task_events_append_only",
+        "hxy_reject_task_event_mutation",
         ("before update or delete", "for each row"),
-    ) and trigger_has(
+    ) and has_trigger(
+        "hxy_product_task_events",
         "trg_hxy_product_task_events_no_truncate",
+        "hxy_reject_task_event_mutation",
         ("before truncate", "for each statement"),
     )
-    training_append_only = trigger_has(
+    training_append_only = has_trigger(
+        "hxy_product_training_sessions",
         "trg_hxy_product_training_append_only",
+        "hxy_reject_product_training_mutation",
         ("before update or delete", "for each row"),
-    ) and trigger_has(
+    ) and has_trigger(
+        "hxy_product_training_sessions",
         "trg_hxy_product_training_no_truncate",
+        "hxy_reject_product_training_mutation",
         ("before truncate", "for each statement"),
     )
-    index_names = {str(row.get("index_name") or "") for row in indexes}
-    active_task_indexes = {
+
+    def has_index(
+        table: str,
+        name: str,
+        columns: tuple[str, ...],
+        predicate: str | None,
+    ) -> bool:
+        return any(
+            str(row.get("table_name") or "") == table
+            and str(row.get("index_name") or "") == name
+            and row.get("indisvalid") is True
+            and _parse_index_columns(str(row.get("index_definition") or ""))
+            == columns
+            and _canonical_predicate(row.get("predicate")) == predicate
+            for row in indexes
+        )
+
+    active_task_indexes = has_index(
+        "hxy_product_tasks",
         "idx_hxy_product_tasks_assignee_active",
+        ("assignee_assignment_id", "priority", "updated_at desc"),
+        "status_active",
+    ) and has_index(
+        "hxy_product_tasks",
         "idx_hxy_product_tasks_store_active",
-    } <= index_names
-    training_indexes = {
+        ("organization_id", "store_id", "priority", "updated_at desc"),
+        "visibility='store'andstatus_active",
+    )
+    training_indexes = has_index(
+        "hxy_product_training_sessions",
         "idx_hxy_product_training_assignment_recent",
+        ("assignment_id", "created_at desc"),
+        None,
+    ) and has_index(
+        "hxy_product_training_sessions",
         "idx_hxy_product_training_store_recent",
-    } <= index_names
+        ("organization_id", "store_id", "created_at desc"),
+        None,
+    )
 
     return [
         _check(
@@ -574,12 +772,15 @@ def run_postflight(
 
 
 def _database_sensitive_values(database_url: str) -> tuple[str, ...]:
-    values = conninfo_to_dict(database_url)
-    return tuple(
-        value
-        for value in (database_url, str(values.get("password") or ""))
-        if value
+    sensitive_values = [database_url]
+    try:
+        values = conninfo_to_dict(database_url)
+    except Exception:
+        return tuple(value for value in sensitive_values if value)
+    sensitive_values.extend(
+        str(values.get(key) or "") for key in ("password", "sslpassword")
     )
+    return tuple(value for value in sensitive_values if value)
 
 
 def create_backup(

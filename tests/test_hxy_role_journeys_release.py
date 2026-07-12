@@ -100,6 +100,9 @@ class FakeInspectionConnection:
         self.read_only = False
         self.queries: list[str] = []
         self.omit: set[str] = set()
+        self.constraint_overrides: dict[str, dict[str, Any]] = {}
+        self.trigger_overrides: dict[str, dict[str, Any]] = {}
+        self.index_overrides: dict[str, dict[str, Any]] = {}
 
     def __enter__(self):
         return self
@@ -128,26 +131,33 @@ class FakeInspectionConnection:
                 rows = []
             return FakeResult(rows=rows if self.released else [])
         if "hxy_role_release:constraints" in sql:
-            rows = _constraint_rows()
+            rows = []
+            for row in _constraint_rows():
+                updated = dict(row)
+                updated.update(self.constraint_overrides.get(row["marker"], {}))
+                rows.append(updated)
             return FakeResult(
                 rows=[row for row in rows if row["marker"] not in self.omit]
                 if self.released
                 else []
             )
         if "hxy_role_release:triggers" in sql:
-            rows = _trigger_rows()
+            rows = []
+            for row in _trigger_rows():
+                updated = dict(row)
+                updated.update(self.trigger_overrides.get(row["trigger_name"], {}))
+                rows.append(updated)
             return FakeResult(
                 rows=[row for row in rows if row["trigger_name"] not in self.omit]
                 if self.released
                 else []
             )
         if "hxy_role_release:indexes" in sql:
-            rows = [
-                {"index_name": "idx_hxy_product_tasks_assignee_active"},
-                {"index_name": "idx_hxy_product_tasks_store_active"},
-                {"index_name": "idx_hxy_product_training_assignment_recent"},
-                {"index_name": "idx_hxy_product_training_store_recent"},
-            ]
+            rows = []
+            for row in _index_rows():
+                updated = dict(row)
+                updated.update(self.index_overrides.get(row["index_name"], {}))
+                rows.append(updated)
             return FakeResult(
                 rows=[row for row in rows if row["index_name"] not in self.omit]
                 if self.released
@@ -248,24 +258,94 @@ def _constraint_rows() -> list[dict[str, str]]:
 def _trigger_rows() -> list[dict[str, str]]:
     return [
         {
+            "table_schema": "public",
             "table_name": "hxy_product_task_events",
             "trigger_name": "trg_hxy_product_task_events_append_only",
+            "tgenabled": "O",
+            "function_schema": "public",
+            "function_name": "hxy_reject_task_event_mutation",
             "definition": "CREATE TRIGGER x BEFORE UPDATE OR DELETE ON x FOR EACH ROW",
         },
         {
+            "table_schema": "public",
             "table_name": "hxy_product_task_events",
             "trigger_name": "trg_hxy_product_task_events_no_truncate",
+            "tgenabled": "O",
+            "function_schema": "public",
+            "function_name": "hxy_reject_task_event_mutation",
             "definition": "CREATE TRIGGER x BEFORE TRUNCATE ON x FOR EACH STATEMENT",
         },
         {
+            "table_schema": "public",
             "table_name": "hxy_product_training_sessions",
             "trigger_name": "trg_hxy_product_training_append_only",
+            "tgenabled": "O",
+            "function_schema": "public",
+            "function_name": "hxy_reject_product_training_mutation",
             "definition": "CREATE TRIGGER x BEFORE UPDATE OR DELETE ON x FOR EACH ROW",
         },
         {
+            "table_schema": "public",
             "table_name": "hxy_product_training_sessions",
             "trigger_name": "trg_hxy_product_training_no_truncate",
+            "tgenabled": "O",
+            "function_schema": "public",
+            "function_name": "hxy_reject_product_training_mutation",
             "definition": "CREATE TRIGGER x BEFORE TRUNCATE ON x FOR EACH STATEMENT",
+        },
+    ]
+
+
+def _index_rows() -> list[dict[str, Any]]:
+    return [
+        {
+            "table_name": "hxy_product_tasks",
+            "index_name": "idx_hxy_product_tasks_assignee_active",
+            "index_definition": (
+                "CREATE INDEX idx_hxy_product_tasks_assignee_active "
+                "ON public.hxy_product_tasks USING btree "
+                "(assignee_assignment_id, priority, updated_at DESC)"
+            ),
+            "indisvalid": True,
+            "predicate": (
+                "status = ANY (ARRAY['open'::text, 'in_progress'::text])"
+            ),
+        },
+        {
+            "table_name": "hxy_product_tasks",
+            "index_name": "idx_hxy_product_tasks_store_active",
+            "index_definition": (
+                "CREATE INDEX idx_hxy_product_tasks_store_active "
+                "ON public.hxy_product_tasks USING btree "
+                "(organization_id, store_id, priority, updated_at DESC)"
+            ),
+            "indisvalid": True,
+            "predicate": (
+                "(visibility = 'store'::text) AND "
+                "(status = ANY (ARRAY['open'::text, 'in_progress'::text]))"
+            ),
+        },
+        {
+            "table_name": "hxy_product_training_sessions",
+            "index_name": "idx_hxy_product_training_assignment_recent",
+            "index_definition": (
+                "CREATE INDEX idx_hxy_product_training_assignment_recent "
+                "ON public.hxy_product_training_sessions USING btree "
+                "(assignment_id, created_at DESC)"
+            ),
+            "indisvalid": True,
+            "predicate": None,
+        },
+        {
+            "table_name": "hxy_product_training_sessions",
+            "index_name": "idx_hxy_product_training_store_recent",
+            "index_definition": (
+                "CREATE INDEX idx_hxy_product_training_store_recent "
+                "ON public.hxy_product_training_sessions USING btree "
+                "(organization_id, store_id, created_at DESC)"
+            ),
+            "indisvalid": True,
+            "predicate": None,
         },
     ]
 
@@ -497,6 +577,161 @@ def test_postflight_fails_when_a_required_guard_is_missing(
     assert failed_check in failed
 
 
+@pytest.mark.parametrize(
+    ("trigger_name", "override", "failed_check"),
+    [
+        (
+            "trg_hxy_product_task_events_append_only",
+            {"table_name": "hxy_product_training_sessions"},
+            "task_event_append_only",
+        ),
+        (
+            "trg_hxy_product_task_events_no_truncate",
+            {"tgenabled": "D"},
+            "task_event_append_only",
+        ),
+        (
+            "trg_hxy_product_training_append_only",
+            {"function_name": "hxy_reject_task_event_mutation"},
+            "training_append_only",
+        ),
+        (
+            "trg_hxy_product_training_no_truncate",
+            {"function_schema": "untrusted"},
+            "training_append_only",
+        ),
+    ],
+)
+def test_postflight_rejects_misbound_or_disabled_append_only_triggers(
+    trigger_name: str,
+    override: dict[str, str],
+    failed_check: str,
+) -> None:
+    connection = FakeInspectionConnection(released=True)
+    connection.trigger_overrides[trigger_name] = override
+
+    result = run_postflight(
+        ROOT,
+        DATABASE_URL,
+        connect_factory=_inspection_factory(connection),
+        activation_runner=_activation(),
+    )
+
+    failed = {item["name"] for item in result["checks"] if item["status"] == "failed"}
+    assert result["status"] == "failed"
+    assert failed_check in failed
+
+
+@pytest.mark.parametrize(
+    ("marker", "definition", "failed_check"),
+    [
+        (
+            "tasks_org_store",
+            "FOREIGN KEY (organization_id, store_id) "
+            "REFERENCES hxy_organization_stores(organization_id, region_id)",
+            "task_scope_foreign_keys",
+        ),
+        (
+            "events_actor_org",
+            "FOREIGN KEY (organization_id, actor_assignment_id) "
+            "REFERENCES hxy_role_assignments(organization_id, role_code)",
+            "task_event_foreign_keys",
+        ),
+        (
+            "training_assignment_store",
+            "FOREIGN KEY (organization_id, store_id, assignment_id) "
+            "REFERENCES hxy_role_assignments(organization_id, store_id, role_code)",
+            "training_scope_foreign_keys",
+        ),
+    ],
+)
+def test_postflight_rejects_foreign_keys_with_wrong_target_columns(
+    marker: str,
+    definition: str,
+    failed_check: str,
+) -> None:
+    connection = FakeInspectionConnection(released=True)
+    connection.constraint_overrides[marker] = {"definition": definition}
+
+    result = run_postflight(
+        ROOT,
+        DATABASE_URL,
+        connect_factory=_inspection_factory(connection),
+        activation_runner=_activation(),
+    )
+
+    failed = {item["name"] for item in result["checks"] if item["status"] == "failed"}
+    assert result["status"] == "failed"
+    assert failed_check in failed
+
+
+@pytest.mark.parametrize(
+    ("index_name", "override", "failed_check"),
+    [
+        (
+            "idx_hxy_product_tasks_assignee_active",
+            {"table_name": "hxy_product_training_sessions"},
+            "active_task_indexes",
+        ),
+        (
+            "idx_hxy_product_tasks_store_active",
+            {
+                "index_definition": (
+                    "CREATE INDEX idx_hxy_product_tasks_store_active "
+                    "ON public.hxy_product_tasks USING btree "
+                    "(store_id, organization_id, priority, updated_at DESC)"
+                )
+            },
+            "active_task_indexes",
+        ),
+        (
+            "idx_hxy_product_tasks_assignee_active",
+            {"indisvalid": False},
+            "active_task_indexes",
+        ),
+        (
+            "idx_hxy_product_tasks_store_active",
+            {"predicate": None},
+            "active_task_indexes",
+        ),
+        (
+            "idx_hxy_product_training_assignment_recent",
+            {
+                "index_definition": (
+                    "CREATE INDEX idx_hxy_product_training_assignment_recent "
+                    "ON public.hxy_product_training_sessions USING btree "
+                    "(assignment_id, created_at)"
+                )
+            },
+            "training_indexes",
+        ),
+        (
+            "idx_hxy_product_training_store_recent",
+            {"indisvalid": False},
+            "training_indexes",
+        ),
+    ],
+)
+def test_postflight_rejects_misdefined_or_invalid_indexes(
+    index_name: str,
+    override: dict[str, Any],
+    failed_check: str,
+) -> None:
+    connection = FakeInspectionConnection(released=True)
+    connection.index_overrides[index_name] = override
+
+    result = run_postflight(
+        ROOT,
+        DATABASE_URL,
+        connect_factory=_inspection_factory(connection),
+        activation_runner=_activation(),
+    )
+
+    failed = {item["name"] for item in result["checks"] if item["status"] == "failed"}
+    assert result["status"] == "failed"
+    assert failed_check in failed
+
+
 class FakeCommandRunner:
     def __init__(self) -> None:
         self.calls: list[tuple[list[str], dict[str, str]]] = []
@@ -646,6 +881,38 @@ def test_cli_requires_database_url(monkeypatch: pytest.MonkeyPatch, capsys) -> N
         "error": "HXY_DATABASE_URL is required",
         "status": "failed",
     }
+
+
+def test_cli_invalid_dsn_returns_redacted_bounded_json_without_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    invalid_dsn = "not-a-dsn release-secret-value " + "x" * 1000
+    monkeypatch.setenv("HXY_DATABASE_URL", invalid_dsn)
+
+    exit_code = role_journeys_release.main(["preflight"])
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 2
+    assert payload["status"] == "failed"
+    assert payload["error_type"] == "ReleaseExecutionError"
+    assert len(payload["error"]) <= 500
+    assert invalid_dsn not in captured.out
+    assert "release-secret-value" not in captured.out
+    assert captured.err == ""
+    assert "Traceback" not in captured.out
+
+
+def test_sensitive_values_include_password_and_sslpassword() -> None:
+    database_url = (
+        "host=127.0.0.1 port=5432 dbname=hxy user=hxy "
+        "password=database-secret sslpassword=tls-secret"
+    )
+
+    sensitive = role_journeys_release._database_sensitive_values(database_url)
+
+    assert sensitive == (database_url, "database-secret", "tls-secret")
 
 
 def test_cli_wrapper_runs_outside_the_repository(tmp_path: Path) -> None:
