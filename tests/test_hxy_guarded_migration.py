@@ -2,18 +2,22 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import stat
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
+from apps.api.hxy_release import guarded_migration
 from apps.api.hxy_release.guarded_migration import (
     MigrationReleaseSpec,
     ReleaseAuthorizationError,
     ReleaseBackupError,
     ReleaseBoundaryError,
     ReleaseExecutionError,
+    ReleasePostflightError,
     apply_release_migrations,
     create_release_backup,
     database_identity,
@@ -61,8 +65,17 @@ def release_root(tmp_path: Path) -> Path:
 
 
 class RecordingRunner:
-    def __init__(self, *, restore_returncode: int = 0, psql_returncode: int = 0) -> None:
+    def __init__(
+        self,
+        *,
+        createdb_returncode: int = 0,
+        restore_returncode: int = 0,
+        dropdb_returncode: int = 0,
+        psql_returncode: int = 0,
+    ) -> None:
+        self.createdb_returncode = createdb_returncode
         self.restore_returncode = restore_returncode
+        self.dropdb_returncode = dropdb_returncode
         self.psql_returncode = psql_returncode
         self.calls: list[tuple[list[str], dict[str, str]]] = []
 
@@ -72,12 +85,26 @@ class RecordingRunner:
             output = Path(command[command.index("--file") + 1])
             output.write_bytes(b"PGDMP\x01generic-release-backup")
             return subprocess.CompletedProcess(command, 0, "", "")
+        if command[0] == "createdb":
+            return subprocess.CompletedProcess(
+                command,
+                self.createdb_returncode,
+                "database created" if self.createdb_returncode == 0 else "",
+                "create failed" if self.createdb_returncode else "",
+            )
         if command[0] == "pg_restore":
             return subprocess.CompletedProcess(
                 command,
                 self.restore_returncode,
                 "archive listing" if self.restore_returncode == 0 else "",
                 "invalid archive" if self.restore_returncode else "",
+            )
+        if command[0] == "dropdb":
+            return subprocess.CompletedProcess(
+                command,
+                self.dropdb_returncode,
+                "database dropped" if self.dropdb_returncode == 0 else "",
+                "drop failed" if self.dropdb_returncode else "",
             )
         if command[0] == "psql":
             return subprocess.CompletedProcess(
@@ -95,19 +122,22 @@ def passed_inspector(_root: Path, _database_url: str) -> dict[str, str]:
 
 def make_backup(
     release_root: Path,
-    tmp_path: Path,
+    _tmp_path: Path,
     runner: RecordingRunner | None = None,
+    *,
+    database_url: str = DATABASE_URL,
 ) -> tuple[dict[str, object], RecordingRunner]:
     command_runner = runner or RecordingRunner()
     result = create_release_backup(
         SPEC,
         release_root,
-        DATABASE_URL,
-        output_root=tmp_path / "hxy-backups",
+        database_url,
+        output_root=release_root / "data" / "backups" / "test-release",
         runner=command_runner,
         now=NOW,
         git_commit=GIT_COMMIT,
         preflight_inspector=passed_inspector,
+        trusted_root=release_root,
     )
     return result, command_runner
 
@@ -115,7 +145,7 @@ def make_backup(
 def test_migration_inventory_is_ordered_and_checksum_bound_to_spec(
     release_root: Path,
 ) -> None:
-    inventory = migration_inventory(SPEC, release_root)
+    inventory = migration_inventory(SPEC, release_root, trusted_root=release_root)
 
     assert inventory == [
         {
@@ -141,11 +171,39 @@ def test_database_identity_and_boundary_are_hxy_owned_without_credentials(
         "database": "hxy_release_test",
         "user": "hxy_app",
     }
-    validate_hxy_boundary(release_root, identity)
+    validate_hxy_boundary(release_root, identity, trusted_root=release_root)
     with pytest.raises(ReleaseBoundaryError, match="database"):
-        validate_hxy_boundary(release_root, identity | {"database": "htops"})
+        validate_hxy_boundary(
+            release_root,
+            identity | {"database": "htops"},
+            trusted_root=release_root,
+        )
     with pytest.raises(ReleaseBoundaryError, match="root"):
         validate_hxy_boundary(Path("/root/htops"), identity)
+
+
+def test_release_root_requires_real_containment_in_trusted_root(
+    release_root: Path,
+    tmp_path: Path,
+) -> None:
+    identity = database_identity(DATABASE_URL)
+    sibling = tmp_path / "hxy-sibling"
+    sibling.mkdir()
+    htops_copy = release_root / "htops-copy"
+    htops_copy.mkdir()
+    outside = tmp_path / "outside" / "hxy"
+    outside.mkdir(parents=True)
+    symlink = release_root / "linked-release"
+    symlink.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ReleaseBoundaryError, match="root"):
+        validate_hxy_boundary(Path("/tmp/hxy"), identity)
+    with pytest.raises(ReleaseBoundaryError, match="root"):
+        validate_hxy_boundary(sibling, identity, trusted_root=release_root)
+    with pytest.raises(ReleaseBoundaryError, match="root"):
+        validate_hxy_boundary(htops_copy, identity, trusted_root=release_root)
+    with pytest.raises(ReleaseBoundaryError, match="root"):
+        validate_hxy_boundary(symlink, identity, trusted_root=release_root)
 
 
 def test_backup_manifest_binds_release_database_git_and_migrations(
@@ -169,12 +227,194 @@ def test_backup_manifest_binds_release_database_git_and_migrations(
             "sha256": hashlib.sha256(dump_path.read_bytes()).hexdigest(),
             "verified": True,
         },
-        "migrations": migration_inventory(SPEC, release_root),
+        "migrations": migration_inventory(
+            SPEC,
+            release_root,
+            trusted_root=release_root,
+        ),
     }
-    assert [command[0] for command, _env in runner.calls] == ["pg_dump", "pg_restore"]
+    assert [command[0] for command, _env in runner.calls] == [
+        "pg_dump",
+        "createdb",
+        "pg_restore",
+        "dropdb",
+    ]
+    createdb_command = runner.calls[1][0]
+    restore_command = runner.calls[2][0]
+    dropdb_command = runner.calls[3][0]
+    temporary_database = createdb_command[-1]
+    assert createdb_command[1] == "--maintenance-db=hxy_release_test"
+    assert "--exit-on-error" in restore_command
+    assert "--no-owner" in restore_command
+    assert "--no-acl" in restore_command
+    assert f"--dbname={temporary_database}" in restore_command
+    assert dropdb_command == [
+        "dropdb",
+        "--if-exists",
+        "--maintenance-db=hxy_release_test",
+        temporary_database,
+    ]
     assert manifest_path.parent.stat().st_mode & 0o777 == 0o700
     assert manifest_path.stat().st_mode & 0o777 == 0o600
     assert dump_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_backup_preserves_mapped_libpq_connection_semantics(
+    release_root: Path,
+    tmp_path: Path,
+) -> None:
+    database_url = (
+        "host=db-a,db-b hostaddr=10.0.0.1,10.0.0.2 port=5432,5433 "
+        "dbname=hxy_release_test user=hxy_app password=release-secret-value "
+        "options='-c search_path=hxy,public' sslmode=verify-full "
+        "sslrootcert=/run/secrets/root.crt sslcert=/run/secrets/client.crt "
+        "sslkey=/run/secrets/client.key target_session_attrs=read-write "
+        "connect_timeout=7 application_name=hxy-release passfile=/run/secrets/pgpass "
+        "service=hxy-prod channel_binding=require load_balance_hosts=random "
+        "ssl_min_protocol_version=TLSv1.2 ssl_max_protocol_version=TLSv1.3"
+    )
+
+    _result, runner = make_backup(
+        release_root,
+        tmp_path,
+        database_url=database_url,
+    )
+
+    expected = {
+        "PGHOST": "db-a,db-b",
+        "PGHOSTADDR": "10.0.0.1,10.0.0.2",
+        "PGPORT": "5432,5433",
+        "PGDATABASE": "hxy_release_test",
+        "PGUSER": "hxy_app",
+        "PGPASSWORD": "release-secret-value",
+        "PGOPTIONS": "-c search_path=hxy,public",
+        "PGSSLMODE": "verify-full",
+        "PGSSLROOTCERT": "/run/secrets/root.crt",
+        "PGSSLCERT": "/run/secrets/client.crt",
+        "PGSSLKEY": "/run/secrets/client.key",
+        "PGTARGETSESSIONATTRS": "read-write",
+        "PGCONNECT_TIMEOUT": "7",
+        "PGAPPNAME": "hxy-release",
+        "PGPASSFILE": "/run/secrets/pgpass",
+        "PGSERVICE": "hxy-prod",
+        "PGCHANNELBINDING": "require",
+        "PGLOADBALANCEHOSTS": "random",
+        "PGSSLMINPROTOCOLVERSION": "TLSv1.2",
+        "PGSSLMAXPROTOCOLVERSION": "TLSv1.3",
+    }
+    for command, env in runner.calls:
+        assert expected.items() <= env.items()
+        assert database_url not in " ".join(command)
+        assert "release-secret-value" not in " ".join(command)
+
+
+def test_backup_rejects_nonempty_libpq_parameters_without_environment_mapping(
+    release_root: Path,
+) -> None:
+    runner = RecordingRunner()
+
+    with pytest.raises(ReleaseExecutionError, match="keepalives"):
+        create_release_backup(
+            SPEC,
+            release_root,
+            DATABASE_URL + " keepalives=1",
+            output_root=release_root / "data" / "backups" / "test-release",
+            runner=runner,
+            now=NOW,
+            git_commit=GIT_COMMIT,
+            preflight_inspector=passed_inspector,
+            trusted_root=release_root,
+        )
+
+    assert runner.calls == []
+
+
+def test_backup_restore_failure_still_drops_temporary_database(
+    release_root: Path,
+    tmp_path: Path,
+) -> None:
+    runner = RecordingRunner(restore_returncode=1)
+
+    with pytest.raises(ReleaseBackupError, match="restore verification"):
+        make_backup(release_root, tmp_path, runner)
+
+    assert [command[0] for command, _env in runner.calls] == [
+        "pg_dump",
+        "createdb",
+        "pg_restore",
+        "dropdb",
+    ]
+    assert runner.calls[1][0][-1] == runner.calls[3][0][-1]
+    assert not list((release_root / "data" / "backups").rglob("manifest.json"))
+
+
+def test_manifest_write_fsyncs_file_then_parent_directory(
+    release_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_fsync = os.fsync
+    fsync_targets: list[str] = []
+
+    def recording_fsync(file_descriptor: int) -> None:
+        mode = os.fstat(file_descriptor).st_mode
+        fsync_targets.append("directory" if stat.S_ISDIR(mode) else "file")
+        real_fsync(file_descriptor)
+
+    monkeypatch.setattr(guarded_migration.os, "fsync", recording_fsync)
+
+    make_backup(release_root, tmp_path)
+
+    assert fsync_targets == ["file", "directory"]
+
+
+def test_backup_paths_require_real_containment_under_trusted_backup_root(
+    release_root: Path,
+    tmp_path: Path,
+) -> None:
+    runner = RecordingRunner()
+    backup_root = release_root / "data" / "backups"
+    backup_root.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    symlink_output = backup_root / "linked-output"
+    symlink_output.symlink_to(outside, target_is_directory=True)
+    rejected_outputs = (
+        tmp_path / "hxy-backups",
+        backup_root / "htops-copy",
+        symlink_output,
+    )
+
+    for output_root in rejected_outputs:
+        with pytest.raises(ReleaseBoundaryError, match="backup"):
+            create_release_backup(
+                SPEC,
+                release_root,
+                DATABASE_URL,
+                output_root=output_root,
+                runner=runner,
+                now=NOW,
+                git_commit=GIT_COMMIT,
+                preflight_inspector=passed_inspector,
+                trusted_root=release_root,
+            )
+
+    outside_manifest = outside / "manifest.json"
+    outside_manifest.write_text("{}", encoding="utf-8")
+    linked_manifest = backup_root / "linked-manifest.json"
+    linked_manifest.symlink_to(outside_manifest)
+    with pytest.raises(ReleaseBoundaryError, match="backup"):
+        validate_release_backup_manifest(
+            SPEC,
+            release_root,
+            DATABASE_URL,
+            linked_manifest,
+            now=NOW,
+            git_commit=GIT_COMMIT,
+            trusted_root=release_root,
+        )
+
+    assert runner.calls == []
 
 
 def test_manifest_rejects_another_spec_stale_git_database_or_migrations(
@@ -191,6 +431,7 @@ def test_manifest_rejects_another_spec_stale_git_database_or_migrations(
         manifest_path,
         now=NOW,
         git_commit=GIT_COMMIT,
+        trusted_root=release_root,
     )
     assert validated["status"] == "passed"
 
@@ -202,6 +443,7 @@ def test_manifest_rejects_another_spec_stale_git_database_or_migrations(
             manifest_path,
             now=NOW,
             git_commit=GIT_COMMIT,
+            trusted_root=release_root,
         )
     with pytest.raises(ReleaseBackupError, match="stale"):
         validate_release_backup_manifest(
@@ -211,6 +453,7 @@ def test_manifest_rejects_another_spec_stale_git_database_or_migrations(
             manifest_path,
             now=NOW + timedelta(hours=25),
             git_commit=GIT_COMMIT,
+            trusted_root=release_root,
         )
     with pytest.raises(ReleaseBackupError, match="Git"):
         validate_release_backup_manifest(
@@ -220,6 +463,7 @@ def test_manifest_rejects_another_spec_stale_git_database_or_migrations(
             manifest_path,
             now=NOW,
             git_commit="b" * 40,
+            trusted_root=release_root,
         )
     with pytest.raises(ReleaseBackupError, match="database"):
         validate_release_backup_manifest(
@@ -229,6 +473,7 @@ def test_manifest_rejects_another_spec_stale_git_database_or_migrations(
             manifest_path,
             now=NOW,
             git_commit=GIT_COMMIT,
+            trusted_root=release_root,
         )
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -242,6 +487,7 @@ def test_manifest_rejects_another_spec_stale_git_database_or_migrations(
             manifest_path,
             now=NOW,
             git_commit=GIT_COMMIT,
+            trusted_root=release_root,
         )
 
 
@@ -260,6 +506,7 @@ def test_manifest_rejects_tampered_dump(release_root: Path, tmp_path: Path) -> N
             manifest_path,
             now=NOW,
             git_commit=GIT_COMMIT,
+            trusted_root=release_root,
         )
 
 
@@ -271,11 +518,12 @@ def test_backup_requires_passing_preflight(release_root: Path, tmp_path: Path) -
             SPEC,
             release_root,
             DATABASE_URL,
-            output_root=tmp_path / "hxy-backups",
+            output_root=release_root / "data" / "backups" / "test-release",
             runner=runner,
             now=NOW,
             git_commit=GIT_COMMIT,
             preflight_inspector=lambda _root, _dsn: {"status": "failed"},
+            trusted_root=release_root,
         )
 
     assert runner.calls == []
@@ -303,6 +551,7 @@ def test_apply_requires_the_exact_confirmation_before_running_commands(
             runner=runner,
             now=NOW,
             git_commit=GIT_COMMIT,
+            trusted_root=release_root,
             postflight_inspector=passed_inspector,
         )
 
@@ -325,6 +574,7 @@ def test_apply_uses_one_locked_transaction_and_only_profile_migrations(
         runner=runner,
         now=NOW,
         git_commit=GIT_COMMIT,
+        trusted_root=release_root,
         postflight_inspector=passed_inspector,
     )
 
@@ -368,16 +618,24 @@ def test_apply_stops_on_migration_failure_without_postflight(
             runner=runner,
             now=NOW,
             git_commit=GIT_COMMIT,
+            trusted_root=release_root,
             postflight_inspector=lambda _root, _dsn: postflight_calls.append("called"),
         )
 
     assert postflight_calls == []
 
 
-def test_apply_raises_when_postflight_fails(release_root: Path, tmp_path: Path) -> None:
+def test_apply_reports_committed_state_when_postflight_fails(
+    release_root: Path,
+    tmp_path: Path,
+) -> None:
     backup, _backup_runner = make_backup(release_root, tmp_path)
+    postflight = {
+        "status": "failed",
+        "checks": [{"detail": "x" * 2000} for _index in range(150)],
+    }
 
-    with pytest.raises(ReleaseExecutionError, match="postflight"):
+    with pytest.raises(ReleasePostflightError, match="postflight") as raised:
         apply_release_migrations(
             SPEC,
             release_root,
@@ -387,8 +645,16 @@ def test_apply_raises_when_postflight_fails(release_root: Path, tmp_path: Path) 
             runner=RecordingRunner(),
             now=NOW,
             git_commit=GIT_COMMIT,
-            postflight_inspector=lambda _root, _dsn: {"status": "failed"},
+            trusted_root=release_root,
+            postflight_inspector=lambda _root, _dsn: postflight,
         )
+
+    error = raised.value
+    assert isinstance(error, ReleaseExecutionError)
+    assert error.applied is True
+    assert error.postflight["status"] == "failed"
+    assert len(error.postflight["checks"]) == 100
+    assert len(error.postflight["checks"][0]["detail"]) == 500
 
 
 def test_render_result_redacts_full_dsn_and_password() -> None:

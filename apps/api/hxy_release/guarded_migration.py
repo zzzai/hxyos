@@ -3,16 +3,24 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from psycopg import pq
 from psycopg.conninfo import conninfo_to_dict
 
 
 _MAX_RESULT_STRING = 500
+_DEFAULT_TRUSTED_ROOT = Path("/root/hxy")
+_CONNINFO_ENVIRONMENT = {
+    item.keyword.decode(): item.envvar.decode()
+    for item in pq.Conninfo.get_defaults()
+    if item.envvar is not None
+}
 
 CommandRunner = Callable[[list[str], dict[str, str]], subprocess.CompletedProcess[str]]
 InspectionRunner = Callable[[Path, str], dict[str, Any]]
@@ -44,11 +52,37 @@ class ReleaseExecutionError(RuntimeError):
     """Raised when a guarded external release command fails."""
 
 
+class ReleasePostflightError(ReleaseExecutionError):
+    """Raised after migrations commit but their postflight inspection fails."""
+
+    def __init__(self, postflight: Any) -> None:
+        super().__init__("release postflight failed after migrations committed")
+        self.applied = True
+        self.postflight = _bounded_value(postflight, ())
+        self.detail = self.postflight
+
+
+def _contains_htops(path: Path) -> bool:
+    return any("htops" in part.lower() for part in path.parts)
+
+
+def _validate_release_root(root_dir: Path, trusted_root: Path) -> Path:
+    root = root_dir.resolve()
+    trusted = trusted_root.resolve()
+    if _contains_htops(root) or not root.is_relative_to(trusted):
+        raise ReleaseBoundaryError("release root must be within trusted HXY root")
+    return root
+
+
 def migration_inventory(
     spec: MigrationReleaseSpec,
     root_dir: Path,
+    *,
+    trusted_root: Path = _DEFAULT_TRUSTED_ROOT,
 ) -> list[dict[str, str]]:
-    migration_dir = root_dir.resolve() / "data" / "migrations"
+    migration_dir = (
+        _validate_release_root(root_dir, trusted_root) / "data" / "migrations"
+    )
     inventory: list[dict[str, str]] = []
     for name in spec.migrations:
         if not name or Path(name).name != name:
@@ -68,19 +102,24 @@ def database_identity(database_url: str) -> dict[str, str]:
     }
 
 
-def validate_hxy_boundary(root_dir: Path, identity: dict[str, str]) -> None:
-    root = root_dir.resolve()
-    parts = {part.lower() for part in root.parts}
-    if "htops" in parts or "hxy" not in parts:
-        raise ReleaseBoundaryError("release root must be HXY-owned")
+def validate_hxy_boundary(
+    root_dir: Path,
+    identity: dict[str, str],
+    *,
+    trusted_root: Path = _DEFAULT_TRUSTED_ROOT,
+) -> None:
+    _validate_release_root(root_dir, trusted_root)
     database = str(identity.get("database") or "").strip().lower()
     if not database.startswith("hxy") or "htops" in database:
         raise ReleaseBoundaryError("release database must be HXY-owned")
 
 
-def _validate_backup_path(path: Path) -> None:
-    if "htops" in {part.lower() for part in path.resolve().parts}:
-        raise ReleaseBoundaryError("backup path must be HXY-owned")
+def _validate_backup_path(path: Path, trusted_root: Path) -> Path:
+    resolved = path.resolve()
+    backup_root = (trusted_root.resolve() / "data" / "backups").resolve()
+    if _contains_htops(resolved) or not resolved.is_relative_to(backup_root):
+        raise ReleaseBoundaryError("backup path must be within trusted HXY backups")
+    return resolved
 
 
 def _bounded_value(value: Any, sensitive_values: tuple[str, ...]) -> Any:
@@ -138,15 +177,23 @@ def _postgres_environment(database_url: str) -> dict[str, str]:
         "SSL_CERT_DIR",
     )
     env = {key: os.environ[key] for key in inherited_keys if key in os.environ}
-    mappings = {
-        "PGHOST": values.get("host") or "",
-        "PGPORT": values.get("port") or "5432",
-        "PGDATABASE": values.get("dbname") or "",
-        "PGUSER": values.get("user") or "",
-        "PGPASSWORD": values.get("password") or "",
-        "PGSSLMODE": values.get("sslmode") or "prefer",
-    }
-    env.update({key: str(value) for key, value in mappings.items()})
+    unsupported = sorted(
+        key
+        for key, value in values.items()
+        if value not in (None, "") and key not in _CONNINFO_ENVIRONMENT
+    )
+    if unsupported:
+        raise ReleaseExecutionError(
+            "libpq parameters cannot be preserved for subprocesses: "
+            + ", ".join(unsupported)
+        )
+    env.update(
+        {
+            _CONNINFO_ENVIRONMENT[key]: str(value)
+            for key, value in values.items()
+            if value not in (None, "")
+        }
+    )
     return env
 
 
@@ -187,19 +234,21 @@ def create_release_backup(
     runner: CommandRunner | None = None,
     now: datetime | None = None,
     git_commit: str | None = None,
+    trusted_root: Path = _DEFAULT_TRUSTED_ROOT,
 ) -> dict[str, Any]:
     identity = database_identity(database_url)
-    validate_hxy_boundary(root_dir, identity)
+    validate_hxy_boundary(root_dir, identity, trusted_root=trusted_root)
+    output_root = _validate_backup_path(output_root, trusted_root)
+    if not spec.dump_filename or Path(spec.dump_filename).name != spec.dump_filename:
+        raise ReleaseBoundaryError("backup dump path must be a filename")
+    command_env = _postgres_environment(database_url)
     preflight = preflight_inspector(root_dir, database_url)
     if preflight.get("status") != "passed":
         raise ReleaseBackupError("preflight must pass before backup")
 
     created_at = now or _utc_now()
-    _validate_backup_path(output_root)
-    if not spec.dump_filename or Path(spec.dump_filename).name != spec.dump_filename:
-        raise ReleaseBoundaryError("backup dump path must be a filename")
     timestamp = created_at.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    backup_dir = output_root.resolve() / timestamp
+    backup_dir = output_root / timestamp
     if backup_dir.exists():
         raise ReleaseBackupError("backup target already exists")
     backup_dir.mkdir(parents=True, mode=0o700)
@@ -207,7 +256,6 @@ def create_release_backup(
     dump_path = backup_dir / spec.dump_filename
     manifest_path = backup_dir / "manifest.json"
     command_runner = runner or _default_command_runner
-    command_env = _postgres_environment(database_url)
 
     dump_result = command_runner(
         [
@@ -228,12 +276,51 @@ def create_release_backup(
         raise ReleaseBackupError("database backup failed")
     dump_path.chmod(0o600)
 
-    restore_result = command_runner(
-        ["pg_restore", "--list", str(dump_path)],
-        command_env,
-    )
-    if restore_result.returncode != 0:
-        raise ReleaseBackupError("database backup verification failed")
+    temporary_database = f"hxy_verify_{secrets.token_hex(8)}"
+    maintenance_option = f"--maintenance-db={identity['database']}"
+    create_result: subprocess.CompletedProcess[str] | None = None
+    restore_result: subprocess.CompletedProcess[str] | None = None
+    cleanup_result: subprocess.CompletedProcess[str] | None = None
+    verification_error: Exception | None = None
+    try:
+        create_result = command_runner(
+            ["createdb", maintenance_option, temporary_database],
+            command_env,
+        )
+        if create_result.returncode == 0:
+            restore_result = command_runner(
+                [
+                    "pg_restore",
+                    "--exit-on-error",
+                    "--no-owner",
+                    "--no-acl",
+                    f"--dbname={temporary_database}",
+                    str(dump_path),
+                ],
+                command_env,
+            )
+    except Exception as exc:
+        verification_error = exc
+    finally:
+        try:
+            cleanup_result = command_runner(
+                ["dropdb", "--if-exists", maintenance_option, temporary_database],
+                command_env,
+            )
+        except Exception as exc:
+            if verification_error is None:
+                verification_error = exc
+
+    if verification_error is not None:
+        raise ReleaseBackupError(
+            "database backup restore verification failed"
+        ) from verification_error
+    if create_result is None or create_result.returncode != 0:
+        raise ReleaseBackupError("temporary restore database creation failed")
+    if restore_result is None or restore_result.returncode != 0:
+        raise ReleaseBackupError("database backup restore verification failed")
+    if cleanup_result is None or cleanup_result.returncode != 0:
+        raise ReleaseBackupError("temporary restore database cleanup failed")
 
     manifest = {
         "version": spec.manifest_version,
@@ -247,16 +334,31 @@ def create_release_backup(
             "sha256": _sha256_file(dump_path),
             "verified": True,
         },
-        "migrations": migration_inventory(spec, root_dir),
+        "migrations": migration_inventory(
+            spec,
+            root_dir,
+            trusted_root=trusted_root,
+        ),
     }
     temporary_manifest = backup_dir / ".manifest.json.tmp"
-    temporary_manifest.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    manifest_text = (
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     )
-    temporary_manifest.chmod(0o600)
+    file_descriptor = os.open(
+        temporary_manifest,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+        0o600,
+    )
+    with os.fdopen(file_descriptor, "w", encoding="utf-8") as handle:
+        handle.write(manifest_text)
+        handle.flush()
+        os.fsync(handle.fileno())
     temporary_manifest.replace(manifest_path)
-    manifest_path.chmod(0o600)
+    directory_descriptor = os.open(backup_dir, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory_descriptor)
+    finally:
+        os.close(directory_descriptor)
     return {
         "status": "passed",
         "phase": "backup",
@@ -277,8 +379,9 @@ def validate_release_backup_manifest(
     now: datetime | None = None,
     max_age: timedelta = timedelta(hours=24),
     git_commit: str | None = None,
+    trusted_root: Path = _DEFAULT_TRUSTED_ROOT,
 ) -> dict[str, Any]:
-    _validate_backup_path(manifest_path)
+    manifest_path = _validate_backup_path(manifest_path, trusted_root)
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
@@ -291,13 +394,17 @@ def validate_release_backup_manifest(
         raise ReleaseBackupError("backup manifest release does not match specification")
 
     identity = database_identity(database_url)
-    validate_hxy_boundary(root_dir, identity)
+    validate_hxy_boundary(root_dir, identity, trusted_root=trusted_root)
     if manifest.get("database") != identity:
         raise ReleaseBackupError("backup database does not match release target")
     expected_commit = git_commit or _current_git_commit(root_dir)
     if manifest.get("git_commit") != expected_commit:
         raise ReleaseBackupError("backup Git commit does not match release source")
-    if manifest.get("migrations") != migration_inventory(spec, root_dir):
+    if manifest.get("migrations") != migration_inventory(
+        spec,
+        root_dir,
+        trusted_root=trusted_root,
+    ):
         raise ReleaseBackupError("backup migration inventory does not match release files")
 
     try:
@@ -351,6 +458,7 @@ def apply_release_migrations(
     runner: CommandRunner | None = None,
     now: datetime | None = None,
     git_commit: str | None = None,
+    trusted_root: Path = _DEFAULT_TRUSTED_ROOT,
 ) -> dict[str, Any]:
     if confirmation != spec.confirmation:
         raise ReleaseAuthorizationError("exact migration confirmation is required")
@@ -361,6 +469,7 @@ def apply_release_migrations(
         manifest_path,
         now=now,
         git_commit=git_commit,
+        trusted_root=trusted_root,
     )
     command_runner = runner or _default_command_runner
     command_env = _postgres_environment(database_url)
@@ -392,9 +501,14 @@ def apply_release_migrations(
     if result.returncode != 0:
         raise ReleaseExecutionError("release migration transaction failed")
 
-    postflight = postflight_inspector(root_dir, database_url)
+    try:
+        postflight = postflight_inspector(root_dir, database_url)
+    except Exception as exc:
+        raise ReleasePostflightError(
+            {"status": "failed", "error": type(exc).__name__}
+        ) from exc
     if postflight.get("status") != "passed":
-        raise ReleaseExecutionError("release postflight failed")
+        raise ReleasePostflightError(postflight)
     return {
         "status": "passed",
         "phase": "apply",
