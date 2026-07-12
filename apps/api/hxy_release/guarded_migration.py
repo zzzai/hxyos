@@ -45,6 +45,7 @@ class MigrationReleaseSpec:
     confirmation: str
     advisory_lock: str
     dump_filename: str
+    legacy_release: str | None = None
 
 
 class ReleaseBoundaryError(ValueError):
@@ -408,6 +409,8 @@ def create_release_backup(
             trusted_root=trusted_root,
         ),
     }
+    if spec.legacy_release is not None:
+        manifest["release"] = spec.legacy_release
     temporary_manifest = backup_dir / ".manifest.json.tmp"
     manifest_text = (
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
@@ -460,6 +463,13 @@ def validate_release_backup_manifest(
         raise ReleaseBackupError("backup manifest version does not match release")
     if manifest.get("release_id") != spec.release_id:
         raise ReleaseBackupError("backup manifest release does not match specification")
+    if (
+        spec.legacy_release is not None
+        and manifest.get("release") != spec.legacy_release
+    ):
+        raise ReleaseBackupError(
+            "backup manifest legacy release does not match specification"
+        )
 
     identity = database_identity(database_url)
     validate_hxy_boundary(root_dir, identity, trusted_root=trusted_root)
