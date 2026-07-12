@@ -39,6 +39,34 @@ GIT_COMMIT = "a" * 40
 NOW = datetime(2026, 7, 12, 2, 0, tzinfo=timezone.utc)
 
 
+def _slice_release_runbook_sections(markdown: str) -> dict[str, str]:
+    headings = list(re.finditer(r"^## (?P<title>[^\r\n]+)\s*$", markdown, re.MULTILINE))
+    sections: dict[str, str] = {}
+    for index, heading in enumerate(headings):
+        title = heading.group("title").strip()
+        if title == "Stop Rule":
+            key = "stop_rule"
+        else:
+            gate = re.fullmatch(r"Gate (?P<number>\d+)(?::.*)?", title)
+            if gate is None:
+                continue
+            key = f"gate_{gate.group('number')}"
+        assert key not in sections, f"duplicate release section: {key}"
+        end = headings[index + 1].start() if index + 1 < len(headings) else len(markdown)
+        sections[key] = markdown[heading.end() : end].strip()
+    return sections
+
+
+def _assert_section_contains(
+    sections: dict[str, str],
+    section: str,
+    required_phrases: tuple[str, ...],
+) -> None:
+    assert section in sections, f"missing release section: {section}"
+    for phrase in required_phrases:
+        assert phrase in sections[section], f"{phrase!r} must appear in {section}"
+
+
 @pytest.fixture
 def release_root(tmp_path: Path) -> Path:
     root = tmp_path / "hxy"
@@ -1399,3 +1427,61 @@ def test_internal_runbook_is_private_code_only_and_contains_no_secret_values() -
         r"-----BEGIN [A-Z ]*PRIVATE KEY-----",
     ]:
         assert re.search(secret_pattern, runbook) is None
+
+
+def test_internal_runbook_places_required_terms_in_exact_release_sections() -> None:
+    runbook = (
+        ROOT / "docs" / "operations" / "hxy-role-journeys-release.md"
+    ).read_text(encoding="utf-8")
+    sections = _slice_release_runbook_sections(runbook)
+
+    _assert_section_contains(
+        sections,
+        "stop_rule",
+        (
+            "任一命令失败",
+            "立即停止",
+        ),
+    )
+    _assert_section_contains(
+        sections,
+        "gate_2",
+        (
+            ".venv/bin/pytest tests/test_hxy_role_journeys_release.py -q",
+            "npm test",
+            "python3 scripts/check-hxy-secrets.py",
+            "python3 scripts/check-hxy-public-release.py",
+        ),
+    )
+    _assert_section_contains(
+        sections,
+        "gate_4",
+        (
+            ".venv/bin/python scripts/hxy-role-journeys-release.py backup",
+            "临时隔离数据库",
+            "完整恢复验证",
+            "不得只以 `pg_restore --list` 成功代替完整恢复验证",
+        ),
+    )
+    _assert_section_contains(
+        sections,
+        "gate_11",
+        ("只有 Gate 1-10 全部通过后才写 completion record",),
+    )
+
+
+def test_release_section_contract_rejects_requirement_in_the_wrong_gate() -> None:
+    misplaced_runbook = """\
+## Stop Rule
+任一命令失败立即停止。
+
+## Gate 2: Code
+临时隔离数据库必须完成完整恢复验证。
+
+## Gate 4: Backup
+只运行 backup。
+"""
+    sections = _slice_release_runbook_sections(misplaced_runbook)
+
+    with pytest.raises(AssertionError, match="gate_4"):
+        _assert_section_contains(sections, "gate_4", ("完整恢复验证",))

@@ -102,6 +102,9 @@ manifest.json
 commit、`015-016` 文件清单及校验和写入 `manifest.json`。目录权限必须为 `0700`，
 dump 和 manifest 权限必须为 `0600`。
 
+不得只以 `pg_restore --list` 成功代替完整恢复验证；临时隔离数据库的创建、restore 和
+清理任一步失败都必须停止。
+
 保存 CLI 返回的 `manifest_path` 到当前维护会话的环境变量，不写入 shell history 或
 发布文档：
 
