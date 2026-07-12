@@ -79,12 +79,59 @@ class ReleaseExecutionError(RuntimeError):
     """Raised when a guarded external release command fails."""
 
 
+class ReleaseAppliedError(ReleaseExecutionError):
+    """Raised when a release fails after the migration transaction committed."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str,
+        detail: Any = None,
+    ) -> None:
+        super().__init__(message)
+        self.applied = True
+        self.error_code = error_code
+        self.detail = _bounded_value(detail, ())
+        self.cleanup_failed: Any = None
+
+
+class ReleaseCleanupError(ReleaseExecutionError):
+    """Raised when a release snapshot directory cannot be removed."""
+
+    def __init__(self, *, applied: bool, detail: Any) -> None:
+        message = (
+            "release snapshot cleanup failed after migrations committed"
+            if applied
+            else "release snapshot cleanup failed before migrations committed"
+        )
+        super().__init__(message)
+        self.applied = applied
+        self.error_code = (
+            "cleanup_failed_after_apply"
+            if applied
+            else "cleanup_failed_before_apply"
+        )
+        self.detail = _bounded_value(detail, ())
+        self.cleanup_failed: Any = None
+
+
 class ReleaseInstanceError(ReleaseBackupError, ReleaseExecutionError):
     """Raised when a release moves between PostgreSQL server instances."""
 
-    def __init__(self, message: str, *, applied: bool = False) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        applied: bool = False,
+        error_code: str | None = None,
+        detail: Any = None,
+    ) -> None:
         super().__init__(message)
         self.applied = applied
+        self.error_code = error_code
+        self.detail = _bounded_value(detail, ())
+        self.cleanup_failed: Any = None
 
 
 class ReleasePostflightError(ReleaseExecutionError):
@@ -93,8 +140,10 @@ class ReleasePostflightError(ReleaseExecutionError):
     def __init__(self, postflight: Any) -> None:
         super().__init__("release postflight failed after migrations committed")
         self.applied = True
+        self.error_code = "postflight_failed_after_apply"
         self.postflight = _bounded_value(postflight, ())
         self.detail = self.postflight
+        self.cleanup_failed: Any = None
 
 
 def _contains_htops(path: Path) -> bool:
@@ -439,6 +488,11 @@ def _assert_instance_fingerprint(
         raise ReleaseInstanceError(
             f"database instance changed {phase}",
             applied=applied,
+            error_code=(
+                "instance_changed_after_apply"
+                if applied
+                else "instance_changed_before_apply"
+            ),
         )
 
 
@@ -532,6 +586,76 @@ def render_result(
 ) -> str:
     redacted = _bounded_value(payload, tuple(sensitive_values))
     return json.dumps(redacted, ensure_ascii=False, sort_keys=True)
+
+
+def _exception_detail(error: Exception) -> dict[str, str]:
+    return _bounded_value(
+        {"error_type": type(error).__name__, "error": str(error)},
+        (),
+    )
+
+
+def _instance_inspection_error(
+    error: Exception,
+    *,
+    applied: bool,
+) -> ReleaseExecutionError:
+    if isinstance(error, ReleaseInstanceError) and error.applied == applied:
+        if error.error_code is None:
+            error.error_code = (
+                "instance_check_failed_after_apply"
+                if applied
+                else "instance_check_failed_before_apply"
+            )
+        if error.detail is None:
+            error.detail = _exception_detail(error)
+        return error
+    if applied:
+        return ReleaseAppliedError(
+            "database instance check failed after migrations committed",
+            error_code="instance_check_failed_after_apply",
+            detail=_exception_detail(error),
+        )
+    return ReleaseInstanceError(
+        "database instance check failed before migration apply",
+        applied=False,
+        error_code="instance_check_failed_before_apply",
+        detail=_exception_detail(error),
+    )
+
+
+def _normalize_apply_error(
+    error: Exception,
+    *,
+    applied: bool,
+) -> Exception:
+    if applied:
+        if getattr(error, "applied", False) is True and getattr(
+            error, "error_code", None
+        ):
+            return error
+        return ReleaseAppliedError(
+            "release failed after migrations committed",
+            error_code="release_failed_after_apply",
+            detail=_exception_detail(error),
+        )
+    try:
+        error.applied = False
+    except Exception:
+        pass
+    return error
+
+
+def _attach_cleanup_failure(
+    primary_error: Exception,
+    cleanup_error: Exception,
+) -> Exception:
+    cleanup_failed = _exception_detail(cleanup_error)
+    try:
+        primary_error.cleanup_failed = cleanup_failed
+    except Exception:
+        pass
+    return primary_error
 
 
 def _default_command_runner(
@@ -913,7 +1037,13 @@ def apply_release_migrations(
         return migration_blobs[name]
 
     inspect_instance = instance_inspector or database_instance_identity
-    target = _pin_database_target(database_url, inspect_instance)
+    try:
+        target = _pin_database_target(database_url, inspect_instance)
+    except Exception as exc:
+        inspection_error = _instance_inspection_error(exc, applied=False)
+        if inspection_error is exc:
+            raise
+        raise inspection_error from exc
     validated_backup = validate_release_backup_manifest(
         spec,
         root_dir,
@@ -926,7 +1056,13 @@ def apply_release_migrations(
         instance_inspector=inspect_instance,
         _pinned_target=target,
     )
-    instance_before = inspect_instance(target.pinned_url)
+    try:
+        instance_before = inspect_instance(target.pinned_url)
+    except Exception as exc:
+        inspection_error = _instance_inspection_error(exc, applied=False)
+        if inspection_error is exc:
+            raise
+        raise inspection_error from exc
     _assert_instance_fingerprint(
         str(validated_backup["instance_fingerprint"]),
         instance_before,
@@ -943,6 +1079,9 @@ def apply_release_migrations(
         tempfile.mkdtemp(prefix=f"{spec.release_id}-", dir=temporary_root)
     )
     snapshot_dir.chmod(0o700)
+    applied = False
+    primary_error: Exception | None = None
+    cleanup_error: Exception | None = None
     try:
         migration_paths: list[Path] = []
         for name in spec.migrations:
@@ -982,8 +1121,15 @@ def apply_release_migrations(
         result = command_runner(command, command_env)
         if result.returncode != 0:
             raise ReleaseExecutionError("release migration transaction failed")
+        applied = True
 
-        instance_after_apply = inspect_instance(target.pinned_url)
+        try:
+            instance_after_apply = inspect_instance(target.pinned_url)
+        except Exception as exc:
+            inspection_error = _instance_inspection_error(exc, applied=True)
+            if inspection_error is exc:
+                raise
+            raise inspection_error from exc
         _assert_instance_fingerprint(
             str(validated_backup["instance_fingerprint"]),
             instance_after_apply,
@@ -998,7 +1144,13 @@ def apply_release_migrations(
             postflight_error = exc
             postflight = {"status": "failed", "error": type(exc).__name__}
 
-        instance_after_postflight = inspect_instance(target.pinned_url)
+        try:
+            instance_after_postflight = inspect_instance(target.pinned_url)
+        except Exception as exc:
+            inspection_error = _instance_inspection_error(exc, applied=True)
+            if inspection_error is exc:
+                raise
+            raise inspection_error from exc
         _assert_instance_fingerprint(
             str(validated_backup["instance_fingerprint"]),
             instance_after_postflight,
@@ -1009,8 +1161,22 @@ def apply_release_migrations(
             raise ReleasePostflightError(postflight) from postflight_error
         if postflight.get("status") != "passed":
             raise ReleasePostflightError(postflight)
-    finally:
+    except Exception as exc:
+        primary_error = _normalize_apply_error(exc, applied=applied)
+    try:
         shutil.rmtree(snapshot_dir)
+    except Exception as exc:
+        cleanup_error = exc
+
+    if primary_error is not None:
+        if cleanup_error is not None:
+            primary_error = _attach_cleanup_failure(primary_error, cleanup_error)
+        raise primary_error
+    if cleanup_error is not None:
+        raise ReleaseCleanupError(
+            applied=applied,
+            detail=_exception_detail(cleanup_error),
+        ) from cleanup_error
     return {
         "status": "passed",
         "phase": "apply",

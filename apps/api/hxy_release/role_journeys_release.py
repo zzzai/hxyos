@@ -18,9 +18,11 @@ from .guarded_migration import (
     InspectionRunner,
     MigrationLoader,
     MigrationReleaseSpec,
+    ReleaseAppliedError,
     ReleaseAuthorizationError,
     ReleaseBackupError,
     ReleaseBoundaryError,
+    ReleaseCleanupError,
     ReleaseExecutionError,
     ReleaseInstanceError,
     ReleasePostflightError,
@@ -1277,6 +1279,8 @@ def main(argv: list[str] | None = None) -> int:
             "applied": exc.applied,
             "postflight": exc.postflight,
         }
+        if exc.cleanup_failed is not None:
+            result["cleanup_failed"] = exc.cleanup_failed
     except ReleaseInstanceError as exc:
         result = {
             "status": "failed",
@@ -1287,8 +1291,28 @@ def main(argv: list[str] | None = None) -> int:
             "error": str(exc),
             "applied": exc.applied,
         }
-        if exc.applied:
+        if exc.error_code:
+            result["error_code"] = exc.error_code
+        elif exc.applied:
             result["error_code"] = "instance_changed_after_apply"
+        if exc.detail is not None:
+            result["detail"] = exc.detail
+        if exc.cleanup_failed is not None:
+            result["cleanup_failed"] = exc.cleanup_failed
+    except (ReleaseAppliedError, ReleaseCleanupError) as exc:
+        result = {
+            "status": "failed",
+            "phase": args.command,
+            "error_type": (
+                "ReleaseExecutionError" if exc.applied else type(exc).__name__
+            ),
+            "error_code": exc.error_code,
+            "error": str(exc),
+            "applied": exc.applied,
+            "detail": exc.detail,
+        }
+        if exc.cleanup_failed is not None:
+            result["cleanup_failed"] = exc.cleanup_failed
     except (
         ReleaseAuthorizationError,
         ReleaseBackupError,
@@ -1303,5 +1327,13 @@ def main(argv: list[str] | None = None) -> int:
             "error_type": type(exc).__name__,
             "error": str(exc),
         }
+        if hasattr(exc, "applied"):
+            result["applied"] = bool(exc.applied)
+        if getattr(exc, "error_code", None):
+            result["error_code"] = exc.error_code
+        if getattr(exc, "detail", None) is not None:
+            result["detail"] = exc.detail
+        if getattr(exc, "cleanup_failed", None) is not None:
+            result["cleanup_failed"] = exc.cleanup_failed
     print(render_result(result, sensitive_values=_database_sensitive_values(database_url)))
     return 0 if result["status"] == "passed" else 2

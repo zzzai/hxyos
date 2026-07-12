@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+import psycopg
 from psycopg.conninfo import conninfo_to_dict
 
 from apps.api.hxy_release import guarded_migration
@@ -1550,6 +1551,193 @@ def test_apply_reports_committed_state_when_postflight_fails(
     assert error.postflight["status"] == "failed"
     assert len(error.postflight["checks"]) == 100
     assert len(error.postflight["checks"][0]["detail"]) == 500
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        guarded_migration.ReleaseInstanceError("identity lookup failed"),
+        psycopg.OperationalError("postgres connection failed"),
+        OSError("socket lookup failed"),
+    ],
+)
+def test_apply_promotes_direct_post_commit_instance_errors(
+    release_root: Path,
+    tmp_path: Path,
+    failure: Exception,
+) -> None:
+    backup, _backup_runner = make_backup(release_root, tmp_path)
+    calls = 0
+
+    def inspect(_database_url: str) -> dict[str, str]:
+        nonlocal calls
+        calls += 1
+        if calls <= 2:
+            return dict(INSTANCE_A)
+        raise failure
+
+    with pytest.raises(ReleaseExecutionError) as raised:
+        apply_release_migrations(
+            SPEC,
+            release_root,
+            DATABASE_URL,
+            manifest_path=Path(str(backup["manifest_path"])),
+            confirmation=SPEC.confirmation,
+            runner=RecordingRunner(),
+            now=NOW,
+            git_commit=GIT_COMMIT,
+            trusted_root=release_root,
+            postflight_inspector=passed_inspector,
+            instance_inspector=inspect,
+        )
+
+    assert raised.value.applied is True
+    assert raised.value.error_code == "instance_check_failed_after_apply"
+
+
+def test_apply_marks_postflight_inspector_exception_as_applied(
+    release_root: Path,
+    tmp_path: Path,
+) -> None:
+    backup, _backup_runner = make_backup(release_root, tmp_path)
+
+    with pytest.raises(ReleasePostflightError) as raised:
+        apply_release_migrations(
+            SPEC,
+            release_root,
+            DATABASE_URL,
+            manifest_path=Path(str(backup["manifest_path"])),
+            confirmation=SPEC.confirmation,
+            runner=RecordingRunner(),
+            now=NOW,
+            git_commit=GIT_COMMIT,
+            trusted_root=release_root,
+            postflight_inspector=lambda _root, _dsn: (_ for _ in ()).throw(
+                OSError("postflight socket failed")
+            ),
+        )
+
+    assert raised.value.applied is True
+    assert raised.value.error_code == "postflight_failed_after_apply"
+
+
+def test_apply_marks_cleanup_only_failure_after_commit(
+    release_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backup, _backup_runner = make_backup(release_root, tmp_path)
+    monkeypatch.setattr(
+        guarded_migration.shutil,
+        "rmtree",
+        lambda _path: (_ for _ in ()).throw(OSError("c" * 2000)),
+    )
+
+    with pytest.raises(ReleaseExecutionError) as raised:
+        apply_release_migrations(
+            SPEC,
+            release_root,
+            DATABASE_URL,
+            manifest_path=Path(str(backup["manifest_path"])),
+            confirmation=SPEC.confirmation,
+            runner=RecordingRunner(),
+            now=NOW,
+            git_commit=GIT_COMMIT,
+            trusted_root=release_root,
+            postflight_inspector=passed_inspector,
+        )
+
+    assert raised.value.applied is True
+    assert raised.value.error_code == "cleanup_failed_after_apply"
+    assert len(raised.value.detail["error"]) == 500
+
+
+def test_cleanup_failure_does_not_replace_postflight_primary_error(
+    release_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backup, _backup_runner = make_backup(release_root, tmp_path)
+    monkeypatch.setattr(
+        guarded_migration.shutil,
+        "rmtree",
+        lambda _path: (_ for _ in ()).throw(OSError("c" * 2000)),
+    )
+
+    with pytest.raises(ReleasePostflightError) as raised:
+        apply_release_migrations(
+            SPEC,
+            release_root,
+            DATABASE_URL,
+            manifest_path=Path(str(backup["manifest_path"])),
+            confirmation=SPEC.confirmation,
+            runner=RecordingRunner(),
+            now=NOW,
+            git_commit=GIT_COMMIT,
+            trusted_root=release_root,
+            postflight_inspector=lambda _root, _dsn: {"status": "failed"},
+        )
+
+    assert raised.value.error_code == "postflight_failed_after_apply"
+    assert raised.value.cleanup_failed["error_type"] == "OSError"
+    assert len(raised.value.cleanup_failed["error"]) == 500
+
+
+def test_cleanup_failure_does_not_promote_precommit_transaction_failure(
+    release_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backup, _backup_runner = make_backup(release_root, tmp_path)
+    monkeypatch.setattr(
+        guarded_migration.shutil,
+        "rmtree",
+        lambda _path: (_ for _ in ()).throw(OSError("cleanup failed")),
+    )
+
+    with pytest.raises(ReleaseExecutionError, match="transaction") as raised:
+        apply_release_migrations(
+            SPEC,
+            release_root,
+            DATABASE_URL,
+            manifest_path=Path(str(backup["manifest_path"])),
+            confirmation=SPEC.confirmation,
+            runner=RecordingRunner(psql_returncode=1),
+            now=NOW,
+            git_commit=GIT_COMMIT,
+            trusted_root=release_root,
+            postflight_inspector=passed_inspector,
+        )
+
+    assert raised.value.applied is False
+    assert raised.value.cleanup_failed["error_type"] == "OSError"
+
+
+def test_precommit_instance_inspector_exception_is_applied_false(
+    release_root: Path,
+    tmp_path: Path,
+) -> None:
+    backup, _backup_runner = make_backup(release_root, tmp_path)
+
+    with pytest.raises(ReleaseExecutionError) as raised:
+        apply_release_migrations(
+            SPEC,
+            release_root,
+            DATABASE_URL,
+            manifest_path=Path(str(backup["manifest_path"])),
+            confirmation=SPEC.confirmation,
+            runner=RecordingRunner(),
+            now=NOW,
+            git_commit=GIT_COMMIT,
+            trusted_root=release_root,
+            postflight_inspector=passed_inspector,
+            instance_inspector=lambda _dsn: (_ for _ in ()).throw(
+                OSError("identity unavailable")
+            ),
+        )
+
+    assert raised.value.applied is False
+    assert raised.value.error_code == "instance_check_failed_before_apply"
 
 
 def test_render_result_redacts_full_dsn_and_password() -> None:

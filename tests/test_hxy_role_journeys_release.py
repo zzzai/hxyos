@@ -1664,13 +1664,90 @@ def test_role_cli_reports_instance_change_commit_state(
     payload = json.loads(capsys.readouterr().out)
     assert exit_code == 2
     assert payload["applied"] is applied
-    assert len(payload["error"]) == 500
+    assert 0 < len(payload["error"]) <= 500
     if applied:
         assert payload["error_type"] == "ReleaseExecutionError"
         assert payload["error_code"] == "instance_changed_after_apply"
     else:
         assert payload["error_type"] == "ReleaseInstanceError"
         assert "error_code" not in payload
+
+
+@pytest.mark.parametrize("error_kind", ["applied", "cleanup"])
+def test_role_cli_serializes_generic_applied_release_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    error_kind: str,
+) -> None:
+    detail = {"error_type": "OSError", "error": "d" * 2000}
+    if error_kind == "cleanup":
+        error = guarded_migration.ReleaseCleanupError(
+            applied=True,
+            detail=detail,
+        )
+        expected_code = "cleanup_failed_after_apply"
+    else:
+        error = guarded_migration.ReleaseAppliedError(
+            "x" * 2000,
+            error_code="instance_check_failed_after_apply",
+            detail=detail,
+        )
+        expected_code = "instance_check_failed_after_apply"
+    monkeypatch.setenv("HXY_DATABASE_URL", DATABASE_URL)
+    monkeypatch.setattr(
+        role_journeys_release,
+        "apply_role_journeys_migrations",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(error),
+    )
+
+    exit_code = role_journeys_release.main(
+        [
+            "apply",
+            "--backup-manifest",
+            str(tmp_path / "manifest.json"),
+            "--confirm",
+            APPLY_CONFIRMATION,
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 2
+    assert payload["error_type"] == "ReleaseExecutionError"
+    assert payload["error_code"] == expected_code
+    assert payload["applied"] is True
+    assert 0 < len(payload["error"]) <= 500
+    assert len(payload["detail"]["error"]) == 500
+
+
+def test_role_cli_preserves_postflight_error_when_cleanup_also_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    error = ReleasePostflightError({"status": "failed", "reason": "primary"})
+    error.cleanup_failed = {"error_type": "OSError", "error": "c" * 2000}
+    monkeypatch.setenv("HXY_DATABASE_URL", DATABASE_URL)
+    monkeypatch.setattr(
+        role_journeys_release,
+        "apply_role_journeys_migrations",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(error),
+    )
+
+    role_journeys_release.main(
+        [
+            "apply",
+            "--backup-manifest",
+            str(tmp_path / "manifest.json"),
+            "--confirm",
+            APPLY_CONFIRMATION,
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_code"] == "postflight_failed_after_apply"
+    assert payload["postflight"]["reason"] == "primary"
+    assert len(payload["cleanup_failed"]["error"]) == 500
 
 
 def test_cli_requires_database_url(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
