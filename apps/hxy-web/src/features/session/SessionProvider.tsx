@@ -80,7 +80,9 @@ function takeInviteFromFragment(): InviteFragment {
 
   try {
     const token = decodeURIComponent(rawFragment.slice("invite=".length));
-    return token.length > 0 && /^[A-Za-z0-9._~-]+$/.test(token)
+    return token.length >= 43 &&
+      token.length <= 256 &&
+      /^[A-Za-z0-9._~-]+$/.test(token)
       ? { kind: "valid", token }
       : { kind: "invalid" };
   } catch {

@@ -28,7 +28,7 @@ const TEST_SESSION: MeResponse = {
   available_assignments: [],
 };
 const SESSION_GRANT = "g".repeat(64);
-const INVITE_TOKEN = "invite-token-that-must-remain-confidential";
+const INVITE_TOKEN = "invite-token-that-must-remain-confidentialx";
 const INVITED_SESSION: MeResponse = {
   ...TEST_SESSION,
   active_assignment: {
@@ -356,6 +356,58 @@ describe("SessionProvider", () => {
     expect(consoleLog).not.toHaveBeenCalled();
     expect(consoleWarn).not.toHaveBeenCalled();
   });
+
+  it.each([42, 257])(
+    "rejects a URL-safe invite token with length %i before exchange",
+    async (length) => {
+      const token = "a".repeat(length);
+      window.history.replaceState({}, "", `/#invite=${token}`);
+      const inviteExchanger = vi.fn<SessionInviteExchanger>();
+      const loader = vi.fn<SessionLoader>(async () => TEST_SESSION);
+
+      render(
+        <SessionProvider loader={loader} inviteExchanger={inviteExchanger}>
+          <SessionProbe />
+        </SessionProvider>,
+      );
+
+      await waitFor(() =>
+        expect(screen.getByTestId("session-status")).toHaveTextContent(
+          "unauthorized",
+        ),
+      );
+      expect(inviteExchanger).not.toHaveBeenCalled();
+      expect(loader).not.toHaveBeenCalled();
+      expect(window.location.hash).toBe("");
+      expect(document.body).not.toHaveTextContent(token);
+    },
+  );
+
+  it.each([43, 256])(
+    "accepts and exchanges a URL-safe invite token with length %i",
+    async (length) => {
+      const token = "a".repeat(length);
+      window.history.replaceState({}, "", `/#invite=${token}`);
+      const inviteExchanger = vi.fn<SessionInviteExchanger>(async () => undefined);
+      const loader = vi.fn<SessionLoader>(async () => INVITED_SESSION);
+
+      render(
+        <SessionProvider loader={loader} inviteExchanger={inviteExchanger}>
+          <SessionProbe />
+        </SessionProvider>,
+      );
+
+      await waitFor(() =>
+        expect(screen.getByTestId("session-status")).toHaveTextContent(
+          "authenticated",
+        ),
+      );
+      expect(inviteExchanger).toHaveBeenCalledOnce();
+      expect(inviteExchanger).toHaveBeenCalledWith(token);
+      expect(loader).toHaveBeenCalledOnce();
+      expect(window.location.hash).toBe("");
+    },
+  );
 
   it.each([
     ["an empty", "#invite="],
