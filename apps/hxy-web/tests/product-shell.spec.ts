@@ -1,4 +1,6 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
+
+const APP_ORIGIN = "http://127.0.0.1:4173";
 
 const TEST_SESSION = {
   user: { account_id: "account-e2e", display_name: "测试店员" },
@@ -383,6 +385,273 @@ async function mockRoleJourneyApi(
   };
 }
 
+type GovernedRole = "founder" | "store_manager" | "store_employee";
+
+const GOVERNED_STORE_ID = "store-governed";
+const CREATED_STORE_ID = "store-created";
+const GOVERNED_INVITE_TOKEN = "invite_token-" + "a".repeat(48);
+const GOVERNED_ONE_TIME_LINK = `${APP_ORIGIN}/#invite=${"manager_token-" + "b".repeat(48)}`;
+const LONG_MANAGER_NAME = `店长${"非常长的连续姓名".repeat(8)}`;
+const LONG_STORE_NAME = `荷小悦${"非常长的连续门店名称".repeat(8)}`;
+const LONG_EMPLOYEE_NAME = `员工${"非常长的连续姓名".repeat(8)}`;
+
+function governedSession(role: GovernedRole) {
+  const isFounder = role === "founder";
+  const isManager = role === "store_manager";
+  return {
+    user: {
+      account_id: `account-${role}`,
+      display_name: isManager ? LONG_MANAGER_NAME : `测试${isFounder ? "创始人" : "员工"}`,
+    },
+    active_assignment: {
+      assignment_id: `assignment-${role}`,
+      organization: { id: "organization-governed", name: "荷小悦" },
+      store: isFounder
+        ? null
+        : {
+            id: GOVERNED_STORE_ID,
+            name: isManager ? LONG_STORE_NAME : "荷小悦首店",
+          },
+      role,
+      role_label: isFounder ? "创始人" : isManager ? "店长" : "门店员工",
+      capabilities: ["conversation:use", "materials:read", "tasks:read"],
+    },
+    available_assignments: [],
+  };
+}
+
+async function mockGovernedOnboardingApi(
+  page: Page,
+  role: GovernedRole,
+  options: { requireInviteRedemption?: boolean } = {},
+) {
+  const session = governedSession(role);
+  const stores = [
+    {
+      id: GOVERNED_STORE_ID,
+      name: role === "store_manager" ? LONG_STORE_NAME : "荷小悦首店",
+      city: "长沙",
+      address: "芙蓉路 1 号",
+      status: "active",
+    },
+  ];
+  const members = role === "store_manager"
+    ? [
+        {
+          assignment_id: "assignment-store_manager",
+          store_id: GOVERNED_STORE_ID,
+          display_name: LONG_MANAGER_NAME,
+          role: "store_manager",
+          status: "active",
+        },
+        {
+          assignment_id: "assignment-existing-employee",
+          store_id: GOVERNED_STORE_ID,
+          display_name: LONG_EMPLOYEE_NAME,
+          role: "store_employee",
+          status: "active",
+        },
+      ]
+    : [
+        {
+          assignment_id: "assignment-existing-manager",
+          store_id: GOVERNED_STORE_ID,
+          display_name: "首店店长",
+          role: "store_manager",
+          status: "active",
+        },
+      ];
+  const invites: Array<{
+    id: string;
+    store_id: string;
+    role: "store_manager" | "store_employee";
+    display_name: string;
+    status: "pending" | "redeemed" | "revoked";
+    expires_at: string;
+  }> = [];
+  const state = {
+    stores,
+    members,
+    invites,
+    storeBodies: [] as Array<Record<string, unknown>>,
+    inviteBodies: [] as Array<Record<string, unknown>>,
+    redeemBodies: [] as Array<Record<string, unknown>>,
+    redeemHashes: [] as string[],
+    organizationRequests: [] as string[],
+    postOrigins: [] as Array<string | undefined>,
+    redeemed: !options.requireInviteRedemption,
+  };
+
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const method = request.method();
+    const path = new URL(request.url()).pathname;
+    if (method === "POST") {
+      state.postOrigins.push(request.headers().origin);
+    }
+    if (path.startsWith("/api/v1/organization/")) {
+      state.organizationRequests.push(`${method} ${path}`);
+    }
+
+    if (path === "/api/v1/me" && method === "GET") {
+      await route.fulfill(
+        state.redeemed
+          ? { status: 200, json: session }
+          : { status: 401, json: { detail: "Unauthorized" } },
+      );
+      return;
+    }
+    if (path === "/api/v1/conversations" && method === "GET") {
+      await route.fulfill({ status: 200, json: { items: [], count: 0 } });
+      return;
+    }
+    if (path === "/api/v1/journeys/suggestions" && method === "GET") {
+      await route.fulfill({ status: 200, json: { items: [] } });
+      return;
+    }
+    if (path === "/api/v1/organization/stores" && method === "GET") {
+      await route.fulfill({ status: 200, json: state.stores });
+      return;
+    }
+    if (path === "/api/v1/organization/stores" && method === "POST") {
+      const body = request.postDataJSON() as Record<string, unknown>;
+      state.storeBodies.push(body);
+      const store = { id: CREATED_STORE_ID, ...body, status: "active" };
+      state.stores.push(store as (typeof state.stores)[number]);
+      await route.fulfill({ status: 201, json: store });
+      return;
+    }
+    if (path === "/api/v1/organization/members" && method === "GET") {
+      await route.fulfill({ status: 200, json: state.members });
+      return;
+    }
+    if (path === "/api/v1/organization/invites" && method === "GET") {
+      await route.fulfill({ status: 200, json: state.invites });
+      return;
+    }
+    if (path === "/api/v1/organization/invites" && method === "POST") {
+      const body = request.postDataJSON() as Record<string, unknown>;
+      state.inviteBodies.push(body);
+      const invite = {
+        id: `invite-${state.invites.length + 1}`,
+        store_id: typeof body.store_id === "string" ? body.store_id : GOVERNED_STORE_ID,
+        role: body.role as "store_manager" | "store_employee",
+        display_name: body.display_name as string,
+        status: "pending" as const,
+        expires_at: "2026-07-15T10:00:00Z",
+      };
+      state.invites.push(invite);
+      await route.fulfill({
+        status: 201,
+        json: {
+          invite: {
+            id: invite.id,
+            role: invite.role,
+            display_name: invite.display_name,
+            expires_at: invite.expires_at,
+          },
+          one_time_link: GOVERNED_ONE_TIME_LINK,
+        },
+      });
+      return;
+    }
+    const revokeMatch = /^\/api\/v1\/organization\/invites\/([^/]+)\/revoke$/.exec(path);
+    if (revokeMatch && method === "POST") {
+      const invite = state.invites.find((candidate) => candidate.id === revokeMatch[1]);
+      if (!invite) {
+        await route.fulfill({ status: 404, json: { detail: "Not found" } });
+        return;
+      }
+      invite.status = "revoked";
+      await route.fulfill({ status: 200, json: invite });
+      return;
+    }
+    if (path === "/api/v1/onboarding/invites/redeem" && method === "POST") {
+      state.redeemBodies.push(request.postDataJSON() as Record<string, unknown>);
+      state.redeemHashes.push(new URL(request.frame().url()).hash);
+      state.redeemed = true;
+      await route.fulfill({ status: 200, json: { status: "authenticated" } });
+      return;
+    }
+    if (path === "/api/v1/auth/logout" && method === "POST") {
+      await route.fulfill({ status: 204, body: "" });
+      return;
+    }
+    await route.fulfill({ status: 404, json: { detail: "Unhandled E2E route" } });
+  });
+
+  return state;
+}
+
+async function expectWithinViewport(page: Page, locator: Locator) {
+  await expect(locator).toBeVisible();
+  const box = await locator.boundingBox();
+  const viewport = page.viewportSize();
+  expect(box).not.toBeNull();
+  expect(viewport).not.toBeNull();
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(viewport!.width);
+}
+
+async function expectNoHorizontalOverflow(page: Page) {
+  const widths = await page.evaluate(() => ({
+    viewport: window.innerWidth,
+    document: document.documentElement.scrollWidth,
+  }));
+  expect(widths.document).toBeLessThanOrEqual(widths.viewport);
+}
+
+async function expectTextContained(locator: Locator) {
+  const containment = await locator.evaluate((element) => {
+    const parent = element.parentElement;
+    if (!parent) return null;
+    const childRect = element.getBoundingClientRect();
+    const parentRect = parent.getBoundingClientRect();
+    return {
+      childLeft: childRect.left,
+      childRight: childRect.right,
+      parentLeft: parentRect.left,
+      parentRight: parentRect.right,
+      parentClientWidth: parent.clientWidth,
+      parentScrollWidth: parent.scrollWidth,
+    };
+  });
+  expect(containment).not.toBeNull();
+  expect(containment!.childLeft).toBeGreaterThanOrEqual(containment!.parentLeft);
+  expect(containment!.childRight).toBeLessThanOrEqual(containment!.parentRight);
+  expect(containment!.parentScrollWidth).toBeLessThanOrEqual(
+    containment!.parentClientWidth,
+  );
+}
+
+async function expectAboveMobileNavigation(page: Page, locator: Locator) {
+  await locator.scrollIntoViewIfNeeded();
+  const box = await locator.boundingBox();
+  const navigationBox = await page
+    .getByRole("navigation", { name: "主要导航" })
+    .boundingBox();
+  expect(box).not.toBeNull();
+  expect(navigationBox).not.toBeNull();
+  expect(box!.y + box!.height).toBeLessThanOrEqual(navigationBox!.y);
+}
+
+async function expectMobileOrganizationTouchTargets(page: Page) {
+  const undersized = await page
+    .locator(
+      ".organization-panel button, .organization-panel input, .organization-panel select, .organization-dialog button",
+    )
+    .evaluateAll((elements) =>
+      elements.flatMap((element) => {
+        const rect = element.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) return [];
+        return rect.width >= 44 && rect.height >= 44
+          ? []
+          : [{ label: element.getAttribute("aria-label") ?? element.textContent, width: rect.width, height: rect.height }];
+      }),
+    );
+  expect(undersized).toEqual([]);
+}
+
 test.describe("HXYOS product shell viewport contract", () => {
   test("centers the empty composer and docks it after the first message", async ({
     page,
@@ -639,5 +908,249 @@ test.describe("HXYOS product shell viewport contract", () => {
     expect(navigationBox).not.toBeNull();
     expect(taskBox!.y + taskBox!.height).toBeLessThan(navigationBox!.y);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  });
+});
+
+test.describe("HXYOS governed onboarding", () => {
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 390, height: 844 },
+  ]) {
+    test(`founder creates a store and issues one transient manager link at ${viewport.width}x${viewport.height}`, async ({
+      page,
+      context,
+    }) => {
+      const state = await mockGovernedOnboardingApi(page, "founder");
+      await context.grantPermissions(["clipboard-read", "clipboard-write"], {
+        origin: APP_ORIGIN,
+      });
+      await page.setViewportSize(viewport);
+      await page.goto("/");
+      await page.getByRole("button", { name: "我的" }).click();
+
+      const profile = page.locator(".organization-panel");
+      await expect(page.getByRole("heading", { name: "测试创始人" })).toBeVisible();
+      await expectWithinViewport(page, page.locator(".stage-header"));
+      await expectWithinViewport(page, profile);
+      await expectNoHorizontalOverflow(page);
+
+      await page.getByRole("button", { name: "新建门店" }).click();
+      const storeForm = page.locator(".organization-form");
+      await expectWithinViewport(page, storeForm);
+      await page.getByRole("textbox", { name: "门店名称" }).fill("荷小悦岳麓店");
+      await page.getByRole("textbox", { name: "城市" }).fill("长沙");
+      await page.getByRole("textbox", { name: "地址" }).fill("麓谷大道 88 号");
+      const createStore = page.getByRole("button", { name: "创建门店" });
+      if (viewport.width === 390) {
+        await expectAboveMobileNavigation(page, createStore);
+        await expectMobileOrganizationTouchTargets(page);
+      }
+      await createStore.click();
+      await expect(page.getByText("荷小悦岳麓店", { exact: true })).toBeVisible();
+      expect(state.storeBodies).toEqual([
+        { name: "荷小悦岳麓店", city: "长沙", address: "麓谷大道 88 号" },
+      ]);
+
+      await page.getByRole("button", { name: "邀请店长" }).click();
+      const inviteForm = page.locator(".organization-invite-form");
+      await expectWithinViewport(page, inviteForm);
+      await page
+        .getByRole("combobox", { name: "邀请门店" })
+        .selectOption(CREATED_STORE_ID);
+      await page.getByRole("textbox", { name: "成员姓名" }).fill("岳麓店长");
+      const createInvite = page.getByRole("button", { name: "生成邀请" });
+      if (viewport.width === 390) {
+        await expectAboveMobileNavigation(page, createInvite);
+      }
+      await createInvite.click();
+
+      expect(state.inviteBodies).toEqual([
+        {
+          role: "store_manager",
+          display_name: "岳麓店长",
+          store_id: CREATED_STORE_ID,
+        },
+      ]);
+      expect(state.postOrigins).toEqual([APP_ORIGIN, APP_ORIGIN]);
+      const oneTimeResult = page.getByRole("status", { name: "一次性邀请链接" });
+      await expect(oneTimeResult).toHaveCount(1);
+      await expect(oneTimeResult).toContainText(GOVERNED_ONE_TIME_LINK);
+      await expect(page.getByText(GOVERNED_ONE_TIME_LINK, { exact: true })).toHaveCount(1);
+      await expectWithinViewport(page, oneTimeResult);
+      const copyButton = page.getByRole("button", { name: "复制一次性邀请链接" });
+      await copyButton.click({ trial: true });
+      await copyButton.click();
+      await expect(oneTimeResult).toContainText("已复制");
+
+      await page.getByRole("button", { name: "关闭一次性邀请链接" }).click();
+      await expect(oneTimeResult).toHaveCount(0);
+      await expect(page.getByText(GOVERNED_ONE_TIME_LINK, { exact: true })).toHaveCount(0);
+      await page.getByRole("button", { name: "邀请店长" }).click();
+      await expect(page.getByText(GOVERNED_ONE_TIME_LINK, { exact: true })).toHaveCount(0);
+      await page.getByRole("button", { name: "取消" }).click();
+      await page.getByRole("button", { name: "停用首店店长" }).click();
+      const dialog = page.getByRole("dialog", { name: "停用成员" });
+      await expectWithinViewport(page, dialog);
+      await dialog.getByRole("button", { name: "取消" }).click({ trial: true });
+      if (viewport.width === 390) {
+        await expectMobileOrganizationTouchTargets(page);
+      }
+      await dialog.getByRole("button", { name: "取消" }).click();
+      if (viewport.width === 390) {
+        await expectAboveMobileNavigation(
+          page,
+          page.getByRole("button", { name: "退出登录" }),
+        );
+        await expectMobileOrganizationTouchTargets(page);
+      }
+      await expectNoHorizontalOverflow(page);
+    });
+  }
+
+  test("manager manages only own-store employee invitations on mobile", async ({
+    page,
+  }) => {
+    const state = await mockGovernedOnboardingApi(page, "store_manager");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/");
+    await page.getByRole("button", { name: "我的" }).click();
+
+    const identity = page.getByRole("region", { name: LONG_MANAGER_NAME });
+    const identityStoreName = identity.getByText(LONG_STORE_NAME, { exact: true });
+    await expect(page.getByRole("heading", { name: LONG_MANAGER_NAME })).toBeVisible();
+    await expect(identityStoreName).toBeVisible();
+    await expect(page.getByText(LONG_EMPLOYEE_NAME, { exact: true })).toBeVisible();
+    await expectTextContained(page.getByRole("heading", { name: LONG_MANAGER_NAME }));
+    await expectTextContained(identityStoreName);
+    await expectTextContained(page.getByText(LONG_EMPLOYEE_NAME, { exact: true }));
+    await expectWithinViewport(page, page.locator(".stage-header"));
+    await expectWithinViewport(page, page.locator(".organization-panel"));
+    await expectNoHorizontalOverflow(page);
+    expect(state.organizationRequests).not.toContain(
+      "GET /api/v1/organization/stores",
+    );
+
+    await page.getByRole("button", { name: "邀请员工" }).click();
+    const inviteForm = page.locator(".organization-invite-form");
+    await expectWithinViewport(page, inviteForm);
+    await page.getByRole("textbox", { name: "成员姓名" }).fill(LONG_EMPLOYEE_NAME);
+    const submit = page.getByRole("button", { name: "生成邀请" });
+    await expectAboveMobileNavigation(page, submit);
+    await expectMobileOrganizationTouchTargets(page);
+    await submit.click();
+
+    expect(state.inviteBodies).toEqual([
+      { role: "store_employee", display_name: LONG_EMPLOYEE_NAME },
+    ]);
+    expect(state.inviteBodies[0]).not.toHaveProperty("store_id");
+    expect(state.postOrigins).toEqual([APP_ORIGIN]);
+    await expect(
+      page.getByRole("button", { name: `撤销${LONG_EMPLOYEE_NAME}的邀请` }),
+    ).toBeVisible();
+    await expectTextContained(
+      page.locator(".organization-list-section").last().getByText(LONG_EMPLOYEE_NAME),
+    );
+
+    const dismissLink = page.getByRole("button", { name: "关闭一次性邀请链接" });
+    await dismissLink.click();
+    const revoke = page.getByRole("button", {
+      name: `撤销${LONG_EMPLOYEE_NAME}的邀请`,
+    });
+    await revoke.click();
+    let dialog = page.getByRole("dialog", { name: "撤销邀请" });
+    await expectWithinViewport(page, dialog);
+    await expectTextContained(dialog.getByText(`撤销 ${LONG_EMPLOYEE_NAME} 的邀请？`));
+    const cancel = dialog.getByRole("button", { name: "取消" });
+    await cancel.click({ trial: true });
+    await cancel.click();
+    await expect(dialog).toHaveCount(0);
+
+    await revoke.click();
+    dialog = page.getByRole("dialog", { name: "撤销邀请" });
+    const confirm = dialog.getByRole("button", { name: "继续撤销" });
+    await confirm.click({ trial: true });
+    await expectMobileOrganizationTouchTargets(page);
+    await confirm.click();
+    await expect(dialog).toHaveCount(0);
+    await expect(revoke).toHaveCount(0);
+    expect(state.invites).toHaveLength(1);
+    expect(state.invites[0].status).toBe("revoked");
+    expect(state.postOrigins).toEqual([APP_ORIGIN, APP_ORIGIN]);
+    expect(state.organizationRequests).not.toContain(
+      "GET /api/v1/organization/stores",
+    );
+    expect(
+      state.organizationRequests.every(
+        (request) =>
+          request.includes("/organization/members") ||
+          request.includes("/organization/invites"),
+      ),
+    ).toBe(true);
+    await expectAboveMobileNavigation(
+      page,
+      page.getByRole("button", { name: "退出登录" }),
+    );
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test("employee profile has identity and logout without organization requests", async ({
+    page,
+  }) => {
+    const state = await mockGovernedOnboardingApi(page, "store_employee");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/");
+    await page.getByRole("button", { name: "我的" }).click();
+
+    const identity = page.getByRole("region", { name: "测试员工" });
+    await expect(identity).toContainText("门店员工");
+    await expect(identity).toContainText("荷小悦首店");
+    await expect(page.getByRole("button", { name: "退出登录" })).toBeVisible();
+    await expect(page.getByText("门店与成员", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "新建门店" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "邀请店长" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "邀请员工" })).toHaveCount(0);
+    expect(state.organizationRequests).toEqual([]);
+    await expectWithinViewport(page, page.locator(".stage-header"));
+    await expectWithinViewport(page, page.locator(".organization-panel"));
+    await expectAboveMobileNavigation(
+      page,
+      page.getByRole("button", { name: "退出登录" }),
+    );
+    await expectMobileOrganizationTouchTargets(page);
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test("recipient redeems a scrubbed invite fragment before loading the role home", async ({
+    page,
+  }) => {
+    const state = await mockGovernedOnboardingApi(page, "store_employee", {
+      requireInviteRedemption: true,
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`/#invite=${GOVERNED_INVITE_TOKEN}`);
+
+    await expect(
+      page.getByRole("textbox", { name: "告诉 HXYOS 你要做什么" }),
+    ).toBeEnabled();
+    expect(GOVERNED_INVITE_TOKEN.length).toBeGreaterThanOrEqual(43);
+    expect(GOVERNED_INVITE_TOKEN).toMatch(/^[A-Za-z0-9._~-]+$/);
+    expect(state.redeemHashes).toEqual([""]);
+    expect(state.redeemBodies).toEqual([{ token: GOVERNED_INVITE_TOKEN }]);
+    expect(state.postOrigins).toEqual([APP_ORIGIN]);
+    expect(new URL(page.url()).hash).toBe("");
+    expect(page.url()).not.toContain(GOVERNED_INVITE_TOKEN);
+    await expect(page.getByText(GOVERNED_INVITE_TOKEN, { exact: true })).toHaveCount(0);
+    expect(await page.locator("body").textContent()).not.toContain(
+      GOVERNED_INVITE_TOKEN,
+    );
+    const browserStorage = await page.evaluate(() => ({
+      local: JSON.stringify({ ...localStorage }),
+      session: JSON.stringify({ ...sessionStorage }),
+    }));
+    expect(browserStorage.local).not.toContain(GOVERNED_INVITE_TOKEN);
+    expect(browserStorage.session).not.toContain(GOVERNED_INVITE_TOKEN);
+    await expectWithinViewport(page, page.locator(".stage-header"));
+    await expectWithinViewport(page, page.getByTestId("composer"));
+    await expectNoHorizontalOverflow(page);
   });
 });
