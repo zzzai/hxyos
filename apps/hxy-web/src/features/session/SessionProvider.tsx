@@ -13,6 +13,7 @@ import {
   exchangeSessionGrant,
   loadMe,
   MeRequestError,
+  OnboardingRequestError,
   productOnboardingClient,
   type MeResponse,
 } from "../../api/client";
@@ -44,12 +45,19 @@ interface SessionProviderProps {
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null);
-const INVITE_REDEMPTION_FAILED = Symbol("invite-redemption-failed");
+const INVALID_INVITE_FRAGMENT = Symbol("invalid-invite-fragment");
+const TERMINAL_INVITE_REDEMPTION = Symbol("terminal-invite-redemption");
+const RECOVERABLE_INVITE_REDEMPTION = Symbol("recoverable-invite-redemption");
 
 type InviteFragment =
   | { kind: "absent" }
   | { kind: "invalid" }
   | { kind: "valid"; token: string };
+
+interface BootstrapAttempt {
+  attempt: number;
+  promise: Promise<void> | null;
+}
 
 function redeemSessionInvite(token: string): Promise<void> {
   return productOnboardingClient.redeemInvite(token).then(() => undefined);
@@ -128,31 +136,64 @@ export function SessionProvider({
       ? { status: "authenticated", session: initialSession }
       : { status: "loading", session: null },
   );
-  const bootstrapPromise = useRef<Promise<void> | null | undefined>(undefined);
+  const inviteFragmentRead = useRef(false);
+  const inviteFragmentPresent = useRef(false);
+  const invalidInvitePending = useRef(false);
+  const inviteToken = useRef<string | null>(null);
+  const bootstrapAttempt = useRef<BootstrapAttempt | null>(null);
 
   useEffect(() => {
-    if (initialSession) return;
+    if (!inviteFragmentRead.current) {
+      inviteFragmentRead.current = true;
+      const invite = takeInviteFromFragment();
+      if (invite.kind === "valid") {
+        inviteFragmentPresent.current = true;
+        inviteToken.current = invite.token;
+      } else if (invite.kind === "invalid") {
+        inviteFragmentPresent.current = true;
+        invalidInvitePending.current = true;
+      }
+    }
+
+    if (initialSession && !inviteFragmentPresent.current) return;
 
     let active = true;
     setState({ status: "loading", session: null });
-    if (bootstrapPromise.current === undefined) {
-      const invite = takeInviteFromFragment();
-      if (invite.kind === "valid") {
-        bootstrapPromise.current = Promise.resolve()
-          .then(() => inviteExchanger(invite.token))
-          .catch(() => {
-            throw INVITE_REDEMPTION_FAILED;
-          });
-      } else if (invite.kind === "invalid") {
-        bootstrapPromise.current = Promise.reject(INVITE_REDEMPTION_FAILED);
+    if (bootstrapAttempt.current?.attempt !== attempt) {
+      let promise: Promise<void> | null;
+      if (inviteToken.current !== null) {
+        promise = Promise.resolve()
+          .then(() => {
+            const token = inviteToken.current;
+            if (token === null) throw RECOVERABLE_INVITE_REDEMPTION;
+            return inviteExchanger(token);
+          })
+          .then(
+            () => {
+              inviteToken.current = null;
+            },
+            (error: unknown) => {
+              if (
+                error instanceof OnboardingRequestError &&
+                (error.status === 401 || error.status === 422)
+              ) {
+                inviteToken.current = null;
+                throw TERMINAL_INVITE_REDEMPTION;
+              }
+              throw RECOVERABLE_INVITE_REDEMPTION;
+            },
+          );
+      } else if (invalidInvitePending.current) {
+        invalidInvitePending.current = false;
+        promise = Promise.reject(INVALID_INVITE_FRAGMENT);
       } else {
         const grant = takeSessionGrantFromFragment();
-        bootstrapPromise.current = grant ? grantExchanger(grant) : null;
+        promise = grant ? grantExchanger(grant) : null;
       }
+      bootstrapAttempt.current = { attempt, promise };
     }
-    const sessionRequest = bootstrapPromise.current
-      ? bootstrapPromise.current.then(() => {
-          bootstrapPromise.current = null;
+    const sessionRequest = bootstrapAttempt.current.promise
+      ? bootstrapAttempt.current.promise.then(() => {
           return active ? loader() : null;
         })
       : loader();
@@ -162,10 +203,10 @@ export function SessionProvider({
       },
       (error: unknown) => {
         if (!active) return;
-        bootstrapPromise.current = null;
         setState({
           status:
-            error === INVITE_REDEMPTION_FAILED ||
+            error === INVALID_INVITE_FRAGMENT ||
+            error === TERMINAL_INVITE_REDEMPTION ||
             (error instanceof MeRequestError && error.status === 401)
               ? "unauthorized"
               : "error",

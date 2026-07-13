@@ -3,7 +3,11 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { MeRequestError, type MeResponse } from "../../api/client";
+import {
+  MeRequestError,
+  OnboardingRequestError,
+  type MeResponse,
+} from "../../api/client";
 import {
   SessionProvider,
   useSession,
@@ -55,6 +59,27 @@ function SessionProbe() {
   );
 }
 
+function watchInviteLeakSinks() {
+  return {
+    localStorageWrite: vi.spyOn(window.localStorage, "setItem"),
+    sessionStorageWrite: vi.spyOn(window.sessionStorage, "setItem"),
+    consoleError: vi.spyOn(console, "error").mockImplementation(() => {}),
+    consoleLog: vi.spyOn(console, "log").mockImplementation(() => {}),
+    consoleWarn: vi.spyOn(console, "warn").mockImplementation(() => {}),
+  };
+}
+
+function expectInviteNotLeaked(
+  token: string,
+  sinks: ReturnType<typeof watchInviteLeakSinks>,
+) {
+  expect(window.location.href).not.toContain(token);
+  expect(document.body).not.toHaveTextContent(token);
+  for (const sink of Object.values(sinks)) {
+    expect(sink).not.toHaveBeenCalled();
+  }
+}
+
 afterEach(() => {
   window.history.replaceState({}, "", "/");
   vi.restoreAllMocks();
@@ -78,6 +103,65 @@ describe("SessionProvider", () => {
       "store_manager",
     );
     expect(loader).not.toHaveBeenCalled();
+  });
+
+  it("redeems a cleaned invite before replacing an injected initial session", async () => {
+    const order: string[] = [];
+    window.history.replaceState({}, "", `/#invite=${INVITE_TOKEN}`);
+    const inviteExchanger = vi.fn<SessionInviteExchanger>(async () => {
+      order.push("invite");
+    });
+    const loader = vi.fn<SessionLoader>(async () => {
+      order.push("me");
+      return INVITED_SESSION;
+    });
+
+    render(
+      <SessionProvider
+        initialSession={TEST_SESSION}
+        loader={loader}
+        inviteExchanger={inviteExchanger}
+      >
+        <SessionProbe />
+      </SessionProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("session-role")).toHaveTextContent(
+        "store_employee",
+      ),
+    );
+    expect(order).toEqual(["invite", "me"]);
+    expect(inviteExchanger).toHaveBeenCalledWith(INVITE_TOKEN);
+    expect(window.location.hash).toBe("");
+    expect(document.body).not.toHaveTextContent(INVITE_TOKEN);
+  });
+
+  it("cleans an invalid invite before rejecting an injected initial session", async () => {
+    const token = "a".repeat(42);
+    window.history.replaceState({}, "", `/#invite=${token}`);
+    const inviteExchanger = vi.fn<SessionInviteExchanger>();
+    const loader = vi.fn<SessionLoader>(async () => INVITED_SESSION);
+
+    render(
+      <SessionProvider
+        initialSession={TEST_SESSION}
+        loader={loader}
+        inviteExchanger={inviteExchanger}
+      >
+        <SessionProbe />
+      </SessionProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("session-status")).toHaveTextContent(
+        "unauthorized",
+      ),
+    );
+    expect(inviteExchanger).not.toHaveBeenCalled();
+    expect(loader).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe("");
+    expect(document.body).not.toHaveTextContent(token);
   });
 
   it("moves from loading to authenticated with an injected loader", async () => {
@@ -247,14 +331,111 @@ describe("SessionProvider", () => {
     expect(window.location.href).not.toContain(INVITE_TOKEN);
   });
 
-  it("maps every invite exchange failure to the existing unauthorized state", async () => {
-    window.history.replaceState({}, "", `/#invite=${INVITE_TOKEN}`);
-    const inviteExchanger = vi
-      .fn<SessionInviteExchanger>()
-      .mockRejectedValue(
-        new Error(`upstream leaked invite detail: ${INVITE_TOKEN}`),
+  it.each([401, 422])(
+    "discards a terminal invite after status %i and does not exchange on retry",
+    async (status) => {
+      const user = userEvent.setup();
+      const sinks = watchInviteLeakSinks();
+      window.history.replaceState({}, "", `/#invite=${INVITE_TOKEN}`);
+      const inviteExchanger = vi
+        .fn<SessionInviteExchanger>()
+        .mockRejectedValue(new OnboardingRequestError(status));
+      const loader = vi
+        .fn<SessionLoader>()
+        .mockRejectedValue(new MeRequestError(401, "Unauthorized"));
+
+      render(
+        <StrictMode>
+          <SessionProvider loader={loader} inviteExchanger={inviteExchanger}>
+            <SessionProbe />
+          </SessionProvider>
+        </StrictMode>,
       );
-    const loader = vi.fn<SessionLoader>(async () => TEST_SESSION);
+
+      await waitFor(() =>
+        expect(screen.getByTestId("session-status")).toHaveTextContent(
+          "unauthorized",
+        ),
+      );
+      expect(inviteExchanger).toHaveBeenCalledOnce();
+      expect(loader).not.toHaveBeenCalled();
+      expectInviteNotLeaked(INVITE_TOKEN, sinks);
+
+      await user.click(screen.getByRole("button", { name: "重试身份" }));
+
+      await waitFor(() => expect(loader).toHaveBeenCalledOnce());
+      expect(screen.getByTestId("session-status")).toHaveTextContent(
+        "unauthorized",
+      );
+      expect(inviteExchanger).toHaveBeenCalledOnce();
+      expectInviteNotLeaked(INVITE_TOKEN, sinks);
+    },
+  );
+
+  it.each([
+    ["transport", new OnboardingRequestError(0)],
+    ["server", new OnboardingRequestError(503)],
+    ["unknown", new Error(`operational invite failure ${INVITE_TOKEN}`)],
+  ])(
+    "retains a token across a recoverable %s failure and exchanges once on retry",
+    async (_case, failure) => {
+      const user = userEvent.setup();
+      const sinks = watchInviteLeakSinks();
+      const order: string[] = [];
+      let exchangeCount = 0;
+      window.history.replaceState({}, "", `/#invite=${INVITE_TOKEN}`);
+      const inviteExchanger = vi.fn<SessionInviteExchanger>(async () => {
+        exchangeCount += 1;
+        order.push(`invite-${exchangeCount}`);
+        if (exchangeCount === 1) throw failure;
+      });
+      const loader = vi.fn<SessionLoader>(async () => {
+        order.push("me");
+        return INVITED_SESSION;
+      });
+
+      render(
+        <StrictMode>
+          <SessionProvider loader={loader} inviteExchanger={inviteExchanger}>
+            <SessionProbe />
+          </SessionProvider>
+        </StrictMode>,
+      );
+
+      await waitFor(() =>
+        expect(screen.getByTestId("session-status")).toHaveTextContent("error"),
+      );
+      expect(inviteExchanger).toHaveBeenCalledOnce();
+      expect(loader).not.toHaveBeenCalled();
+      expectInviteNotLeaked(INVITE_TOKEN, sinks);
+
+      await user.click(screen.getByRole("button", { name: "重试身份" }));
+
+      await waitFor(() =>
+        expect(screen.getByTestId("session-status")).toHaveTextContent(
+          "authenticated",
+        ),
+      );
+      expect(inviteExchanger).toHaveBeenCalledTimes(2);
+      expect(inviteExchanger).toHaveBeenNthCalledWith(1, INVITE_TOKEN);
+      expect(inviteExchanger).toHaveBeenNthCalledWith(2, INVITE_TOKEN);
+      expect(loader).toHaveBeenCalledOnce();
+      expect(order).toEqual(["invite-1", "invite-2", "me"]);
+      expect(screen.getByTestId("session-role")).toHaveTextContent(
+        "store_employee",
+      );
+      expectInviteNotLeaked(INVITE_TOKEN, sinks);
+    },
+  );
+
+  it("clears a redeemed invite before retrying a failed me load", async () => {
+    const user = userEvent.setup();
+    window.history.replaceState({}, "", `/#invite=${INVITE_TOKEN}`);
+    const inviteExchanger = vi.fn<SessionInviteExchanger>(async () => undefined);
+    const loader = vi
+      .fn<SessionLoader>()
+      .mockRejectedValueOnce(new Error("me unavailable"))
+      .mockResolvedValueOnce(INVITED_SESSION);
 
     render(
       <SessionProvider loader={loader} inviteExchanger={inviteExchanger}>
@@ -263,15 +444,17 @@ describe("SessionProvider", () => {
     );
 
     await waitFor(() =>
+      expect(screen.getByTestId("session-status")).toHaveTextContent("error"),
+    );
+    await user.click(screen.getByRole("button", { name: "重试身份" }));
+
+    await waitFor(() =>
       expect(screen.getByTestId("session-status")).toHaveTextContent(
-        "unauthorized",
+        "authenticated",
       ),
     );
-    expect(screen.getByTestId("session-role")).toHaveTextContent("none");
-    expect(loader).not.toHaveBeenCalled();
-    expect(window.location.hash).toBe("");
-    expect(document.body).not.toHaveTextContent(INVITE_TOKEN);
-    expect(document.body).not.toHaveTextContent("upstream leaked invite detail");
+    expect(inviteExchanger).toHaveBeenCalledOnce();
+    expect(loader).toHaveBeenCalledTimes(2);
   });
 
   it("redeems an invite only once under StrictMode", async () => {
