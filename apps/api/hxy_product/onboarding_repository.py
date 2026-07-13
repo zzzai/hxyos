@@ -470,6 +470,17 @@ class OnboardingRepository:
                       AND creator_account.status = 'active'
                       AND organization.status = 'active'
                       AND store.status = 'active'
+                      AND (
+                        (
+                          creator.role = 'founder'
+                          AND invite.role = 'store_manager'
+                        )
+                        OR (
+                          creator.role = 'store_manager'
+                          AND creator.store_id = invite.store_id
+                          AND invite.role = 'store_employee'
+                        )
+                      )
                     FOR UPDATE OF invite, creator, creator_account, organization,
                                   organization_store, store
                     """,

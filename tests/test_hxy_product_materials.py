@@ -760,6 +760,31 @@ def test_nginx_material_limit_leaves_room_for_multipart_overhead() -> None:
     assert "client_max_body_size 11m;" in config
 
 
+def test_nginx_redeem_location_precedes_general_api_with_tight_body_limit() -> None:
+    config = (ROOT / "ops" / "nginx" / "hxy-knowledge-api.conf").read_text(
+        encoding="utf-8"
+    )
+    exact_marker = "location = /api/v1/onboarding/invites/redeem {"
+    general_marker = "location /api/ {"
+    exact_start = config.index(exact_marker)
+    general_start = config.index(general_marker)
+    exact_block = config[exact_start : config.index("\n    }", exact_start)]
+    general_block = config[general_start : config.index("\n    }", general_start)]
+
+    assert exact_start < general_start
+    assert "client_max_body_size 1k;" in exact_block
+    assert "proxy_pass http://127.0.0.1:18081;" in exact_block
+    for proxy_header in (
+        "proxy_http_version 1.1;",
+        "proxy_set_header Host $host;",
+        "proxy_set_header X-Real-IP $remote_addr;",
+        "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+        "proxy_set_header X-Forwarded-Proto $scheme;",
+    ):
+        assert proxy_header in exact_block
+        assert proxy_header in general_block
+
+
 def test_rule_understanding_classifies_source_scale_and_boundary(tmp_path: Path) -> None:
     module = importlib.import_module("apps.api.hxy_product.material_understanding")
     source = tmp_path / "荷小悦首店接待SOP草稿.md"

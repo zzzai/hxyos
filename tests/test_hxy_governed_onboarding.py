@@ -1897,6 +1897,36 @@ def test_onboarding_repository_redeems_invite_atomically_without_raw_secrets(
         assert RAW_SESSION_TOKEN not in params
 
 
+def test_onboarding_repository_revalidates_creator_role_and_store_before_writes(
+    monkeypatch,
+) -> None:
+    from apps.api.hxy_product.onboarding_repository import InviteRedemptionError
+
+    connection = RecordingOnboardingConnection([RecordingOnboardingResult(row=None)])
+    repository, _ = onboarding_repository(monkeypatch, connection)
+
+    with pytest.raises(InviteRedemptionError, match="invitation is not available") as caught:
+        repository.redeem_invite(INVITE_TOKEN_HASH, RAW_SESSION_TOKEN, 1800)
+
+    assert connection.rolled_back is True
+    assert len(connection.calls) == 1
+    lock_sql, lock_params = connection.calls[0]
+    assert "creator.organization_id = invite.organization_id" in lock_sql
+    assert "creator.role = 'founder' AND invite.role = 'store_manager'" in lock_sql
+    assert "creator.role = 'store_manager'" in lock_sql
+    assert "creator.store_id = invite.store_id" in lock_sql
+    assert "invite.role = 'store_employee'" in lock_sql
+    assert (
+        "FOR UPDATE OF invite, creator, creator_account, organization, "
+        "organization_store, store" in lock_sql
+    )
+    assert lock_params == (INVITE_TOKEN_HASH,)
+    assert all("INSERT INTO" not in statement for statement, _ in connection.calls)
+    assert all(
+        not statement.startswith("UPDATE ") for statement, _ in connection.calls
+    )
+
+
 def test_onboarding_repository_rejects_unavailable_redemption_generically(
     monkeypatch,
 ) -> None:
@@ -3069,6 +3099,104 @@ def test_public_redemption_malformed_body_is_generic_and_secret_safe(
     assert response.json() == {"detail": "Unprocessable Entity"}
     for submitted_secret in submitted_secrets:
         assert submitted_secret not in response.text
+    assert repository.redeem_calls == []
+
+
+@pytest.mark.parametrize(
+    "content_type",
+    (None, "text/plain", "application/x-www-form-urlencoded"),
+)
+def test_public_redemption_requires_json_content_type_without_repository_call(
+    onboarding_api,
+    content_type: str | None,
+) -> None:
+    client, repository, _ = onboarding_api
+    raw_body = f'{{"token":"{API_VALID_INVITE_TOKEN}"}}'
+    headers = {} if content_type is None else {"Content-Type": content_type}
+
+    response = client.request(
+        "POST",
+        "/api/v1/onboarding/invites/redeem",
+        content=raw_body,
+        headers=headers,
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "Unprocessable Entity"}
+    assert API_VALID_INVITE_TOKEN not in response.text
+    assert repository.redeem_calls == []
+
+
+def test_public_redemption_accepts_json_content_type_charset(onboarding_api) -> None:
+    client, repository, _ = onboarding_api
+
+    response = client.request(
+        "POST",
+        "/api/v1/onboarding/invites/redeem",
+        content=f'{{"token":"{API_VALID_INVITE_TOKEN}"}}',
+        headers={"Content-Type": "application/json; charset=utf-8"},
+    )
+
+    assert response.status_code == 200
+    assert len(repository.redeem_calls) == 1
+
+
+def test_public_redemption_rejects_known_oversized_body_before_repository_call(
+    onboarding_api,
+) -> None:
+    from apps.api.hxy_product import onboarding_routes
+
+    client, repository, _ = onboarding_api
+    submitted_secret = "known-length-secret-" + (
+        "x" * onboarding_routes.MAX_REDEMPTION_BODY_BYTES
+    )
+
+    response = client.request(
+        "POST",
+        "/api/v1/onboarding/invites/redeem",
+        content=f'{{"token":"{submitted_secret}"}}',
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 413
+    assert response.json() == {"detail": "Payload Too Large"}
+    assert submitted_secret not in response.text
+    assert repository.redeem_calls == []
+
+
+def test_public_redemption_stops_reading_unknown_length_body_over_limit(
+    onboarding_api,
+) -> None:
+    from apps.api.hxy_product import onboarding_routes
+
+    client, repository, _ = onboarding_api
+    yielded_chunks: list[int] = []
+    chunk_size = (onboarding_routes.MAX_REDEMPTION_BODY_BYTES // 2) + 1
+
+    async def body_stream():
+        for index in range(3):
+            yielded_chunks.append(index)
+            if index == 2:
+                raise AssertionError("redemption parser read after crossing body limit")
+            yield b"x" * chunk_size
+
+    async def run() -> httpx.Response:
+        transport = httpx.ASGITransport(app=client.app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url=client.base_url,
+        ) as async_client:
+            return await async_client.post(
+                "/api/v1/onboarding/invites/redeem",
+                content=body_stream(),
+                headers={"Content-Type": "application/json"},
+            )
+
+    response = asyncio.run(run())
+
+    assert response.status_code == 413
+    assert response.json() == {"detail": "Payload Too Large"}
+    assert yielded_chunks == [0, 1]
     assert repository.redeem_calls == []
 
 

@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import secrets
 from collections.abc import Mapping
 from typing import Any, Callable
 from urllib.parse import quote, urlsplit, urlunsplit
 
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response
-from pydantic import ValidationError
-
 from .auth import Principal, ProductAuthSettings, build_principal_resolver
 from .onboarding_policy import (
     ResolvedAssignment,
@@ -39,6 +38,7 @@ from .routes import assignment_for_principal
 
 
 RepositoryFactory = Callable[[], Any]
+MAX_REDEMPTION_BODY_BYTES = 512
 _MANAGEMENT_ROLES = frozenset(
     {AssignmentRole.FOUNDER, AssignmentRole.STORE_MANAGER}
 )
@@ -136,6 +136,10 @@ def _unprocessable_redemption() -> HTTPException:
     return HTTPException(status_code=422, detail="Unprocessable Entity")
 
 
+def _oversized_redemption() -> HTTPException:
+    return HTTPException(status_code=413, detail="Payload Too Large")
+
+
 def _management_repository_error(exc: OnboardingRepositoryError) -> HTTPException:
     if isinstance(exc, OnboardingScopeError):
         return _forbidden()
@@ -174,10 +178,32 @@ def create_onboarding_router(
             raise _forbidden()
 
     async def parse_redemption_request(request: Request) -> RedeemInviteRequest:
+        media_type = request.headers.get("content-type", "").partition(";")[0]
+        if media_type.strip().lower() != "application/json":
+            raise _unprocessable_redemption()
+
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                declared_length = int(content_length)
+            except (TypeError, ValueError):
+                raise _unprocessable_redemption() from None
+            if declared_length < 0:
+                raise _unprocessable_redemption()
+            if declared_length > MAX_REDEMPTION_BODY_BYTES:
+                raise _oversized_redemption()
+
+        body = bytearray()
         try:
-            payload = await request.json()
+            async for chunk in request.stream():
+                if len(body) + len(chunk) > MAX_REDEMPTION_BODY_BYTES:
+                    raise _oversized_redemption()
+                body.extend(chunk)
+            payload = json.loads(body.decode("utf-8"))
             return RedeemInviteRequest.model_validate(payload)
-        except (UnicodeDecodeError, ValueError, ValidationError):
+        except HTTPException:
+            raise
+        except Exception:
             raise _unprocessable_redemption() from None
 
     def resolve_actor(

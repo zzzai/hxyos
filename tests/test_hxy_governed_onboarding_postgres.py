@@ -553,6 +553,46 @@ def _create_invite(
     )
 
 
+def _redemption_state(
+    harness: PostgresHarness,
+    *,
+    invite_id: str,
+    display_name: str,
+    raw_session_token: str,
+) -> tuple[Any, ...]:
+    with harness.connect() as connection:
+        return connection.execute(
+            """
+            SELECT invite.status,
+                   invite.redeemed_account_id,
+                   invite.redeemed_assignment_id,
+                   invite.redeemed_at,
+                   (SELECT count(*)
+                      FROM staff_accounts
+                     WHERE display_name = %s),
+                   (SELECT count(*)
+                      FROM hxy_role_assignments AS assignment
+                      JOIN staff_accounts AS account
+                        ON account.id = assignment.account_id
+                     WHERE account.display_name = %s),
+                   (SELECT count(*)
+                      FROM staff_sessions
+                     WHERE token_hash = %s),
+                   (SELECT count(*)
+                      FROM hxy_member_invite_events
+                     WHERE invite_id = invite.invite_id)
+            FROM hxy_member_invites AS invite
+            WHERE invite.invite_id = %s::uuid
+            """,
+            (
+                display_name,
+                display_name,
+                _hash(raw_session_token),
+                invite_id,
+            ),
+        ).fetchone()
+
+
 def _wait_for_lock_waiters(
     harness: PostgresHarness,
     *,
@@ -1204,6 +1244,100 @@ def test_unavailable_invite_creates_no_identity_or_session(
             """,
             (display_name, display_name, display_name, invite["id"]),
         ).fetchone()
+    assert after == before
+
+
+def test_committed_manager_role_downgrade_prevents_redemption_without_state_change(
+    postgres_harness: PostgresHarness,
+) -> None:
+    scenario = _seed_scenario(postgres_harness)
+    repository = postgres_harness.repository()
+    raw_invite_token = f"downgraded-manager-invite-{uuid4().hex}"
+    raw_session_token = f"downgraded-manager-session-{uuid4().hex}"
+    display_name = f"Downgraded manager invitee {uuid4().hex}"
+    invite = _create_invite(
+        repository,
+        scenario,
+        raw_token=raw_invite_token,
+        display_name=display_name,
+        role="store_employee",
+        creator=scenario.manager_a,
+    )
+    with postgres_harness.connect() as connection:
+        connection.execute(
+            """
+            UPDATE hxy_role_assignments
+               SET role = 'store_employee', updated_at = NOW()
+             WHERE assignment_id = %s
+            """,
+            (scenario.manager_a.assignment_id,),
+        )
+
+    before = _redemption_state(
+        postgres_harness,
+        invite_id=invite["id"],
+        display_name=display_name,
+        raw_session_token=raw_session_token,
+    )
+    with pytest.raises(InviteRedemptionError, match="invitation is not available"):
+        repository.redeem_invite(
+            _hash(raw_invite_token), raw_session_token, 1800
+        )
+    after = _redemption_state(
+        postgres_harness,
+        invite_id=invite["id"],
+        display_name=display_name,
+        raw_session_token=raw_session_token,
+    )
+
+    assert before == ("pending", None, None, None, 0, 0, 0, 1)
+    assert after == before
+
+
+def test_committed_manager_store_transfer_prevents_redemption_without_state_change(
+    postgres_harness: PostgresHarness,
+) -> None:
+    scenario = _seed_scenario(postgres_harness)
+    repository = postgres_harness.repository()
+    raw_invite_token = f"transferred-manager-invite-{uuid4().hex}"
+    raw_session_token = f"transferred-manager-session-{uuid4().hex}"
+    display_name = f"Transferred manager invitee {uuid4().hex}"
+    invite = _create_invite(
+        repository,
+        scenario,
+        raw_token=raw_invite_token,
+        display_name=display_name,
+        role="store_employee",
+        creator=scenario.manager_a,
+    )
+    with postgres_harness.connect() as connection:
+        connection.execute(
+            """
+            UPDATE hxy_role_assignments
+               SET store_id = %s, updated_at = NOW()
+             WHERE assignment_id = %s
+            """,
+            (scenario.store_b, scenario.manager_a.assignment_id),
+        )
+
+    before = _redemption_state(
+        postgres_harness,
+        invite_id=invite["id"],
+        display_name=display_name,
+        raw_session_token=raw_session_token,
+    )
+    with pytest.raises(InviteRedemptionError, match="invitation is not available"):
+        repository.redeem_invite(
+            _hash(raw_invite_token), raw_session_token, 1800
+        )
+    after = _redemption_state(
+        postgres_harness,
+        invite_id=invite["id"],
+        display_name=display_name,
+        raw_session_token=raw_session_token,
+    )
+
+    assert before == ("pending", None, None, None, 0, 0, 0, 1)
     assert after == before
 
 
