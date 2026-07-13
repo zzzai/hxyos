@@ -479,6 +479,34 @@ describe("OrganizationPanel", () => {
     expect(client.listInvites).toHaveBeenCalledTimes(2);
   });
 
+  it("focuses logout after revoke removes the trigger and invite is disabled", async () => {
+    const user = userEvent.setup();
+    const client = onboardingClient({
+      listStores: vi.fn().mockResolvedValue([
+        { ...STORES[0], status: "closed" },
+      ]),
+      listMembers: vi.fn().mockResolvedValue([]),
+      listInvites: vi
+        .fn()
+        .mockResolvedValueOnce([PENDING_INVITE])
+        .mockResolvedValueOnce([]),
+    });
+    renderPanel(FOUNDER, client);
+    const trigger = await screen.findByRole("button", {
+      name: "撤销待入职店长的邀请",
+    });
+    expect(screen.getByRole("button", { name: "邀请店长" })).toBeDisabled();
+
+    await user.click(trigger);
+    await user.click(screen.getByRole("button", { name: "继续撤销" }));
+
+    await waitFor(() => expect(trigger).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "邀请店长" })).toBeDisabled();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "退出登录" })).toHaveFocus(),
+    );
+  });
+
   it("requires confirmation before deactivation and honors cancel", async () => {
     const user = userEvent.setup();
     const client = onboardingClient();

@@ -223,14 +223,24 @@ export function OrganizationPanel({
       '[data-organization-focus-fallback="primary"]',
     );
     const secondaryFallback = panelRef.current?.querySelector<HTMLButtonElement>(
-      '[data-organization-focus-fallback="secondary"]:not(:disabled)',
+      '[data-organization-focus-fallback="secondary"]',
     );
-    const fallback = primaryFallback
-      ? primaryFallback.disabled ? null : primaryFallback
-      : secondaryFallback;
-    const target = mode === "trigger" && trigger?.isConnected
-      ? trigger
-      : fallback;
+    if (
+      mode === "fallback" &&
+      primaryFallback?.isConnected &&
+      primaryFallback.disabled &&
+      scopedData.status === "loading"
+    ) {
+      return;
+    }
+    const candidates = [
+      mode === "trigger" ? trigger : null,
+      primaryFallback,
+      secondaryFallback,
+    ];
+    const target = candidates.find(
+      (candidate) => candidate?.isConnected && !candidate.disabled,
+    );
     if (!target) return;
     focusRestoreModeRef.current = null;
     target.focus();
