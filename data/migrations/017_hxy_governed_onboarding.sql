@@ -78,10 +78,7 @@ CREATE TABLE IF NOT EXISTS hxy_member_invite_events (
   event_type TEXT NOT NULL CHECK (
     event_type IN ('created', 'redeemed', 'revoked', 'member_deactivated')
   ),
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (
-    jsonb_typeof(payload) = 'object'
-    AND NOT (payload ?| ARRAY['token', 'token_hash', 'one_time_link'])
-  ),
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (payload = '{}'::jsonb),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT fk_hxy_member_invite_events_organization_store
     FOREIGN KEY (organization_id, store_id)
