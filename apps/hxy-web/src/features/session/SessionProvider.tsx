@@ -13,11 +13,13 @@ import {
   exchangeSessionGrant,
   loadMe,
   MeRequestError,
+  productOnboardingClient,
   type MeResponse,
 } from "../../api/client";
 
 export type SessionLoader = () => Promise<MeResponse>;
 export type SessionGrantExchanger = (grant: string) => Promise<void>;
+export type SessionInviteExchanger = (token: string) => Promise<void>;
 export type SessionStatus =
   | "loading"
   | "authenticated"
@@ -37,10 +39,54 @@ interface SessionProviderProps {
   children: ReactNode;
   loader?: SessionLoader;
   grantExchanger?: SessionGrantExchanger;
+  inviteExchanger?: SessionInviteExchanger;
   initialSession?: MeResponse;
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null);
+const INVITE_REDEMPTION_FAILED = Symbol("invite-redemption-failed");
+
+type InviteFragment =
+  | { kind: "absent" }
+  | { kind: "invalid" }
+  | { kind: "valid"; token: string };
+
+function redeemSessionInvite(token: string): Promise<void> {
+  return productOnboardingClient.redeemInvite(token).then(() => undefined);
+}
+
+function takeInviteFromFragment(): InviteFragment {
+  if (typeof window === "undefined") {
+    return { kind: "absent" };
+  }
+
+  const hash = window.location.hash;
+  if (!hash) return { kind: "absent" };
+
+  const rawFragment = hash.slice(1);
+  if (!new URLSearchParams(rawFragment).has("invite")) {
+    return { kind: "absent" };
+  }
+
+  window.history.replaceState(
+    window.history.state,
+    "",
+    `${window.location.pathname}${window.location.search}`,
+  );
+
+  if (!/^invite=[^&]*$/.test(rawFragment)) {
+    return { kind: "invalid" };
+  }
+
+  try {
+    const token = decodeURIComponent(rawFragment.slice("invite=".length));
+    return token.length > 0 && /^[A-Za-z0-9._~-]+$/.test(token)
+      ? { kind: "valid", token }
+      : { kind: "invalid" };
+  } catch {
+    return { kind: "invalid" };
+  }
+}
 
 function takeSessionGrantFromFragment(): string | null {
   if (typeof window === "undefined" || !window.location.hash) return null;
@@ -71,6 +117,7 @@ export function SessionProvider({
   children,
   loader = loadMe,
   grantExchanger = exchangeSessionGrant,
+  inviteExchanger = redeemSessionInvite,
   initialSession,
 }: SessionProviderProps) {
   const [attempt, setAttempt] = useState(0);
@@ -87,8 +134,19 @@ export function SessionProvider({
     let active = true;
     setState({ status: "loading", session: null });
     if (bootstrapPromise.current === undefined) {
-      const grant = takeSessionGrantFromFragment();
-      bootstrapPromise.current = grant ? grantExchanger(grant) : null;
+      const invite = takeInviteFromFragment();
+      if (invite.kind === "valid") {
+        bootstrapPromise.current = Promise.resolve()
+          .then(() => inviteExchanger(invite.token))
+          .catch(() => {
+            throw INVITE_REDEMPTION_FAILED;
+          });
+      } else if (invite.kind === "invalid") {
+        bootstrapPromise.current = Promise.reject(INVITE_REDEMPTION_FAILED);
+      } else {
+        const grant = takeSessionGrantFromFragment();
+        bootstrapPromise.current = grant ? grantExchanger(grant) : null;
+      }
     }
     const sessionRequest = bootstrapPromise.current
       ? bootstrapPromise.current.then(() => {
@@ -105,7 +163,8 @@ export function SessionProvider({
         bootstrapPromise.current = null;
         setState({
           status:
-            error instanceof MeRequestError && error.status === 401
+            error === INVITE_REDEMPTION_FAILED ||
+            (error instanceof MeRequestError && error.status === 401)
               ? "unauthorized"
               : "error",
           session: null,
@@ -116,7 +175,7 @@ export function SessionProvider({
     return () => {
       active = false;
     };
-  }, [attempt, grantExchanger, initialSession, loader]);
+  }, [attempt, grantExchanger, initialSession, inviteExchanger, loader]);
 
   const retry = useCallback(() => {
     setState({ status: "loading", session: null });

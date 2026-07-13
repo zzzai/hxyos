@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -7,6 +8,7 @@ import {
   SessionProvider,
   useSession,
   type SessionGrantExchanger,
+  type SessionInviteExchanger,
   type SessionLoader,
 } from "./SessionProvider";
 
@@ -26,6 +28,16 @@ const TEST_SESSION: MeResponse = {
   available_assignments: [],
 };
 const SESSION_GRANT = "g".repeat(64);
+const INVITE_TOKEN = "invite-token-that-must-remain-confidential";
+const INVITED_SESSION: MeResponse = {
+  ...TEST_SESSION,
+  active_assignment: {
+    ...TEST_SESSION.active_assignment,
+    assignment_id: "assignment-invited",
+    role: "store_employee",
+    role_label: "门店员工",
+  },
+};
 
 function SessionProbe() {
   const { status, session, retry } = useSession();
@@ -157,13 +169,18 @@ describe("SessionProvider", () => {
       expect(window.location.hash).toBe("");
       order.push("exchange");
     });
+    const inviteExchanger = vi.fn<SessionInviteExchanger>();
     const loader = vi.fn<SessionLoader>(async () => {
       order.push("me");
       return TEST_SESSION;
     });
 
     render(
-      <SessionProvider loader={loader} grantExchanger={grantExchanger}>
+      <SessionProvider
+        loader={loader}
+        grantExchanger={grantExchanger}
+        inviteExchanger={inviteExchanger}
+      >
         <SessionProbe />
       </SessionProvider>,
     );
@@ -174,8 +191,208 @@ describe("SessionProvider", () => {
       ),
     );
     expect(order).toEqual(["exchange", "me"]);
+    expect(inviteExchanger).not.toHaveBeenCalled();
     expect(window.location.href).not.toContain(SESSION_GRANT);
     expect(document.body.textContent).not.toContain(SESSION_GRANT);
+  });
+
+  it("cleans an exact invite fragment before exchanging and loading me", async () => {
+    const order: string[] = [];
+    const historyState = { destination: "tasks" };
+    window.history.replaceState(
+      historyState,
+      "",
+      `/workspace?view=tasks#invite=${INVITE_TOKEN}`,
+    );
+    const replaceState = vi.spyOn(window.history, "replaceState");
+    const inviteExchanger = vi.fn<SessionInviteExchanger>(async (token) => {
+      expect(token).toBe(INVITE_TOKEN);
+      expect(window.location.pathname).toBe("/workspace");
+      expect(window.location.search).toBe("?view=tasks");
+      expect(window.location.hash).toBe("");
+      expect(window.history.state).toEqual(historyState);
+      order.push("invite");
+    });
+    const grantExchanger = vi.fn<SessionGrantExchanger>();
+    const loader = vi.fn<SessionLoader>(async () => {
+      order.push("me");
+      return INVITED_SESSION;
+    });
+
+    render(
+      <SessionProvider
+        loader={loader}
+        grantExchanger={grantExchanger}
+        inviteExchanger={inviteExchanger}
+      >
+        <SessionProbe />
+      </SessionProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("session-status")).toHaveTextContent(
+        "authenticated",
+      ),
+    );
+    expect(order).toEqual(["invite", "me"]);
+    expect(screen.getByTestId("session-role")).toHaveTextContent(
+      "store_employee",
+    );
+    expect(grantExchanger).not.toHaveBeenCalled();
+    expect(replaceState).toHaveBeenCalledWith(
+      historyState,
+      "",
+      "/workspace?view=tasks",
+    );
+    expect(window.location.href).not.toContain(INVITE_TOKEN);
+  });
+
+  it("maps every invite exchange failure to the existing unauthorized state", async () => {
+    window.history.replaceState({}, "", `/#invite=${INVITE_TOKEN}`);
+    const inviteExchanger = vi
+      .fn<SessionInviteExchanger>()
+      .mockRejectedValue(
+        new Error(`upstream leaked invite detail: ${INVITE_TOKEN}`),
+      );
+    const loader = vi.fn<SessionLoader>(async () => TEST_SESSION);
+
+    render(
+      <SessionProvider loader={loader} inviteExchanger={inviteExchanger}>
+        <SessionProbe />
+      </SessionProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("session-status")).toHaveTextContent(
+        "unauthorized",
+      ),
+    );
+    expect(screen.getByTestId("session-role")).toHaveTextContent("none");
+    expect(loader).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe("");
+    expect(document.body).not.toHaveTextContent(INVITE_TOKEN);
+    expect(document.body).not.toHaveTextContent("upstream leaked invite detail");
+  });
+
+  it("redeems an invite only once under StrictMode", async () => {
+    window.history.replaceState({}, "", `/#invite=${INVITE_TOKEN}`);
+    const inviteExchanger = vi.fn<SessionInviteExchanger>(async () => undefined);
+    const loader = vi.fn<SessionLoader>(async () => INVITED_SESSION);
+
+    render(
+      <StrictMode>
+        <SessionProvider loader={loader} inviteExchanger={inviteExchanger}>
+          <SessionProbe />
+        </SessionProvider>
+      </StrictMode>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("session-status")).toHaveTextContent(
+        "authenticated",
+      ),
+    );
+    expect(inviteExchanger).toHaveBeenCalledTimes(1);
+    expect(loader).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the onboarding client without leaking the invite outside its body", async () => {
+    window.history.replaceState(
+      { destination: "profile" },
+      "",
+      `/?view=profile#invite=${INVITE_TOKEN}`,
+    );
+    const fetchMock = vi.fn<typeof fetch>(async (request) => {
+      const payload =
+        String(request) === "/api/v1/onboarding/invites/redeem"
+          ? { status: "authenticated" }
+          : INVITED_SESSION;
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const localStorageWrite = vi.spyOn(window.localStorage, "setItem");
+    const sessionStorageWrite = vi.spyOn(window.sessionStorage, "setItem");
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <SessionProvider>
+        <SessionProbe />
+      </SessionProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("session-status")).toHaveTextContent(
+        "authenticated",
+      ),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/v1/onboarding/invites/redeem",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "include",
+        body: JSON.stringify({ token: INVITE_TOKEN }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/v1/me",
+      expect.objectContaining({ credentials: "include" }),
+    );
+    for (const [request] of fetchMock.mock.calls) {
+      expect(String(request)).not.toContain(INVITE_TOKEN);
+    }
+    expect(window.location.search).toBe("?view=profile");
+    expect(window.location.href).not.toContain(INVITE_TOKEN);
+    expect(document.body).not.toHaveTextContent(INVITE_TOKEN);
+    expect(localStorageWrite).not.toHaveBeenCalled();
+    expect(sessionStorageWrite).not.toHaveBeenCalled();
+    expect(consoleError).not.toHaveBeenCalled();
+    expect(consoleLog).not.toHaveBeenCalled();
+    expect(consoleWarn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["an empty", "#invite="],
+    ["an invalidly encoded", "#invite=%E0%A4%A"],
+    [
+      "an invite mixed with a founder grant",
+      `#invite=${INVITE_TOKEN}&hxy_session_grant=${SESSION_GRANT}`,
+    ],
+  ])("cleans %s fragment without exchanging it", async (_case, hash) => {
+    window.history.replaceState({}, "", `/workspace?view=tasks${hash}`);
+    const inviteExchanger = vi.fn<SessionInviteExchanger>();
+    const grantExchanger = vi.fn<SessionGrantExchanger>();
+    const loader = vi.fn<SessionLoader>(async () => TEST_SESSION);
+
+    render(
+      <SessionProvider
+        loader={loader}
+        grantExchanger={grantExchanger}
+        inviteExchanger={inviteExchanger}
+      >
+        <SessionProbe />
+      </SessionProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("session-status")).toHaveTextContent(
+        "unauthorized",
+      ),
+    );
+    expect(inviteExchanger).not.toHaveBeenCalled();
+    expect(grantExchanger).not.toHaveBeenCalled();
+    expect(loader).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe("/workspace");
+    expect(window.location.search).toBe("?view=tasks");
+    expect(window.location.hash).toBe("");
+    expect(document.body).not.toHaveTextContent(INVITE_TOKEN);
+    expect(window.location.href).not.toContain(SESSION_GRANT);
   });
 
   it("clears an invalid or consumed grant and stays unauthorized", async () => {
