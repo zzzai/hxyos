@@ -157,9 +157,16 @@ def test_postgres_enforces_onboarding_storage_contracts() -> None:
     schema_name = f"hxy_onboarding_test_{uuid4().hex}"
     suffix = uuid4().hex
     organization_id = uuid4()
+    foreign_organization_id = uuid4()
     creator_account_id = uuid4()
     creator_assignment_id = uuid4()
+    foreign_creator_account_id = uuid4()
+    foreign_creator_assignment_id = uuid4()
+    other_store_account_id = uuid4()
+    other_store_assignment_id = uuid4()
     store_id = f"onboarding-test-store-{suffix}"
+    other_store_id = f"onboarding-test-other-store-{suffix}"
+    foreign_store_id = f"onboarding-test-foreign-store-{suffix}"
     invite_id = uuid4()
     event_id = uuid4()
 
@@ -176,53 +183,117 @@ def test_postgres_enforces_onboarding_storage_contracts() -> None:
             for migration in REQUIRED_MIGRATIONS:
                 connection.execute(migration.read_text(encoding="utf-8"))
 
-            connection.execute(
+            def execute_many(
+                statement: str,
+                params: tuple[tuple[object, ...], ...],
+            ) -> None:
+                with connection.cursor() as cursor:
+                    cursor.executemany(statement, params)
+
+            execute_many(
                 """
                 INSERT INTO stores (store_id, name)
                 VALUES (%s, %s)
                 """,
-                (store_id, f"Onboarding integration test {suffix}"),
+                (
+                    (store_id, f"Onboarding integration test {suffix}"),
+                    (other_store_id, f"Other store integration test {suffix}"),
+                    (foreign_store_id, f"Foreign store integration test {suffix}"),
+                ),
             )
-            connection.execute(
+            execute_many(
                 """
                 INSERT INTO hxy_organizations (organization_id, slug, name)
                 VALUES (%s, %s, %s)
                 """,
                 (
-                    organization_id,
-                    f"onboarding-test-{suffix}",
-                    f"Onboarding integration test {suffix}",
+                    (
+                        organization_id,
+                        f"onboarding-test-{suffix}",
+                        f"Onboarding integration test {suffix}",
+                    ),
+                    (
+                        foreign_organization_id,
+                        f"onboarding-foreign-test-{suffix}",
+                        f"Foreign integration test {suffix}",
+                    ),
                 ),
             )
-            connection.execute(
+            execute_many(
                 """
                 INSERT INTO hxy_organization_stores (organization_id, store_id)
                 VALUES (%s, %s)
                 """,
-                (organization_id, store_id),
-            )
-            connection.execute(
-                """
-                INSERT INTO staff_accounts (
-                  id, username, display_name, password_hash, role
-                )
-                VALUES (%s, %s, %s, %s, 'hq_admin')
-                """,
                 (
-                    creator_account_id,
-                    f"onboarding-test-{suffix}",
-                    "Onboarding integration test",
-                    "not-a-login-credential",
+                    (organization_id, store_id),
+                    (organization_id, other_store_id),
+                    (foreign_organization_id, foreign_store_id),
                 ),
             )
-            connection.execute(
+            execute_many(
+                """
+                INSERT INTO staff_accounts (
+                  id, username, display_name, password_hash, role, store_id
+                )
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    (
+                        creator_account_id,
+                        f"onboarding-test-{suffix}",
+                        "Onboarding integration test",
+                        "not-a-login-credential",
+                        "hq_admin",
+                        None,
+                    ),
+                    (
+                        foreign_creator_account_id,
+                        f"onboarding-foreign-test-{suffix}",
+                        "Foreign creator integration test",
+                        "not-a-login-credential",
+                        "hq_admin",
+                        None,
+                    ),
+                    (
+                        other_store_account_id,
+                        f"onboarding-other-store-test-{suffix}",
+                        "Other store integration test",
+                        "not-a-login-credential",
+                        "store_manager",
+                        other_store_id,
+                    ),
+                ),
+            )
+            execute_many(
                 """
                 INSERT INTO hxy_role_assignments (
-                  assignment_id, account_id, organization_id, role
+                  assignment_id, account_id, organization_id, store_id, role
                 )
-                VALUES (%s, %s, %s, 'founder')
+                VALUES (%s, %s, %s, %s, %s)
                 """,
-                (creator_assignment_id, creator_account_id, organization_id),
+                (
+                    (
+                        creator_assignment_id,
+                        creator_account_id,
+                        organization_id,
+                        None,
+                        "founder",
+                    ),
+                    (
+                        foreign_creator_assignment_id,
+                        foreign_creator_account_id,
+                        foreign_organization_id,
+                        None,
+                        "founder",
+                    ),
+                    (
+                        other_store_assignment_id,
+                        other_store_account_id,
+                        organization_id,
+                        other_store_id,
+                        "store_manager",
+                    ),
+                ),
             )
             connection.execute(
                 """
@@ -259,74 +330,259 @@ def test_postgres_enforces_onboarding_storage_contracts() -> None:
                 ),
             )
 
-            with pytest.raises(psycopg.errors.CheckViolation):
-                connection.execute(
-                    """
-                    INSERT INTO hxy_member_invites (
-                      organization_id, store_id, role, display_name,
-                      token_hash, created_by_assignment_id, expires_at
-                    )
-                    VALUES (%s, %s, 'store_manager', %s, 'not-a-sha256', %s,
-                            NOW() + INTERVAL '1 hour')
-                    """,
-                    (
-                        organization_id,
-                        store_id,
-                        "Invalid hash test",
-                        creator_assignment_id,
-                    ),
-                )
+            def assert_rejected(
+                error: type[psycopg.Error],
+                statement: str,
+                params: tuple[object, ...] = (),
+            ) -> None:
+                with pytest.raises(error):
+                    with connection.transaction():
+                        connection.execute(statement, params)
 
-            with pytest.raises(psycopg.errors.CheckViolation):
-                connection.execute(
-                    """
-                    INSERT INTO hxy_member_invites (
-                      organization_id, store_id, role, display_name,
-                      token_hash, created_by_assignment_id, status, expires_at
-                    )
-                    VALUES (%s, %s, 'store_manager', %s, %s, %s, 'redeemed',
-                            NOW() + INTERVAL '1 hour')
-                    """,
-                    (
-                        organization_id,
-                        store_id,
-                        "Invalid state test",
-                        "b" * 64,
-                        creator_assignment_id,
-                    ),
+            assert_rejected(
+                psycopg.errors.CheckViolation,
+                """
+                INSERT INTO hxy_member_invites (
+                  organization_id, store_id, role, display_name,
+                  token_hash, created_by_assignment_id, expires_at
                 )
+                VALUES (%s, %s, 'store_manager', %s, 'not-a-sha256', %s,
+                        NOW() + INTERVAL '1 hour')
+                """,
+                (
+                    organization_id,
+                    store_id,
+                    "Invalid hash test",
+                    creator_assignment_id,
+                ),
+            )
 
-            with pytest.raises(psycopg.errors.CheckViolation):
-                connection.execute(
-                    """
-                    INSERT INTO hxy_member_invite_events (
-                      organization_id, store_id, invite_id,
-                      actor_assignment_id, event_type, payload
-                    )
-                    VALUES (%s, %s, %s, %s, 'created', %s::jsonb)
-                    """,
-                    (
-                        organization_id,
-                        store_id,
-                        invite_id,
-                        creator_assignment_id,
-                        '{"nested":{"token":"must-not-persist"}}',
-                    ),
+            assert_rejected(
+                psycopg.errors.CheckViolation,
+                """
+                INSERT INTO hxy_member_invites (
+                  organization_id, store_id, role, display_name,
+                  token_hash, created_by_assignment_id, expires_at
                 )
+                VALUES (%s, %s, 'founder', %s, %s, %s,
+                        NOW() + INTERVAL '1 hour')
+                """,
+                (
+                    organization_id,
+                    store_id,
+                    "Illegal role test",
+                    "b" * 64,
+                    creator_assignment_id,
+                ),
+            )
 
-            with pytest.raises(psycopg.errors.RaiseException):
-                connection.execute(
-                    "UPDATE hxy_member_invite_events SET payload = '{}'::jsonb "
-                    "WHERE event_id = %s",
-                    (event_id,),
+            assert_rejected(
+                psycopg.errors.UniqueViolation,
+                """
+                INSERT INTO hxy_member_invites (
+                  organization_id, store_id, role, display_name,
+                  token_hash, created_by_assignment_id, expires_at
                 )
-            with pytest.raises(psycopg.errors.RaiseException):
-                connection.execute(
-                    "DELETE FROM hxy_member_invite_events WHERE event_id = %s",
-                    (event_id,),
+                VALUES (%s, %s, 'store_manager', %s, %s, %s,
+                        NOW() + INTERVAL '1 hour')
+                """,
+                (
+                    organization_id,
+                    store_id,
+                    "Duplicate token hash test",
+                    "a" * 64,
+                    creator_assignment_id,
+                ),
+            )
+
+            assert_rejected(
+                psycopg.errors.ForeignKeyViolation,
+                """
+                INSERT INTO hxy_member_invites (
+                  organization_id, store_id, role, display_name,
+                  token_hash, created_by_assignment_id, expires_at
                 )
-            with pytest.raises(psycopg.errors.RaiseException):
-                connection.execute("TRUNCATE hxy_member_invite_events")
+                VALUES (%s, %s, 'store_manager', %s, %s, %s,
+                        NOW() + INTERVAL '1 hour')
+                """,
+                (
+                    organization_id,
+                    foreign_store_id,
+                    "Organization store boundary test",
+                    "c" * 64,
+                    creator_assignment_id,
+                ),
+            )
+
+            assert_rejected(
+                psycopg.errors.ForeignKeyViolation,
+                """
+                INSERT INTO hxy_member_invites (
+                  organization_id, store_id, role, display_name,
+                  token_hash, created_by_assignment_id, expires_at
+                )
+                VALUES (%s, %s, 'store_manager', %s, %s, %s,
+                        NOW() + INTERVAL '1 hour')
+                """,
+                (
+                    organization_id,
+                    store_id,
+                    "Foreign creator boundary test",
+                    "d" * 64,
+                    foreign_creator_assignment_id,
+                ),
+            )
+
+            assert_rejected(
+                psycopg.errors.ForeignKeyViolation,
+                """
+                INSERT INTO hxy_member_invites (
+                  organization_id, store_id, role, display_name,
+                  token_hash, created_by_assignment_id, status, expires_at,
+                  redeemed_account_id, redeemed_assignment_id, redeemed_at
+                )
+                VALUES (%s, %s, 'store_manager', %s, %s, %s, 'redeemed',
+                        NOW() + INTERVAL '1 hour', %s, %s, NOW())
+                """,
+                (
+                    organization_id,
+                    store_id,
+                    "Cross-store redemption test",
+                    "e" * 64,
+                    creator_assignment_id,
+                    other_store_account_id,
+                    other_store_assignment_id,
+                ),
+            )
+
+            assert_rejected(
+                psycopg.errors.CheckViolation,
+                """
+                INSERT INTO hxy_member_invites (
+                  organization_id, store_id, role, display_name,
+                  token_hash, created_by_assignment_id, status, expires_at,
+                  redeemed_at
+                )
+                VALUES (%s, %s, 'store_manager', %s, %s, %s, 'pending',
+                        NOW() + INTERVAL '1 hour', NOW())
+                """,
+                (
+                    organization_id,
+                    store_id,
+                    "Invalid pending state test",
+                    "f" * 64,
+                    creator_assignment_id,
+                ),
+            )
+
+            assert_rejected(
+                psycopg.errors.CheckViolation,
+                """
+                INSERT INTO hxy_member_invites (
+                  organization_id, store_id, role, display_name,
+                  token_hash, created_by_assignment_id, status, expires_at
+                )
+                VALUES (%s, %s, 'store_manager', %s, %s, %s, 'revoked',
+                        NOW() + INTERVAL '1 hour')
+                """,
+                (
+                    organization_id,
+                    store_id,
+                    "Invalid revoked state test",
+                    "1" * 64,
+                    creator_assignment_id,
+                ),
+            )
+
+            assert_rejected(
+                psycopg.errors.CheckViolation,
+                """
+                INSERT INTO hxy_member_invites (
+                  organization_id, store_id, role, display_name,
+                  token_hash, created_by_assignment_id, status, expires_at
+                )
+                VALUES (%s, %s, 'store_manager', %s, %s, %s, 'redeemed',
+                        NOW() + INTERVAL '1 hour')
+                """,
+                (
+                    organization_id,
+                    store_id,
+                    "Invalid redeemed state test",
+                    "2" * 64,
+                    creator_assignment_id,
+                ),
+            )
+
+            assert_rejected(
+                psycopg.errors.CheckViolation,
+                """
+                INSERT INTO hxy_member_invite_events (
+                  organization_id, store_id, invite_id,
+                  actor_assignment_id, event_type, payload
+                )
+                VALUES (%s, %s, %s, %s, 'created', %s::jsonb)
+                """,
+                (
+                    organization_id,
+                    store_id,
+                    invite_id,
+                    creator_assignment_id,
+                    '{"nested":{"token":"must-not-persist"}}',
+                ),
+            )
+
+            assert_rejected(
+                psycopg.errors.RaiseException,
+                "UPDATE hxy_member_invite_events SET payload = '{}'::jsonb "
+                "WHERE event_id = %s",
+                (event_id,),
+            )
+            assert_rejected(
+                psycopg.errors.RaiseException,
+                "DELETE FROM hxy_member_invite_events WHERE event_id = %s",
+                (event_id,),
+            )
+            assert_rejected(
+                psycopg.errors.RaiseException,
+                "TRUNCATE hxy_member_invite_events",
+            )
+
+            index_rows = connection.execute(
+                """
+                SELECT index_relation.relname,
+                       array_agg(attribute.attname ORDER BY key_column.ordinality)
+                FROM pg_catalog.pg_class AS table_relation
+                JOIN pg_catalog.pg_namespace AS namespace
+                  ON namespace.oid = table_relation.relnamespace
+                JOIN pg_catalog.pg_index AS index_info
+                  ON index_info.indrelid = table_relation.oid
+                JOIN pg_catalog.pg_class AS index_relation
+                  ON index_relation.oid = index_info.indexrelid
+                JOIN LATERAL unnest(index_info.indkey) WITH ORDINALITY
+                  AS key_column(attnum, ordinality)
+                  ON key_column.ordinality <= index_info.indnkeyatts
+                JOIN pg_catalog.pg_attribute AS attribute
+                  ON attribute.attrelid = table_relation.oid
+                 AND attribute.attnum = key_column.attnum
+                WHERE namespace.nspname = %s
+                  AND table_relation.relname = 'hxy_member_invites'
+                  AND index_relation.relname IN (
+                    'idx_hxy_member_invites_expires',
+                    'idx_hxy_member_invites_scope_status'
+                  )
+                GROUP BY index_relation.relname
+                """,
+                (schema_name,),
+            ).fetchall()
+            assert {name: columns for name, columns in index_rows} == {
+                "idx_hxy_member_invites_expires": ["expires_at"],
+                "idx_hxy_member_invites_scope_status": [
+                    "organization_id",
+                    "store_id",
+                    "status",
+                    "created_at",
+                ],
+            }
         finally:
             connection.execute("RESET search_path")
             connection.execute(
