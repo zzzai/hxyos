@@ -47,9 +47,17 @@ def require_safe_test_database_url(database_url: str) -> str:
         database_name = conninfo_to_dict(database_url).get("dbname", "")
     except psycopg.Error as exc:
         raise ValueError("HXY_TEST_DATABASE_URL must be a valid PostgreSQL URL") from exc
-    if "test" not in database_name.strip().lower():
+    segments = database_name.strip().lower().split("_")
+    is_hxy_test_database = (
+        len(segments) >= 2
+        and segments[0] == "hxy"
+        and "test" in segments[1:]
+        and all(segment.isalnum() for segment in segments)
+    )
+    if not is_hxy_test_database:
         raise ValueError(
-            "HXY_TEST_DATABASE_URL must explicitly name a database containing 'test'"
+            "HXY_TEST_DATABASE_URL must name an HXY-owned test database with "
+            "'test' as an underscore-delimited segment"
         )
     return database_url
 
@@ -73,11 +81,17 @@ def test_onboarding_migration_scopes_invites_to_hxy_boundaries() -> None:
         in normalized
     )
     assert (
-        "FOREIGN KEY (organization_id, store_id, redeemed_assignment_id)"
+        "FOREIGN KEY (organization_id, store_id, redeemed_assignment_id, "
+        "redeemed_account_id)"
         in normalized
     )
     assert (
-        "REFERENCES hxy_role_assignments(organization_id, store_id, assignment_id)"
+        "REFERENCES hxy_role_assignments(organization_id, store_id, assignment_id, "
+        "account_id)"
+        in normalized
+    )
+    assert (
+        "ON hxy_role_assignments (organization_id, store_id, assignment_id, account_id)"
         in normalized
     )
     assert "UNIQUE (token_hash)" in normalized
@@ -127,6 +141,21 @@ def test_onboarding_invite_events_are_append_only() -> None:
     assert "BEFORE TRUNCATE ON hxy_member_invite_events" in normalized
     assert "payload JSONB NOT NULL DEFAULT '{}'::jsonb" in normalized
     assert "CHECK (payload = '{}'::jsonb)" in normalized
+    assert (
+        "event_type IN ('created', 'revoked') AND invite_id IS NOT NULL AND "
+        "subject_assignment_id IS NULL"
+        in normalized
+    )
+    assert (
+        "event_type = 'redeemed' AND invite_id IS NOT NULL AND "
+        "subject_assignment_id IS NOT NULL"
+        in normalized
+    )
+    assert (
+        "event_type = 'member_deactivated' AND invite_id IS NULL AND "
+        "subject_assignment_id IS NOT NULL"
+        in normalized
+    )
 
 
 def test_onboarding_migration_contains_no_seed_rows_or_foreign_brand_data() -> None:
@@ -144,11 +173,20 @@ def test_onboarding_migration_contains_no_seed_rows_or_foreign_brand_data() -> N
         "postgresql:///postgres",
         "dbname=hxy",
         "postgresql://localhost/",
+        "postgresql:///contest",
+        "postgresql:///hxy_contest",
+        "postgresql:///onboarding_test",
     ),
 )
 def test_postgres_execution_refuses_non_test_database_names(database_url: str) -> None:
-    with pytest.raises(ValueError, match="database containing 'test'"):
+    with pytest.raises(ValueError, match="HXY-owned test database"):
         require_safe_test_database_url(database_url)
+
+
+def test_postgres_execution_accepts_underscore_delimited_hxy_test_name() -> None:
+    database_url = "postgresql:///hxy_onboarding_test"
+
+    assert require_safe_test_database_url(database_url) == database_url
 
 
 @pytest.mark.skipif(not DATABASE_URL, reason="HXY_TEST_DATABASE_URL is not configured")
@@ -164,6 +202,8 @@ def test_postgres_enforces_onboarding_storage_contracts() -> None:
     foreign_creator_assignment_id = uuid4()
     other_store_account_id = uuid4()
     other_store_assignment_id = uuid4()
+    main_store_account_id = uuid4()
+    main_store_assignment_id = uuid4()
     store_id = f"onboarding-test-store-{suffix}"
     other_store_id = f"onboarding-test-other-store-{suffix}"
     foreign_store_id = f"onboarding-test-foreign-store-{suffix}"
@@ -182,6 +222,47 @@ def test_postgres_enforces_onboarding_storage_contracts() -> None:
             )
             for migration in REQUIRED_MIGRATIONS:
                 connection.execute(migration.read_text(encoding="utf-8"))
+            connection.execute(MIGRATION.read_text(encoding="utf-8"))
+            idempotent_objects = connection.execute(
+                """
+                SELECT
+                  (
+                    SELECT count(*)
+                    FROM pg_catalog.pg_class AS relation
+                    JOIN pg_catalog.pg_namespace AS namespace
+                      ON namespace.oid = relation.relnamespace
+                    WHERE namespace.nspname = %s
+                      AND relation.relkind = 'r'
+                      AND relation.relname IN (
+                        'hxy_member_invites',
+                        'hxy_member_invite_events'
+                      )
+                  ),
+                  (
+                    SELECT count(*)
+                    FROM pg_catalog.pg_class AS relation
+                    JOIN pg_catalog.pg_namespace AS namespace
+                      ON namespace.oid = relation.relnamespace
+                    WHERE namespace.nspname = %s
+                      AND relation.relkind = 'i'
+                      AND relation.relname =
+                        'uq_hxy_role_assignments_onboarding_identity'
+                  ),
+                  (
+                    SELECT count(*)
+                    FROM pg_catalog.pg_constraint AS constraint_record
+                    JOIN pg_catalog.pg_class AS relation
+                      ON relation.oid = constraint_record.conrelid
+                    JOIN pg_catalog.pg_namespace AS namespace
+                      ON namespace.oid = relation.relnamespace
+                    WHERE namespace.nspname = %s
+                      AND constraint_record.conname =
+                        'fk_hxy_member_invites_redeemed_identity_store'
+                  )
+                """,
+                (schema_name, schema_name, schema_name),
+            ).fetchone()
+            assert idempotent_objects == (2, 1, 1)
 
             def execute_many(
                 statement: str,
@@ -262,6 +343,14 @@ def test_postgres_enforces_onboarding_storage_contracts() -> None:
                         "store_manager",
                         other_store_id,
                     ),
+                    (
+                        main_store_account_id,
+                        f"onboarding-main-store-test-{suffix}",
+                        "Main store integration test",
+                        "not-a-login-credential",
+                        "store_manager",
+                        store_id,
+                    ),
                 ),
             )
             execute_many(
@@ -291,6 +380,13 @@ def test_postgres_enforces_onboarding_storage_contracts() -> None:
                         other_store_account_id,
                         organization_id,
                         other_store_id,
+                        "store_manager",
+                    ),
+                    (
+                        main_store_assignment_id,
+                        main_store_account_id,
+                        organization_id,
+                        store_id,
                         "store_manager",
                     ),
                 ),
@@ -419,6 +515,28 @@ def test_postgres_enforces_onboarding_storage_contracts() -> None:
                 """
                 INSERT INTO hxy_member_invites (
                   organization_id, store_id, role, display_name,
+                  token_hash, created_by_assignment_id, status, expires_at,
+                  redeemed_account_id, redeemed_assignment_id, redeemed_at
+                )
+                VALUES (%s, %s, 'store_manager', %s, %s, %s, 'redeemed',
+                        NOW() + INTERVAL '1 hour', %s, %s, NOW())
+                """,
+                (
+                    organization_id,
+                    store_id,
+                    "Mismatched redemption identity test",
+                    "3" * 64,
+                    creator_assignment_id,
+                    other_store_account_id,
+                    main_store_assignment_id,
+                ),
+            )
+
+            assert_rejected(
+                psycopg.errors.ForeignKeyViolation,
+                """
+                INSERT INTO hxy_member_invites (
+                  organization_id, store_id, role, display_name,
                   token_hash, created_by_assignment_id, expires_at
                 )
                 VALUES (%s, %s, 'store_manager', %s, %s, %s,
@@ -472,6 +590,61 @@ def test_postgres_enforces_onboarding_storage_contracts() -> None:
                     "Invalid pending state test",
                     "f" * 64,
                     creator_assignment_id,
+                ),
+            )
+
+            for event_type in ("created", "revoked"):
+                assert_rejected(
+                    psycopg.errors.CheckViolation,
+                    """
+                    INSERT INTO hxy_member_invite_events (
+                      organization_id, store_id, invite_id, actor_assignment_id,
+                      subject_assignment_id, event_type
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        organization_id,
+                        store_id,
+                        invite_id,
+                        creator_assignment_id,
+                        main_store_assignment_id,
+                        event_type,
+                    ),
+                )
+
+            assert_rejected(
+                psycopg.errors.CheckViolation,
+                """
+                INSERT INTO hxy_member_invite_events (
+                  organization_id, store_id, invite_id,
+                  actor_assignment_id, event_type
+                )
+                VALUES (%s, %s, %s, %s, 'redeemed')
+                """,
+                (
+                    organization_id,
+                    store_id,
+                    invite_id,
+                    creator_assignment_id,
+                ),
+            )
+
+            assert_rejected(
+                psycopg.errors.CheckViolation,
+                """
+                INSERT INTO hxy_member_invite_events (
+                  organization_id, store_id, invite_id, actor_assignment_id,
+                  subject_assignment_id, event_type
+                )
+                VALUES (%s, %s, %s, %s, %s, 'member_deactivated')
+                """,
+                (
+                    organization_id,
+                    store_id,
+                    invite_id,
+                    creator_assignment_id,
+                    main_store_assignment_id,
                 ),
             )
 

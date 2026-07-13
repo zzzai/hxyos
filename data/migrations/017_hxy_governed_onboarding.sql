@@ -1,3 +1,6 @@
+CREATE UNIQUE INDEX IF NOT EXISTS uq_hxy_role_assignments_onboarding_identity
+  ON hxy_role_assignments (organization_id, store_id, assignment_id, account_id);
+
 CREATE TABLE IF NOT EXISTS hxy_member_invites (
   invite_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES hxy_organizations(organization_id) ON DELETE RESTRICT,
@@ -27,9 +30,9 @@ CREATE TABLE IF NOT EXISTS hxy_member_invites (
     FOREIGN KEY (organization_id, created_by_assignment_id)
     REFERENCES hxy_role_assignments(organization_id, assignment_id)
     ON DELETE RESTRICT,
-  CONSTRAINT fk_hxy_member_invites_redeemed_assignment_store
-    FOREIGN KEY (organization_id, store_id, redeemed_assignment_id)
-    REFERENCES hxy_role_assignments(organization_id, store_id, assignment_id)
+  CONSTRAINT fk_hxy_member_invites_redeemed_identity_store
+    FOREIGN KEY (organization_id, store_id, redeemed_assignment_id, redeemed_account_id)
+    REFERENCES hxy_role_assignments(organization_id, store_id, assignment_id, account_id)
     ON DELETE RESTRICT,
   CONSTRAINT chk_hxy_member_invites_expiry CHECK (expires_at > created_at),
   CONSTRAINT chk_hxy_member_invites_state_shape CHECK (
@@ -98,12 +101,20 @@ CREATE TABLE IF NOT EXISTS hxy_member_invite_events (
     ON DELETE RESTRICT,
   CONSTRAINT chk_hxy_member_invite_events_subject CHECK (
     (
-      event_type IN ('created', 'redeemed', 'revoked')
+      event_type IN ('created', 'revoked')
       AND invite_id IS NOT NULL
+      AND subject_assignment_id IS NULL
+    )
+    OR
+    (
+      event_type = 'redeemed'
+      AND invite_id IS NOT NULL
+      AND subject_assignment_id IS NOT NULL
     )
     OR
     (
       event_type = 'member_deactivated'
+      AND invite_id IS NULL
       AND subject_assignment_id IS NOT NULL
     )
   )
