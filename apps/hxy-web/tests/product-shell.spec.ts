@@ -591,6 +591,18 @@ async function expectWithinViewport(page: Page, locator: Locator) {
   expect(viewport).not.toBeNull();
   expect(box!.x).toBeGreaterThanOrEqual(0);
   expect(box!.x + box!.width).toBeLessThanOrEqual(viewport!.width);
+  expect(box!.y).toBeGreaterThanOrEqual(0);
+  expect(box!.y + box!.height).toBeLessThanOrEqual(viewport!.height);
+}
+
+async function expectHorizontallyWithinViewport(page: Page, locator: Locator) {
+  await expect(locator).toBeVisible();
+  const box = await locator.boundingBox();
+  const viewport = page.viewportSize();
+  expect(box).not.toBeNull();
+  expect(viewport).not.toBeNull();
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(viewport!.width);
 }
 
 async function expectNoHorizontalOverflow(page: Page) {
@@ -650,6 +662,14 @@ async function expectMobileOrganizationTouchTargets(page: Page) {
       }),
     );
   expect(undersized).toEqual([]);
+}
+
+async function expectMobileTouchTarget(locator: Locator) {
+  await expect(locator).toBeVisible();
+  const box = await locator.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.width).toBeGreaterThanOrEqual(44);
+  expect(box!.height).toBeGreaterThanOrEqual(44);
 }
 
 test.describe("HXYOS product shell viewport contract", () => {
@@ -931,16 +951,19 @@ test.describe("HXYOS governed onboarding", () => {
       const profile = page.locator(".organization-panel");
       await expect(page.getByRole("heading", { name: "测试创始人" })).toBeVisible();
       await expectWithinViewport(page, page.locator(".stage-header"));
-      await expectWithinViewport(page, profile);
+      await expectHorizontallyWithinViewport(page, profile);
       await expectNoHorizontalOverflow(page);
 
       await page.getByRole("button", { name: "新建门店" }).click();
       const storeForm = page.locator(".organization-form");
+      await storeForm.scrollIntoViewIfNeeded();
       await expectWithinViewport(page, storeForm);
       await page.getByRole("textbox", { name: "门店名称" }).fill("荷小悦岳麓店");
       await page.getByRole("textbox", { name: "城市" }).fill("长沙");
       await page.getByRole("textbox", { name: "地址" }).fill("麓谷大道 88 号");
       const createStore = page.getByRole("button", { name: "创建门店" });
+      await createStore.scrollIntoViewIfNeeded();
+      await expectWithinViewport(page, createStore);
       if (viewport.width === 390) {
         await expectAboveMobileNavigation(page, createStore);
         await expectMobileOrganizationTouchTargets(page);
@@ -953,12 +976,15 @@ test.describe("HXYOS governed onboarding", () => {
 
       await page.getByRole("button", { name: "邀请店长" }).click();
       const inviteForm = page.locator(".organization-invite-form");
+      await inviteForm.scrollIntoViewIfNeeded();
       await expectWithinViewport(page, inviteForm);
       await page
         .getByRole("combobox", { name: "邀请门店" })
         .selectOption(CREATED_STORE_ID);
       await page.getByRole("textbox", { name: "成员姓名" }).fill("岳麓店长");
       const createInvite = page.getByRole("button", { name: "生成邀请" });
+      await createInvite.scrollIntoViewIfNeeded();
+      await expectWithinViewport(page, createInvite);
       if (viewport.width === 390) {
         await expectAboveMobileNavigation(page, createInvite);
       }
@@ -976,13 +1002,25 @@ test.describe("HXYOS governed onboarding", () => {
       await expect(oneTimeResult).toHaveCount(1);
       await expect(oneTimeResult).toContainText(GOVERNED_ONE_TIME_LINK);
       await expect(page.getByText(GOVERNED_ONE_TIME_LINK, { exact: true })).toHaveCount(1);
+      await oneTimeResult.scrollIntoViewIfNeeded();
       await expectWithinViewport(page, oneTimeResult);
       const copyButton = page.getByRole("button", { name: "复制一次性邀请链接" });
+      const closeButton = page.getByRole("button", { name: "关闭一次性邀请链接" });
+      if (viewport.width === 390) {
+        await expectMobileOrganizationTouchTargets(page);
+        await expectMobileTouchTarget(copyButton);
+        await expectMobileTouchTarget(closeButton);
+      }
+      await expectWithinViewport(page, copyButton);
+      await expectWithinViewport(page, closeButton);
       await copyButton.click({ trial: true });
       await copyButton.click();
       await expect(oneTimeResult).toContainText("已复制");
+      expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+        GOVERNED_ONE_TIME_LINK,
+      );
 
-      await page.getByRole("button", { name: "关闭一次性邀请链接" }).click();
+      await closeButton.click();
       await expect(oneTimeResult).toHaveCount(0);
       await expect(page.getByText(GOVERNED_ONE_TIME_LINK, { exact: true })).toHaveCount(0);
       await page.getByRole("button", { name: "邀请店长" }).click();
@@ -991,16 +1029,17 @@ test.describe("HXYOS governed onboarding", () => {
       await page.getByRole("button", { name: "停用首店店长" }).click();
       const dialog = page.getByRole("dialog", { name: "停用成员" });
       await expectWithinViewport(page, dialog);
-      await dialog.getByRole("button", { name: "取消" }).click({ trial: true });
+      const cancelDialog = dialog.getByRole("button", { name: "取消" });
+      await expectWithinViewport(page, cancelDialog);
+      await cancelDialog.click({ trial: true });
       if (viewport.width === 390) {
         await expectMobileOrganizationTouchTargets(page);
       }
-      await dialog.getByRole("button", { name: "取消" }).click();
+      await cancelDialog.click();
       if (viewport.width === 390) {
-        await expectAboveMobileNavigation(
-          page,
-          page.getByRole("button", { name: "退出登录" }),
-        );
+        const logout = page.getByRole("button", { name: "退出登录" });
+        await expectAboveMobileNavigation(page, logout);
+        await expectWithinViewport(page, logout);
         await expectMobileOrganizationTouchTargets(page);
       }
       await expectNoHorizontalOverflow(page);
@@ -1024,7 +1063,7 @@ test.describe("HXYOS governed onboarding", () => {
     await expectTextContained(identityStoreName);
     await expectTextContained(page.getByText(LONG_EMPLOYEE_NAME, { exact: true }));
     await expectWithinViewport(page, page.locator(".stage-header"));
-    await expectWithinViewport(page, page.locator(".organization-panel"));
+    await expectHorizontallyWithinViewport(page, page.locator(".organization-panel"));
     await expectNoHorizontalOverflow(page);
     expect(state.organizationRequests).not.toContain(
       "GET /api/v1/organization/stores",
@@ -1032,10 +1071,12 @@ test.describe("HXYOS governed onboarding", () => {
 
     await page.getByRole("button", { name: "邀请员工" }).click();
     const inviteForm = page.locator(".organization-invite-form");
+    await inviteForm.scrollIntoViewIfNeeded();
     await expectWithinViewport(page, inviteForm);
     await page.getByRole("textbox", { name: "成员姓名" }).fill(LONG_EMPLOYEE_NAME);
     const submit = page.getByRole("button", { name: "生成邀请" });
     await expectAboveMobileNavigation(page, submit);
+    await expectWithinViewport(page, submit);
     await expectMobileOrganizationTouchTargets(page);
     await submit.click();
 
@@ -1061,6 +1102,7 @@ test.describe("HXYOS governed onboarding", () => {
     await expectWithinViewport(page, dialog);
     await expectTextContained(dialog.getByText(`撤销 ${LONG_EMPLOYEE_NAME} 的邀请？`));
     const cancel = dialog.getByRole("button", { name: "取消" });
+    await expectWithinViewport(page, cancel);
     await cancel.click({ trial: true });
     await cancel.click();
     await expect(dialog).toHaveCount(0);
@@ -1068,6 +1110,8 @@ test.describe("HXYOS governed onboarding", () => {
     await revoke.click();
     dialog = page.getByRole("dialog", { name: "撤销邀请" });
     const confirm = dialog.getByRole("button", { name: "继续撤销" });
+    await expectWithinViewport(page, dialog);
+    await expectWithinViewport(page, confirm);
     await confirm.click({ trial: true });
     await expectMobileOrganizationTouchTargets(page);
     await confirm.click();
@@ -1086,10 +1130,9 @@ test.describe("HXYOS governed onboarding", () => {
           request.includes("/organization/invites"),
       ),
     ).toBe(true);
-    await expectAboveMobileNavigation(
-      page,
-      page.getByRole("button", { name: "退出登录" }),
-    );
+    const logout = page.getByRole("button", { name: "退出登录" });
+    await expectAboveMobileNavigation(page, logout);
+    await expectWithinViewport(page, logout);
     await expectNoHorizontalOverflow(page);
   });
 
@@ -1111,11 +1154,10 @@ test.describe("HXYOS governed onboarding", () => {
     await expect(page.getByRole("button", { name: "邀请员工" })).toHaveCount(0);
     expect(state.organizationRequests).toEqual([]);
     await expectWithinViewport(page, page.locator(".stage-header"));
-    await expectWithinViewport(page, page.locator(".organization-panel"));
-    await expectAboveMobileNavigation(
-      page,
-      page.getByRole("button", { name: "退出登录" }),
-    );
+    await expectHorizontallyWithinViewport(page, page.locator(".organization-panel"));
+    const logout = page.getByRole("button", { name: "退出登录" });
+    await expectAboveMobileNavigation(page, logout);
+    await expectWithinViewport(page, logout);
     await expectMobileOrganizationTouchTargets(page);
     await expectNoHorizontalOverflow(page);
   });
@@ -1132,6 +1174,17 @@ test.describe("HXYOS governed onboarding", () => {
     await expect(
       page.getByRole("textbox", { name: "告诉 HXYOS 你要做什么" }),
     ).toBeEnabled();
+    const composer = page.getByTestId("composer");
+    await composer.scrollIntoViewIfNeeded();
+    await expectWithinViewport(page, composer);
+    await page.getByRole("button", { name: "我的" }).click();
+    const identity = page.getByRole("region", { name: "测试员工" });
+    await expect(identity.getByRole("heading", { name: "测试员工", exact: true })).toBeVisible();
+    await expect(identity.getByText("门店员工", { exact: true })).toBeVisible();
+    await expect(identity.getByText("荷小悦首店", { exact: true })).toBeVisible();
+    await identity.scrollIntoViewIfNeeded();
+    await expectWithinViewport(page, identity);
+    await expectHorizontallyWithinViewport(page, page.locator(".organization-panel"));
     expect(GOVERNED_INVITE_TOKEN.length).toBeGreaterThanOrEqual(43);
     expect(GOVERNED_INVITE_TOKEN).toMatch(/^[A-Za-z0-9._~-]+$/);
     expect(state.redeemHashes).toEqual([""]);
@@ -1150,7 +1203,6 @@ test.describe("HXYOS governed onboarding", () => {
     expect(browserStorage.local).not.toContain(GOVERNED_INVITE_TOKEN);
     expect(browserStorage.session).not.toContain(GOVERNED_INVITE_TOKEN);
     await expectWithinViewport(page, page.locator(".stage-header"));
-    await expectWithinViewport(page, page.getByTestId("composer"));
     await expectNoHorizontalOverflow(page);
   });
 });
