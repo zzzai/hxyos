@@ -80,8 +80,15 @@ class InviteResponse(StrictOnboardingResponse):
     expires_at: datetime
 
 
+class CreatedInvite(StrictOnboardingResponse):
+    id: str
+    role: InviteRole
+    display_name: str
+    expires_at: datetime
+
+
 class CreateInviteResponse(StrictOnboardingResponse):
-    invite: InviteResponse
+    invite: CreatedInvite
     one_time_link: str
 
 

@@ -2496,14 +2496,14 @@ def test_founder_invites_manager_with_one_server_based_link(onboarding_api) -> N
 
     assert response.status_code == 201
     assert set(response.json()) == {"invite", "one_time_link"}
-    assert set(response.json()["invite"]) == {
+    invite = response.json()["invite"]
+    assert set(invite) == {
         "id",
-        "store_id",
         "role",
         "display_name",
-        "status",
         "expires_at",
     }
+    assert {"store_id", "status", "hash", "token_hash", "token"}.isdisjoint(invite)
     link = response.json()["one_time_link"]
     assert link.startswith(f"{API_PUBLIC_APP_URL}#invite=")
     assert "attacker.example" not in link

@@ -28,6 +28,7 @@ from .onboarding_schemas import (
     CreateInviteRequest,
     CreateInviteResponse,
     CreateStoreRequest,
+    CreatedInvite,
     InviteResponse,
     InviteRole,
     MemberResponse,
@@ -300,7 +301,12 @@ def create_onboarding_router(
         except OnboardingRepositoryError as exc:
             raise _management_repository_error(exc) from None
         return CreateInviteResponse(
-            invite=_invite_response(record),
+            invite=CreatedInvite(
+                id=record["id"],
+                role=record["role"],
+                display_name=record["display_name"],
+                expires_at=record["expires_at"],
+            ),
             one_time_link=one_time_link,
         )
 
