@@ -3,9 +3,11 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   Copy,
   LogOut,
@@ -27,6 +29,7 @@ import type {
 } from "../../api/client";
 
 interface OrganizationPanelProps {
+  active: boolean;
   user: UserContext;
   assignment: AssignmentContext;
   client: OnboardingClient;
@@ -36,9 +39,16 @@ interface OrganizationPanelProps {
 
 type DataStatus = "idle" | "loading" | "ready" | "error";
 type OpenForm = "store" | "invite" | null;
+type BusyAction =
+  | "create-store"
+  | "create-invite"
+  | "confirm"
+  | "logout"
+  | null;
 type Confirmation =
   | { kind: "revoke"; id: string; name: string }
   | { kind: "deactivate"; id: string; name: string };
+type FocusRestoreMode = "trigger" | "fallback";
 
 interface OrganizationData {
   scope: string;
@@ -57,6 +67,7 @@ function roleName(role: OrganizationMember["role"]) {
 }
 
 export function OrganizationPanel({
+  active,
   user,
   assignment,
   client,
@@ -81,20 +92,19 @@ export function OrganizationPanel({
   });
   const [inviteName, setInviteName] = useState("");
   const [inviteStoreId, setInviteStoreId] = useState("");
-  const [isCreatingStore, setIsCreatingStore] = useState(false);
-  const [isCreatingInvite, setIsCreatingInvite] = useState(false);
+  const [busyAction, setBusyAction] = useState<BusyAction>(null);
   const [mutationFailed, setMutationFailed] = useState(false);
   const [oneTimeLink, setOneTimeLink] = useState<string | null>(null);
   const [copyFailed, setCopyFailed] = useState(false);
   const [copied, setCopied] = useState(false);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
-  const [isConfirming, setIsConfirming] = useState(false);
-  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [logoutFailed, setLogoutFailed] = useState(false);
   const scopeRef = useRef(scope);
   const scopeGenerationRef = useRef({ scope, generation: 0 });
   const mountedRef = useRef(false);
+  const panelRef = useRef<HTMLDivElement>(null);
   const confirmationTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const focusRestoreModeRef = useRef<FocusRestoreMode | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   scopeRef.current = scope;
@@ -112,6 +122,8 @@ export function OrganizationPanel({
   const invitableStores = visibleStores.filter(
     (store) => store.status === "active",
   );
+  const isBusy = busyAction !== null;
+  const interactionsBlocked = isBusy || oneTimeLink !== null;
   const visibleMembers = isManager && assignment.store
     ? scopedData.members.filter(
         (member) => member.store_id === assignment.store?.id,
@@ -125,6 +137,7 @@ export function OrganizationPanel({
         : invite.role === "store_employee" &&
           invite.store_id === assignment.store?.id),
   );
+  const dialogOpen = confirmation !== null;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -138,23 +151,23 @@ export function OrganizationPanel({
     setStoreDraft({ name: "", city: "", address: "" });
     setInviteName("");
     setInviteStoreId("");
-    setIsCreatingStore(false);
-    setIsCreatingInvite(false);
+    setBusyAction(null);
     setMutationFailed(false);
     setOneTimeLink(null);
     setCopyFailed(false);
     setCopied(false);
+    if (confirmation !== null) focusRestoreModeRef.current = "fallback";
     setConfirmation(null);
-    setIsConfirming(false);
   }, [scope]);
 
   useEffect(() => {
-    if (!canManage) {
+    if (!canManage && active) {
       setData(emptyData(scope, "idle"));
       return;
     }
+    if (!active) return;
 
-    let active = true;
+    let requestActive = true;
     setData(emptyData(scope, "loading"));
     const storesRequest = isFounder
       ? client.listStores()
@@ -166,22 +179,62 @@ export function OrganizationPanel({
       client.listInvites(),
     ]).then(
       ([stores, members, invites]) => {
-        if (!active) return;
+        if (!requestActive) return;
         setData({ scope, status: "ready", stores, members, invites });
       },
       () => {
-        if (active) setData(emptyData(scope, "error"));
+        if (requestActive) setData(emptyData(scope, "error"));
       },
     );
 
     return () => {
-      active = false;
+      requestActive = false;
     };
-  }, [canManage, client, isFounder, refreshVersion, scope]);
+  }, [active, canManage, client, isFounder, refreshVersion, scope]);
 
-  useEffect(() => {
-    if (confirmation) cancelRef.current?.focus();
-  }, [confirmation]);
+  useLayoutEffect(() => {
+    if (!dialogOpen) return;
+    const shell = panelRef.current?.closest<HTMLElement>(".app-shell");
+    if (!shell) return;
+    const previousInert = shell.getAttribute("inert");
+    shell.setAttribute("inert", "");
+    return () => {
+      if (previousInert === null) shell.removeAttribute("inert");
+      else shell.setAttribute("inert", previousInert);
+    };
+  }, [dialogOpen]);
+
+  useLayoutEffect(() => {
+    if (!dialogOpen) return;
+    if (busyAction === "confirm") {
+      dialogRef.current?.focus();
+      return;
+    }
+    if (!dialogRef.current?.contains(document.activeElement)) {
+      (cancelRef.current ?? dialogRef.current)?.focus();
+    }
+  }, [busyAction, dialogOpen]);
+
+  useLayoutEffect(() => {
+    if (dialogOpen || focusRestoreModeRef.current === null) return;
+    const mode = focusRestoreModeRef.current;
+    const trigger = confirmationTriggerRef.current;
+    const primaryFallback = panelRef.current?.querySelector<HTMLButtonElement>(
+      '[data-organization-focus-fallback="primary"]',
+    );
+    const secondaryFallback = panelRef.current?.querySelector<HTMLButtonElement>(
+      '[data-organization-focus-fallback="secondary"]:not(:disabled)',
+    );
+    const fallback = primaryFallback
+      ? primaryFallback.disabled ? null : primaryFallback
+      : secondaryFallback;
+    const target = mode === "trigger" && trigger?.isConnected
+      ? trigger
+      : fallback;
+    if (!target) return;
+    focusRestoreModeRef.current = null;
+    target.focus();
+  }, [busyAction, dialogOpen, scope, scopedData.status]);
 
   const refreshData = () => setRefreshVersion((current) => current + 1);
   const requestIsCurrent = (requestScope: string, generation: number) =>
@@ -190,18 +243,20 @@ export function OrganizationPanel({
     scopeGenerationRef.current.generation === generation;
 
   const openStoreForm = () => {
+    if (interactionsBlocked) return;
     setOpenForm("store");
     setMutationFailed(false);
   };
 
   const openInviteForm = () => {
+    if (interactionsBlocked) return;
     setInviteStoreId(invitableStores[0]?.id ?? "");
     setOpenForm("invite");
     setMutationFailed(false);
   };
 
   const closeForm = () => {
-    if (isCreatingStore || isCreatingInvite) return;
+    if (isBusy) return;
     setOpenForm(null);
     setMutationFailed(false);
   };
@@ -215,9 +270,16 @@ export function OrganizationPanel({
       city: storeDraft.city.trim(),
       address: storeDraft.address.trim(),
     };
-    if (!request.name || !request.city || !request.address) return;
+    if (
+      interactionsBlocked ||
+      !request.name ||
+      !request.city ||
+      !request.address
+    ) {
+      return;
+    }
 
-    setIsCreatingStore(true);
+    setBusyAction("create-store");
     setMutationFailed(false);
     try {
       await client.createStore(request);
@@ -231,7 +293,7 @@ export function OrganizationPanel({
       }
     } finally {
       if (requestIsCurrent(requestScope, requestGeneration)) {
-        setIsCreatingStore(false);
+        setBusyAction(null);
       }
     }
   };
@@ -241,12 +303,12 @@ export function OrganizationPanel({
     const displayName = inviteName.trim();
     const requestScope = scope;
     const requestGeneration = scopeGenerationRef.current.generation;
-    if (!displayName) return;
+    if (interactionsBlocked || !displayName) return;
     if (isFounder && !invitableStores.some((store) => store.id === inviteStoreId)) {
       return;
     }
 
-    setIsCreatingInvite(true);
+    setBusyAction("create-invite");
     setMutationFailed(false);
     setCopyFailed(false);
     setCopied(false);
@@ -267,7 +329,7 @@ export function OrganizationPanel({
       }
     } finally {
       if (requestIsCurrent(requestScope, requestGeneration)) {
-        setIsCreatingInvite(false);
+        setBusyAction(null);
       }
     }
   };
@@ -295,21 +357,27 @@ export function OrganizationPanel({
     nextConfirmation: Confirmation,
     trigger: HTMLButtonElement,
   ) => {
+    if (interactionsBlocked) return;
     confirmationTriggerRef.current = trigger;
+    focusRestoreModeRef.current = null;
     setMutationFailed(false);
     setConfirmation(nextConfirmation);
   };
 
-  const closeConfirmation = () => {
-    if (isConfirming) return;
-    const trigger = confirmationTriggerRef.current;
+  const finishConfirmation = (mode: FocusRestoreMode) => {
+    focusRestoreModeRef.current = mode;
     setConfirmation(null);
-    trigger?.focus();
+  };
+
+  const closeConfirmation = () => {
+    if (busyAction === "confirm") return;
+    finishConfirmation("trigger");
   };
 
   const handleDialogKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") {
       event.preventDefault();
+      if (busyAction === "confirm") return;
       closeConfirmation();
       return;
     }
@@ -319,7 +387,11 @@ export function OrganizationPanel({
         "button:not(:disabled)",
       ) ?? [],
     );
-    if (focusable.length === 0) return;
+    if (focusable.length === 0) {
+      event.preventDefault();
+      dialogRef.current?.focus();
+      return;
+    }
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
     if (
@@ -332,11 +404,11 @@ export function OrganizationPanel({
   };
 
   const confirmMutation = async () => {
-    if (!confirmation) return;
+    if (!confirmation || interactionsBlocked) return;
     const requestScope = scope;
     const requestGeneration = scopeGenerationRef.current.generation;
     const currentConfirmation = confirmation;
-    setIsConfirming(true);
+    setBusyAction("confirm");
     setMutationFailed(false);
     try {
       if (currentConfirmation.kind === "revoke") {
@@ -345,28 +417,30 @@ export function OrganizationPanel({
         await client.deactivateMember(currentConfirmation.id);
       }
       if (!requestIsCurrent(requestScope, requestGeneration)) return;
-      setConfirmation(null);
+      finishConfirmation("fallback");
       refreshData();
     } catch {
       if (requestIsCurrent(requestScope, requestGeneration)) {
         setMutationFailed(true);
+        finishConfirmation("trigger");
       }
     } finally {
       if (requestIsCurrent(requestScope, requestGeneration)) {
-        setIsConfirming(false);
+        setBusyAction(null);
       }
     }
   };
 
   const handleLogout = async () => {
-    setIsLoggingOut(true);
+    if (interactionsBlocked) return;
+    setBusyAction("logout");
     setLogoutFailed(false);
     try {
       await logout();
       onLoggedOut();
     } catch {
       setLogoutFailed(true);
-      setIsLoggingOut(false);
+      setBusyAction(null);
     }
   };
 
@@ -376,7 +450,7 @@ export function OrganizationPanel({
     "当前门店";
 
   return (
-    <div className="organization-panel">
+    <div ref={panelRef} className="organization-panel" hidden={!active}>
       <section
         className="organization-identity"
         aria-labelledby={identityHeadingId}
@@ -395,15 +469,21 @@ export function OrganizationPanel({
             <h2 id="management-heading">门店与成员</h2>
             <div className="organization-actions">
               {isFounder ? (
-                <button type="button" onClick={openStoreForm}>
+                <button
+                  type="button"
+                  disabled={interactionsBlocked}
+                  onClick={openStoreForm}
+                >
                   <Plus aria-hidden="true" />
                   新建门店
                 </button>
               ) : null}
               <button
+                data-organization-focus-fallback="primary"
                 type="button"
                 disabled={
                   scopedData.status !== "ready" ||
+                  interactionsBlocked ||
                   (isFounder && invitableStores.length === 0)
                 }
                 onClick={openInviteForm}
@@ -447,19 +527,19 @@ export function OrganizationPanel({
                 />
               </label>
               <div className="organization-form-actions organization-form-wide">
-                <button type="button" disabled={isCreatingStore} onClick={closeForm}>
+                <button type="button" disabled={isBusy} onClick={closeForm}>
                   取消
                 </button>
                 <button
                   type="submit"
                   disabled={
-                    isCreatingStore ||
+                    isBusy ||
                     !storeDraft.name.trim() ||
                     !storeDraft.city.trim() ||
                     !storeDraft.address.trim()
                   }
                 >
-                  {isCreatingStore ? "正在创建" : "创建门店"}
+                  {busyAction === "create-store" ? "正在创建" : "创建门店"}
                 </button>
               </div>
             </form>
@@ -495,24 +575,24 @@ export function OrganizationPanel({
                 />
               </label>
               <div className="organization-form-actions">
-                <button type="button" disabled={isCreatingInvite} onClick={closeForm}>
+                <button type="button" disabled={isBusy} onClick={closeForm}>
                   取消
                 </button>
                 <button
                   type="submit"
                   disabled={
-                    isCreatingInvite ||
+                    isBusy ||
                     !inviteName.trim() ||
                     (isFounder && !invitableStores.some((store) => store.id === inviteStoreId))
                   }
                 >
-                  {isCreatingInvite ? "正在生成" : "生成邀请"}
+                  {busyAction === "create-invite" ? "正在生成" : "生成邀请"}
                 </button>
               </div>
             </form>
           ) : null}
 
-          {oneTimeLink ? (
+          {active && oneTimeLink ? (
             <div
               className="invite-link-result"
               role="status"
@@ -616,6 +696,7 @@ export function OrganizationPanel({
                             <button
                               className="organization-icon-button"
                               type="button"
+                              disabled={interactionsBlocked}
                               aria-label={`停用${member.display_name}`}
                               title={`停用${member.display_name}`}
                               onClick={(event) =>
@@ -657,6 +738,7 @@ export function OrganizationPanel({
                         <button
                           className="organization-icon-button"
                           type="button"
+                          disabled={interactionsBlocked}
                           aria-label={`撤销${invite.display_name}的邀请`}
                           title={`撤销${invite.display_name}的邀请`}
                           onClick={(event) =>
@@ -680,18 +762,19 @@ export function OrganizationPanel({
 
       <footer className="organization-footer">
         <button
+          data-organization-focus-fallback="secondary"
           className="organization-logout"
           type="button"
-          disabled={isLoggingOut}
+          disabled={interactionsBlocked}
           onClick={() => void handleLogout()}
         >
           <LogOut aria-hidden="true" />
-          {isLoggingOut ? "正在退出" : "退出登录"}
+          {busyAction === "logout" ? "正在退出" : "退出登录"}
         </button>
         {logoutFailed ? <p role="alert">没有退出，请重试</p> : null}
       </footer>
 
-      {confirmation ? (
+      {confirmation ? createPortal(
         <div className="organization-dialog-backdrop">
           <div
             ref={dialogRef}
@@ -699,6 +782,7 @@ export function OrganizationPanel({
             role="dialog"
             aria-modal="true"
             aria-labelledby={dialogHeadingId}
+            tabIndex={-1}
             onKeyDown={handleDialogKeyDown}
           >
             <h2 id={dialogHeadingId}>
@@ -709,32 +793,28 @@ export function OrganizationPanel({
                 ? `撤销 ${confirmation.name} 的邀请？`
                 : `停用 ${confirmation.name}？`}
             </p>
-            {mutationFailed ? (
-              <p className="organization-alert" role="alert">
-                操作没有完成，请重试
-              </p>
-            ) : null}
             <div className="organization-dialog-actions">
               <button
                 ref={cancelRef}
                 type="button"
-                disabled={isConfirming}
+                disabled={busyAction === "confirm"}
                 onClick={closeConfirmation}
               >
                 取消
               </button>
               <button
                 type="button"
-                disabled={isConfirming}
+                disabled={busyAction === "confirm"}
                 onClick={() => void confirmMutation()}
               >
                 {confirmation.kind === "revoke"
-                  ? isConfirming ? "正在撤销" : "继续撤销"
-                  : isConfirming ? "正在停用" : "确认停用"}
+                  ? busyAction === "confirm" ? "正在撤销" : "继续撤销"
+                  : busyAction === "confirm" ? "正在停用" : "确认停用"}
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </div>
   );

@@ -124,13 +124,16 @@ function renderPanel(
     logout,
     onLoggedOut,
     ...render(
-      <OrganizationPanel
-        user={USER}
-        assignment={assignment}
-        client={client}
-        logout={logout}
-        onLoggedOut={onLoggedOut}
-      />,
+      <div className="app-shell" data-testid="app-shell">
+        <OrganizationPanel
+          active
+          user={USER}
+          assignment={assignment}
+          client={client}
+          logout={logout}
+          onLoggedOut={onLoggedOut}
+        />
+      </div>,
     ),
   };
 }
@@ -273,6 +276,40 @@ describe("OrganizationPanel", () => {
     expect(client.listStores).toHaveBeenCalledTimes(2);
   });
 
+  it("serializes pending store creation and prevents a form switch", async () => {
+    const user = userEvent.setup();
+    const createdStore = deferred<OrganizationStore>();
+    const client = onboardingClient({
+      createStore: vi.fn(() => createdStore.promise),
+    });
+    renderPanel(FOUNDER, client);
+    await screen.findByText("荷小悦一店");
+
+    await user.click(screen.getByRole("button", { name: "新建门店" }));
+    await user.type(screen.getByRole("textbox", { name: "门店名称" }), "新门店");
+    await user.type(screen.getByRole("textbox", { name: "城市" }), "长沙");
+    await user.type(screen.getByRole("textbox", { name: "地址" }), "测试路 1 号");
+    await user.click(screen.getByRole("button", { name: "创建门店" }));
+
+    expect(screen.getByRole("button", { name: "正在创建" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "新建门店" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "邀请店长" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "取消" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "退出登录" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "撤销待入职店长的邀请" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "停用李店长" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "邀请店长" }));
+    expect(screen.getByRole("textbox", { name: "门店名称" })).toBeVisible();
+    expect(
+      screen.queryByRole("textbox", { name: "成员姓名" }),
+    ).not.toBeInTheDocument();
+
+    await act(async () => createdStore.resolve(STORES[0]));
+  });
+
   it("waits for verified stores before enabling founder invitations", async () => {
     const stores = deferred<OrganizationStore[]>();
     const client = onboardingClient({
@@ -325,6 +362,44 @@ describe("OrganizationPanel", () => {
     expect(screen.queryByRole("status", { name: "一次性邀请链接" })).not.toBeInTheDocument();
   });
 
+  it("blocks a second mutation while a one-time link awaits dismissal", async () => {
+    const user = userEvent.setup();
+    const client = onboardingClient({
+      createInvite: vi.fn().mockResolvedValue({
+        invite: {
+          id: "guarded-invite-private",
+          role: "store_manager",
+          display_name: "王店长",
+          expires_at: "2026-07-15T10:00:00Z",
+        },
+        one_time_link: "https://hxy.example/#invite=guarded-private-link",
+      }),
+    });
+    renderPanel(FOUNDER, client);
+    await screen.findByText("荷小悦一店");
+    await user.click(screen.getByRole("button", { name: "邀请店长" }));
+    await user.type(screen.getByRole("textbox", { name: "成员姓名" }), "王店长");
+    await user.click(screen.getByRole("button", { name: "生成邀请" }));
+    await screen.findByText(/guarded-private-link/);
+    await screen.findByText("待入职店长");
+
+    expect(screen.getByRole("button", { name: "新建门店" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "邀请店长" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "退出登录" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "撤销待入职店长的邀请" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "停用李店长" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "邀请店长" }));
+    expect(client.createInvite).toHaveBeenCalledOnce();
+
+    await user.click(
+      screen.getByRole("button", { name: "关闭一次性邀请链接" }),
+    );
+    expect(screen.getByRole("button", { name: "邀请店长" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "退出登录" })).toBeEnabled();
+  });
+
   it("invites an employee without sending a store selector and bounds copy failure", async () => {
     const user = userEvent.setup();
     const oneTimeLink = "https://hxy.example/#invite=employee-private-link";
@@ -361,16 +436,26 @@ describe("OrganizationPanel", () => {
   it("requires confirmation before revoke and restores focus on Escape", async () => {
     const user = userEvent.setup();
     const revoke = deferred<OrganizationInvite>();
-    const client = onboardingClient({ revokeInvite: vi.fn(() => revoke.promise) });
+    const client = onboardingClient({
+      revokeInvite: vi.fn(() => revoke.promise),
+      listInvites: vi
+        .fn()
+        .mockResolvedValueOnce([PENDING_INVITE])
+        .mockResolvedValueOnce([]),
+    });
     renderPanel(FOUNDER, client);
+    const shell = screen.getByTestId("app-shell");
     const trigger = await screen.findByRole("button", { name: "撤销待入职店长的邀请" });
 
     await user.click(trigger);
     const dialog = screen.getByRole("dialog", { name: "撤销邀请" });
     expect(client.revokeInvite).not.toHaveBeenCalled();
+    expect(dialog.closest(".app-shell")).toBeNull();
+    expect(shell).toHaveAttribute("inert");
     expect(screen.getByRole("button", { name: "取消" })).toHaveFocus();
     fireEvent.keyDown(dialog, { key: "Escape" });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(shell).not.toHaveAttribute("inert");
     expect(client.revokeInvite).not.toHaveBeenCalled();
     expect(trigger).toHaveFocus();
 
@@ -378,8 +463,19 @@ describe("OrganizationPanel", () => {
     await user.click(screen.getByRole("button", { name: "继续撤销" }));
     expect(client.revokeInvite).toHaveBeenCalledWith(PENDING_INVITE.id);
     expect(screen.getByRole("button", { name: "正在撤销" })).toBeDisabled();
+    const pendingDialog = screen.getByRole("dialog", { name: "撤销邀请" });
+    await waitFor(() => expect(pendingDialog).toHaveFocus());
+    fireEvent.keyDown(pendingDialog, { key: "Tab" });
+    expect(pendingDialog).toHaveFocus();
+    fireEvent.keyDown(pendingDialog, { key: "Escape" });
+    expect(screen.getByRole("dialog", { name: "撤销邀请" })).toBeVisible();
+    expect(shell).toHaveAttribute("inert");
     await act(async () => revoke.resolve({ ...PENDING_INVITE, status: "revoked" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(shell).not.toHaveAttribute("inert");
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "邀请店长" })).toHaveFocus(),
+    );
     expect(client.listInvites).toHaveBeenCalledTimes(2);
   });
 
@@ -389,35 +485,101 @@ describe("OrganizationPanel", () => {
     renderPanel(FOUNDER, client);
     await screen.findByText("李店长");
 
-    await user.click(screen.getByRole("button", { name: "停用李店长" }));
+    const trigger = screen.getByRole("button", { name: "停用李店长" });
+    await user.click(trigger);
     expect(client.deactivateMember).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "取消" }));
     expect(client.deactivateMember).not.toHaveBeenCalled();
+    expect(trigger).toHaveFocus();
+    expect(screen.getByTestId("app-shell")).not.toHaveAttribute("inert");
 
-    await user.click(screen.getByRole("button", { name: "停用李店长" }));
+    await user.click(trigger);
     await user.click(screen.getByRole("button", { name: "确认停用" }));
     expect(client.deactivateMember).toHaveBeenCalledWith(MEMBERS[1].assignment_id);
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(client.listMembers).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps a failed confirmation bounded inside the dialog", async () => {
+  it("restores an app shell that was already inert before the dialog", async () => {
+    const client = onboardingClient();
+    renderPanel(FOUNDER, client);
+    const shell = screen.getByTestId("app-shell");
+    const trigger = await screen.findByRole("button", {
+      name: "撤销待入职店长的邀请",
+    });
+    shell.setAttribute("inert", "existing");
+
+    fireEvent.click(trigger);
+    expect(screen.getByRole("dialog", { name: "撤销邀请" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+
+    expect(shell).toHaveAttribute("inert", "existing");
+  });
+
+  it("uses the new role fallback when a scope change closes the dialog", async () => {
+    const user = userEvent.setup();
+    const client = onboardingClient();
+    const logout = vi.fn().mockResolvedValue(undefined);
+    const onLoggedOut = vi.fn();
+    const view = render(
+      <div className="app-shell">
+        <OrganizationPanel
+          active
+          user={USER}
+          assignment={FOUNDER}
+          client={client}
+          logout={logout}
+          onLoggedOut={onLoggedOut}
+        />
+      </div>,
+    );
+    await user.click(
+      await screen.findByRole("button", {
+        name: "撤销待入职店长的邀请",
+      }),
+    );
+    expect(screen.getByRole("dialog", { name: "撤销邀请" })).toBeVisible();
+
+    view.rerender(
+      <div className="app-shell">
+        <OrganizationPanel
+          active
+          user={USER}
+          assignment={MANAGER}
+          client={client}
+          logout={logout}
+          onLoggedOut={onLoggedOut}
+        />
+      </div>,
+    );
+
+    expect(await screen.findByRole("button", { name: "邀请员工" })).toBeEnabled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "邀请员工" })).toHaveFocus(),
+    );
+  });
+
+  it("closes a failed confirmation and returns focus to its trigger", async () => {
     const user = userEvent.setup();
     const client = onboardingClient({
       revokeInvite: vi.fn().mockRejectedValue(new Error("offline")),
     });
     renderPanel(FOUNDER, client);
-    await user.click(
-      await screen.findByRole("button", { name: "撤销待入职店长的邀请" }),
-    );
+    const trigger = await screen.findByRole("button", {
+      name: "撤销待入职店长的邀请",
+    });
+    await user.click(trigger);
     const dialog = screen.getByRole("dialog", { name: "撤销邀请" });
 
     await user.click(within(dialog).getByRole("button", { name: "继续撤销" }));
 
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    expect(await screen.findByRole("alert")).toHaveTextContent(
       "操作没有完成，请重试",
     );
-    expect(within(dialog).getByRole("button", { name: "继续撤销" })).toBeEnabled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByTestId("app-shell")).not.toHaveAttribute("inert");
+    expect(trigger).toHaveFocus();
   });
 
   it("shows bounded loading, error, retry, and empty states", async () => {
@@ -463,6 +625,7 @@ describe("OrganizationPanel", () => {
 
     view.rerender(
       <OrganizationPanel
+        active
         user={USER}
         assignment={MANAGER}
         client={client}
@@ -496,6 +659,7 @@ describe("OrganizationPanel", () => {
 
     view.rerender(
       <OrganizationPanel
+        active
         user={USER}
         assignment={MANAGER}
         client={client}
@@ -508,6 +672,7 @@ describe("OrganizationPanel", () => {
     );
     view.rerender(
       <OrganizationPanel
+        active
         user={USER}
         assignment={FOUNDER}
         client={client}

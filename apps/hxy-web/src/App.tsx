@@ -130,6 +130,7 @@ function ProductShell({
 }: ProductShellProps) {
   const { retry, session, status } = useSession();
   const [activeView, setActiveView] = useState<PrimaryView>("conversation");
+  const [profileEverVisited, setProfileEverVisited] = useState(false);
   const [isRailCompact, setIsRailCompact] = useState(true);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [draft, setDraft] = useState("");
@@ -663,6 +664,7 @@ function ProductShell({
     setJourneyMode(null);
     setIssueSourceTask(null);
     setJourneyError(false);
+    if (view === "profile") setProfileEverVisited(true);
     setActiveView(view);
   };
 
@@ -845,11 +847,11 @@ function ProductShell({
             }
           >
             <Store aria-hidden="true" />
-            <span>{roleLabel}</span>
+            <span className="context-role">{roleLabel}</span>
             <span className="context-separator" aria-hidden="true">
               /
             </span>
-            <span>{scopeLabel}</span>
+            <span className="context-scope">{scopeLabel}</span>
             {status === "unauthorized" || status === "error" ? (
               <button
                 className="icon-button"
@@ -1007,15 +1009,7 @@ function ProductShell({
               )}
             </div>
           ) : activeView === "profile" ? (
-            session && assignment ? (
-              <OrganizationPanel
-                user={session.user}
-                assignment={assignment}
-                client={onboardingClient}
-                logout={logout}
-                onLoggedOut={onLoggedOut}
-              />
-            ) : null
+            null
           ) : journeyMode === "training" ? (
             <div className="journey-panel">
               <div className="journey-heading">
@@ -1258,6 +1252,16 @@ function ProductShell({
               <div ref={messageListEndRef} />
             </div>
           )}
+          {profileEverVisited && session && assignment ? (
+            <OrganizationPanel
+              active={activeView === "profile"}
+              user={session.user}
+              assignment={assignment}
+              client={onboardingClient}
+              logout={logout}
+              onLoggedOut={onLoggedOut}
+            />
+          ) : null}
         </section>
 
         {activeView === "conversation" ? (

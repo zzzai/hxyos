@@ -268,6 +268,8 @@ button:disabled {
 
 .stage-header {
   display: flex;
+  min-width: 0;
+  overflow: hidden;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
@@ -279,6 +281,7 @@ button:disabled {
 
 .context-line {
   display: flex;
+  flex: 1 1 0;
   min-width: 0;
   align-items: center;
   gap: 8px;
@@ -300,8 +303,19 @@ button:disabled {
   text-overflow: ellipsis;
 }
 
+.context-role,
+.context-separator {
+  flex: 0 0 auto;
+}
+
 .context-separator {
   color: var(--color-border-strong);
+}
+
+.context-scope {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .source-button {
@@ -764,6 +778,11 @@ button:disabled {
   margin-top: 7px;
   color: var(--color-muted);
   font-size: 13px;
+}
+
+.organization-identity-meta span {
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .organization-management {
@@ -1719,6 +1738,35 @@ button:disabled {
   .stage-header {
     min-height: 52px;
     padding: 8px 14px;
+  }
+
+  .organization-panel button,
+  .organization-dialog button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .organization-form input,
+  .organization-form select {
+    min-height: 44px;
+  }
+
+  .organization-icon-button {
+    width: 44px;
+    height: 44px;
+    flex-basis: 44px;
+  }
+
+  .organization-row {
+    grid-template-columns: minmax(0, 1fr) 44px;
+  }
+
+  .organization-store-row {
+    grid-template-columns: 24px minmax(0, 1fr) auto;
+  }
+
+  .invite-link-result {
+    grid-template-columns: minmax(0, 1fr) 44px 44px;
   }
 
   .source-button {

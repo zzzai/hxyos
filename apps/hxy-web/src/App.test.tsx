@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import App from "./App";
 import { MeRequestError, type OnboardingClient } from "./api/client";
+import shellCss from "./styles/shell.css?raw";
 
 const TEST_SESSION = {
   user: {
@@ -118,6 +119,16 @@ function onboardingGateway(
     redeemInvite: vi.fn(),
     ...overrides,
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
 }
 
 function conversationGateway(overrides: Record<string, unknown> = {}) {
@@ -352,6 +363,47 @@ const FORBIDDEN_FRONTSTAGE_TERMS = [
 ];
 
 describe("HXYOS product shell", () => {
+  it("marks the final header scope as the shrinkable context value", () => {
+    renderApp();
+
+    const context = screen.getByLabelText("当前身份和门店");
+    expect(within(context).getByText("门店员工")).toHaveClass("context-role");
+    expect(within(context).getByText("测试门店")).toHaveClass("context-scope");
+  });
+
+  it("keeps mobile organization controls at 44px and clips header context", () => {
+    expect(shellCss).toMatch(
+      /\.stage-header\s*{[^}]*min-width:\s*0;[^}]*overflow:\s*hidden;/s,
+    );
+    expect(shellCss).toMatch(
+      /\.context-line\s*{[^}]*flex:\s*1 1 0;[^}]*min-width:\s*0;/s,
+    );
+    expect(shellCss).toMatch(
+      /\.context-scope\s*{[^}]*min-width:\s*0;[^}]*text-overflow:\s*ellipsis;/s,
+    );
+    expect(shellCss).toMatch(
+      /\.context-role,\s*\.context-separator\s*{[^}]*flex:\s*0 0 auto;/s,
+    );
+    expect(shellCss).toMatch(
+      /\.organization-identity-meta span\s*{[^}]*overflow-wrap:\s*anywhere;/s,
+    );
+    const mobileCss = shellCss.slice(
+      shellCss.indexOf("@media (max-width: 720px)"),
+    );
+    expect(mobileCss).toMatch(
+      /\.organization-panel button,[^}]*min-height:\s*44px;/s,
+    );
+    expect(mobileCss).toMatch(
+      /\.organization-form input,[^}]*min-height:\s*44px;/s,
+    );
+    expect(mobileCss).toMatch(
+      /\.organization-icon-button\s*{[^}]*width:\s*44px;[^}]*height:\s*44px;/s,
+    );
+    expect(mobileCss).toMatch(
+      /\.invite-link-result\s*{[^}]*44px 44px;/s,
+    );
+  });
+
   it("mounts employee profile without organization reads and completes logout", async () => {
     const user = userEvent.setup();
     const onboardingClient = onboardingGateway();
@@ -413,6 +465,68 @@ describe("HXYOS product shell", () => {
     expect(onboardingClient.listStores).toHaveBeenCalledOnce();
     expect(onboardingClient.listMembers).toHaveBeenCalledOnce();
     expect(onboardingClient.listInvites).toHaveBeenCalledOnce();
+  });
+
+  it("retains a private invite result across profile navigation until dismissal", async () => {
+    const user = userEvent.setup();
+    const inviteResult = deferred<
+      Awaited<ReturnType<OnboardingClient["createInvite"]>>
+    >();
+    const oneTimeLink = "https://hxy.example/#invite=retained-private-link";
+    const onboardingClient = onboardingGateway({
+      listStores: vi.fn().mockResolvedValue([
+        {
+          id: "store-retained",
+          name: "荷小悦首店",
+          city: "长沙",
+          address: "芙蓉路 1 号",
+          status: "active",
+        },
+      ]),
+      createInvite: vi.fn(() => inviteResult.promise),
+    });
+    const { container } = render(
+      <App
+        initialSession={FOUNDER_SESSION}
+        onboardingClient={onboardingClient}
+      />,
+    );
+
+    expect(onboardingClient.listStores).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "我的" }));
+    await screen.findByText("荷小悦首店");
+    await user.click(screen.getByRole("button", { name: "邀请店长" }));
+    await user.type(screen.getByRole("textbox", { name: "成员姓名" }), "王店长");
+    await user.click(screen.getByRole("button", { name: "生成邀请" }));
+
+    await user.click(screen.getByRole("button", { name: "对话" }));
+    expect(screen.getByRole("heading", { name: "今天想先处理什么？" })).toBeVisible();
+    expect(container.querySelector(".organization-panel")).toHaveAttribute("hidden");
+    await act(async () =>
+      inviteResult.resolve({
+        invite: {
+          id: "invite-retained",
+          role: "store_manager",
+          display_name: "王店长",
+          expires_at: "2026-07-15T10:00:00Z",
+        },
+        one_time_link: oneTimeLink,
+      }),
+    );
+    expect(document.body).not.toHaveTextContent(oneTimeLink);
+    expect(screen.queryByRole("region", { name: "测试创始人" })).not.toBeInTheDocument();
+    expect(onboardingClient.listStores).toHaveBeenCalledOnce();
+    expect(onboardingClient.listMembers).toHaveBeenCalledOnce();
+    expect(onboardingClient.listInvites).toHaveBeenCalledOnce();
+
+    await user.click(screen.getByRole("button", { name: "我的" }));
+    expect(await screen.findByText(oneTimeLink)).toBeVisible();
+    await user.click(
+      screen.getByRole("button", { name: "关闭一次性邀请链接" }),
+    );
+    await user.click(screen.getByRole("button", { name: "对话" }));
+    await user.click(screen.getByRole("button", { name: "我的" }));
+    expect(screen.queryByText(oneTimeLink)).not.toBeInTheDocument();
   });
 
   it("shows one accessible composer in the main experience", () => {
