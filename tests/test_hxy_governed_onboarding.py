@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -1235,3 +1236,687 @@ def test_postgres_enforces_onboarding_storage_contracts() -> None:
             (schema_name,),
         ).fetchone()
         assert remaining_schema is None
+
+
+class RecordingOnboardingResult:
+    def __init__(self, *, row=None, rows=None) -> None:
+        self.row = row
+        self.rows = rows or []
+
+    def fetchone(self):
+        return self.row
+
+    def fetchall(self):
+        return self.rows
+
+
+class RecordingOnboardingConnection:
+    def __init__(
+        self,
+        results: list[RecordingOnboardingResult | BaseException],
+    ) -> None:
+        self.results = list(results)
+        self.calls: list[tuple[str, tuple[object, ...]]] = []
+        self.enter_count = 0
+        self.committed = False
+        self.rolled_back = False
+
+    def __enter__(self):
+        self.enter_count += 1
+        return self
+
+    def __exit__(self, exc_type, *_args) -> None:
+        self.committed = exc_type is None
+        self.rolled_back = exc_type is not None
+        return None
+
+    def execute(self, statement: str, params: tuple[object, ...] = ()):
+        self.calls.append((" ".join(statement.split()), params))
+        if not self.results:
+            raise AssertionError(f"unexpected SQL: {statement}")
+        result = self.results.pop(0)
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+
+REPOSITORY_ORGANIZATION_ID = "10000000-0000-0000-0000-000000000001"
+REPOSITORY_CREATOR_ASSIGNMENT_ID = "20000000-0000-0000-0000-000000000002"
+REPOSITORY_ACTOR_ASSIGNMENT_ID = "30000000-0000-0000-0000-000000000003"
+REPOSITORY_TARGET_ASSIGNMENT_ID = "40000000-0000-0000-0000-000000000004"
+REPOSITORY_INVITE_ID = "50000000-0000-0000-0000-000000000005"
+REPOSITORY_STORE_ID = "hxy-store-test"
+RAW_INVITE_TOKEN = "invite-secret-" + "i" * 48
+RAW_SESSION_TOKEN = "session-secret-" + "s" * 48
+INVITE_TOKEN_HASH = hashlib.sha256(RAW_INVITE_TOKEN.encode("utf-8")).hexdigest()
+INVITE_EXPIRES_AT = datetime(2030, 1, 2, tzinfo=timezone.utc)
+
+
+def onboarding_repository(monkeypatch, connection: RecordingOnboardingConnection):
+    from apps.api.hxy_product.onboarding_repository import OnboardingRepository
+
+    repository = OnboardingRepository("postgresql://onboarding.test/hxy")
+    connect_count = 0
+
+    def connect():
+        nonlocal connect_count
+        connect_count += 1
+        return connection
+
+    monkeypatch.setattr(repository, "connect", connect)
+    return repository, lambda: connect_count
+
+
+def test_onboarding_repository_lists_stores_with_bounded_organization_scope(
+    monkeypatch,
+) -> None:
+    connection = RecordingOnboardingConnection(
+        [
+            RecordingOnboardingResult(
+                rows=[
+                    {
+                        "id": REPOSITORY_STORE_ID,
+                        "name": "Main Store",
+                        "city": "Shanghai",
+                        "address": "Road 1",
+                        "status": "active",
+                        "organization_id": REPOSITORY_ORGANIZATION_ID,
+                        "token_hash": INVITE_TOKEN_HASH,
+                    }
+                ]
+            )
+        ]
+    )
+    repository, connect_count = onboarding_repository(monkeypatch, connection)
+
+    stores = repository.list_stores(REPOSITORY_ORGANIZATION_ID)
+
+    assert stores == [
+        {
+            "id": REPOSITORY_STORE_ID,
+            "name": "Main Store",
+            "city": "Shanghai",
+            "address": "Road 1",
+            "status": "active",
+        }
+    ]
+    statement, params = connection.calls[0]
+    assert "SELECT *" not in statement
+    assert "FROM hxy_organization_stores AS organization_store" in statement
+    assert "organization_store.organization_id = %s::uuid" in statement
+    assert params == (REPOSITORY_ORGANIZATION_ID,)
+    assert connect_count() == 1
+
+
+def test_onboarding_repository_lists_members_with_bounded_store_scope(
+    monkeypatch,
+) -> None:
+    connection = RecordingOnboardingConnection(
+        [
+            RecordingOnboardingResult(
+                rows=[
+                    {
+                        "assignment_id": REPOSITORY_TARGET_ASSIGNMENT_ID,
+                        "store_id": REPOSITORY_STORE_ID,
+                        "display_name": "Manager",
+                        "role": "store_manager",
+                        "status": "active",
+                        "account_id": "must-not-leak",
+                        "username": "must-not-leak",
+                        "password_hash": "must-not-leak",
+                    }
+                ]
+            )
+        ]
+    )
+    repository, _ = onboarding_repository(monkeypatch, connection)
+
+    members = repository.list_members(
+        REPOSITORY_ORGANIZATION_ID,
+        REPOSITORY_STORE_ID,
+    )
+
+    assert members == [
+        {
+            "assignment_id": REPOSITORY_TARGET_ASSIGNMENT_ID,
+            "store_id": REPOSITORY_STORE_ID,
+            "display_name": "Manager",
+            "role": "store_manager",
+            "status": "active",
+        }
+    ]
+    statement, params = connection.calls[0]
+    assert "SELECT *" not in statement
+    assert "assignment.organization_id = %s::uuid" in statement
+    assert "assignment.store_id = %s" in statement
+    assert params == (REPOSITORY_ORGANIZATION_ID, REPOSITORY_STORE_ID)
+
+
+def test_onboarding_repository_lists_invites_without_exposing_secrets(
+    monkeypatch,
+) -> None:
+    connection = RecordingOnboardingConnection(
+        [
+            RecordingOnboardingResult(
+                rows=[
+                    {
+                        "id": REPOSITORY_INVITE_ID,
+                        "store_id": REPOSITORY_STORE_ID,
+                        "role": "store_employee",
+                        "display_name": "Employee",
+                        "status": "pending",
+                        "expires_at": INVITE_EXPIRES_AT,
+                        "organization_id": REPOSITORY_ORGANIZATION_ID,
+                        "token_hash": INVITE_TOKEN_HASH,
+                        "one_time_link": "must-not-leak",
+                    }
+                ]
+            )
+        ]
+    )
+    repository, _ = onboarding_repository(monkeypatch, connection)
+
+    invites = repository.list_invites(
+        REPOSITORY_ORGANIZATION_ID,
+        REPOSITORY_STORE_ID,
+    )
+
+    assert invites == [
+        {
+            "id": REPOSITORY_INVITE_ID,
+            "store_id": REPOSITORY_STORE_ID,
+            "role": "store_employee",
+            "display_name": "Employee",
+            "status": "pending",
+            "expires_at": INVITE_EXPIRES_AT,
+        }
+    ]
+    statement, params = connection.calls[0]
+    assert "SELECT *" not in statement
+    assert "token_hash" not in statement
+    assert "invite.organization_id = %s::uuid" in statement
+    assert "invite.store_id = %s" in statement
+    assert params == (REPOSITORY_ORGANIZATION_ID, REPOSITORY_STORE_ID)
+
+
+def test_onboarding_repository_creates_store_atomically_with_server_id(
+    monkeypatch,
+) -> None:
+    connection = RecordingOnboardingConnection(
+        [
+            RecordingOnboardingResult(row={"assignment_id": REPOSITORY_CREATOR_ASSIGNMENT_ID}),
+            RecordingOnboardingResult(
+                row={
+                    "id": "ignored-by-assertion",
+                    "name": "Main Store",
+                    "city": "Shanghai",
+                    "address": "Road 1",
+                    "status": "active",
+                }
+            ),
+            RecordingOnboardingResult(),
+        ]
+    )
+    repository, connect_count = onboarding_repository(monkeypatch, connection)
+
+    store = repository.create_store(
+        REPOSITORY_ORGANIZATION_ID,
+        REPOSITORY_CREATOR_ASSIGNMENT_ID,
+        {"name": "Main Store", "city": "Shanghai", "address": "Road 1"},
+    )
+
+    assert store == {
+        "id": "ignored-by-assertion",
+        "name": "Main Store",
+        "city": "Shanghai",
+        "address": "Road 1",
+        "status": "active",
+    }
+    assert connection.committed is True
+    assert connection.rolled_back is False
+    assert connection.enter_count == 1
+    assert connect_count() == 1
+    validate_sql, validate_params = connection.calls[0]
+    store_sql, store_params = connection.calls[1]
+    link_sql, link_params = connection.calls[2]
+    assert "FROM hxy_role_assignments AS creator" in validate_sql
+    assert "creator.organization_id = %s::uuid" in validate_sql
+    assert "creator.status = 'active'" in validate_sql
+    assert validate_params == (
+        REPOSITORY_CREATOR_ASSIGNMENT_ID,
+        REPOSITORY_ORGANIZATION_ID,
+    )
+    assert "INSERT INTO stores" in store_sql
+    generated_store_id = store_params[0]
+    assert isinstance(generated_store_id, str)
+    assert generated_store_id.startswith("hxy-")
+    assert len(generated_store_id.removeprefix("hxy-")) == 32
+    assert store_params[1:] == ("Main Store", "Shanghai", "Road 1")
+    assert "RETURNING store_id AS id, name, city, address, status" in store_sql
+    assert "INSERT INTO hxy_organization_stores" in link_sql
+    assert link_params == (REPOSITORY_ORGANIZATION_ID, generated_store_id)
+
+
+def test_onboarding_repository_rejects_inactive_store_creator_without_writes(
+    monkeypatch,
+) -> None:
+    from apps.api.hxy_product.onboarding_repository import OnboardingScopeError
+
+    connection = RecordingOnboardingConnection([RecordingOnboardingResult(row=None)])
+    repository, _ = onboarding_repository(monkeypatch, connection)
+
+    with pytest.raises(OnboardingScopeError, match="operation is not available") as caught:
+        repository.create_store(
+            REPOSITORY_ORGANIZATION_ID,
+            REPOSITORY_CREATOR_ASSIGNMENT_ID,
+            {"name": "Main Store", "city": "Shanghai", "address": "Road 1"},
+        )
+
+    assert REPOSITORY_ORGANIZATION_ID not in str(caught.value)
+    assert REPOSITORY_CREATOR_ASSIGNMENT_ID not in str(caught.value)
+    assert connection.rolled_back is True
+    assert len(connection.calls) == 1
+    assert "INSERT INTO" not in connection.calls[0][0]
+
+
+def test_onboarding_repository_creates_hashed_invite_and_created_event(
+    monkeypatch,
+) -> None:
+    connection = RecordingOnboardingConnection(
+        [
+            RecordingOnboardingResult(
+                row={
+                    "id": REPOSITORY_INVITE_ID,
+                    "store_id": REPOSITORY_STORE_ID,
+                    "role": "store_employee",
+                    "display_name": "Employee",
+                    "status": "pending",
+                    "expires_at": INVITE_EXPIRES_AT,
+                }
+            ),
+            RecordingOnboardingResult(),
+        ]
+    )
+    repository, connect_count = onboarding_repository(monkeypatch, connection)
+
+    invite = repository.create_invite(
+        REPOSITORY_ORGANIZATION_ID,
+        REPOSITORY_STORE_ID,
+        REPOSITORY_CREATOR_ASSIGNMENT_ID,
+        "store_employee",
+        "Employee",
+        INVITE_TOKEN_HASH,
+        INVITE_EXPIRES_AT,
+    )
+
+    assert invite == {
+        "id": REPOSITORY_INVITE_ID,
+        "store_id": REPOSITORY_STORE_ID,
+        "role": "store_employee",
+        "display_name": "Employee",
+        "status": "pending",
+        "expires_at": INVITE_EXPIRES_AT,
+    }
+    assert connection.committed is True
+    assert connect_count() == 1
+    invite_sql, invite_params = connection.calls[0]
+    event_sql, event_params = connection.calls[1]
+    assert "INSERT INTO hxy_member_invites" in invite_sql
+    assert invite_params == (
+        REPOSITORY_ORGANIZATION_ID,
+        REPOSITORY_STORE_ID,
+        "store_employee",
+        "Employee",
+        INVITE_TOKEN_HASH,
+        REPOSITORY_CREATOR_ASSIGNMENT_ID,
+        INVITE_EXPIRES_AT,
+    )
+    assert "token_hash" not in invite_sql.split("RETURNING", 1)[1]
+    assert "INSERT INTO hxy_member_invite_events" in event_sql
+    assert "'created'" in event_sql
+    assert event_params == (
+        REPOSITORY_ORGANIZATION_ID,
+        REPOSITORY_STORE_ID,
+        REPOSITORY_INVITE_ID,
+        REPOSITORY_CREATOR_ASSIGNMENT_ID,
+    )
+    assert all(RAW_INVITE_TOKEN not in params for _sql, params in connection.calls)
+
+
+def test_onboarding_repository_revokes_locked_scoped_pending_invite(
+    monkeypatch,
+) -> None:
+    connection = RecordingOnboardingConnection(
+        [
+            RecordingOnboardingResult(row={"id": REPOSITORY_INVITE_ID}),
+            RecordingOnboardingResult(
+                row={
+                    "id": REPOSITORY_INVITE_ID,
+                    "store_id": REPOSITORY_STORE_ID,
+                    "role": "store_employee",
+                    "display_name": "Employee",
+                    "status": "revoked",
+                    "expires_at": INVITE_EXPIRES_AT,
+                }
+            ),
+            RecordingOnboardingResult(),
+        ]
+    )
+    repository, _ = onboarding_repository(monkeypatch, connection)
+
+    invite = repository.revoke_invite(
+        REPOSITORY_ORGANIZATION_ID,
+        REPOSITORY_STORE_ID,
+        REPOSITORY_ACTOR_ASSIGNMENT_ID,
+        REPOSITORY_INVITE_ID,
+    )
+
+    assert invite is not None and invite["status"] == "revoked"
+    assert connection.committed is True
+    lock_sql, lock_params = connection.calls[0]
+    update_sql, update_params = connection.calls[1]
+    event_sql, event_params = connection.calls[2]
+    expected_scope = (
+        REPOSITORY_ORGANIZATION_ID,
+        REPOSITORY_STORE_ID,
+        REPOSITORY_INVITE_ID,
+    )
+    assert "status = 'pending'" in lock_sql
+    assert "FOR UPDATE" in lock_sql
+    assert lock_params == expected_scope
+    assert "UPDATE hxy_member_invites" in update_sql
+    assert "status = 'pending'" in update_sql
+    assert update_params == expected_scope
+    assert "'revoked'" in event_sql
+    assert event_params == (*expected_scope, REPOSITORY_ACTOR_ASSIGNMENT_ID)
+
+
+def test_onboarding_repository_returns_none_for_unavailable_invite_revoke(
+    monkeypatch,
+) -> None:
+    connection = RecordingOnboardingConnection([RecordingOnboardingResult(row=None)])
+    repository, _ = onboarding_repository(monkeypatch, connection)
+
+    result = repository.revoke_invite(
+        REPOSITORY_ORGANIZATION_ID,
+        REPOSITORY_STORE_ID,
+        REPOSITORY_ACTOR_ASSIGNMENT_ID,
+        REPOSITORY_INVITE_ID,
+    )
+
+    assert result is None
+    assert connection.committed is True
+    assert len(connection.calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("invite_role", "account_role"),
+    (("store_manager", "store_manager"), ("store_employee", "frontdesk")),
+)
+def test_onboarding_repository_redeems_invite_atomically_without_raw_secrets(
+    monkeypatch,
+    invite_role: str,
+    account_role: str,
+) -> None:
+    connection = RecordingOnboardingConnection(
+        [
+            RecordingOnboardingResult(
+                row={
+                    "id": REPOSITORY_INVITE_ID,
+                    "organization_id": REPOSITORY_ORGANIZATION_ID,
+                    "store_id": REPOSITORY_STORE_ID,
+                    "role": invite_role,
+                    "display_name": "New Member",
+                }
+            ),
+            RecordingOnboardingResult(),
+            RecordingOnboardingResult(),
+            RecordingOnboardingResult(),
+            RecordingOnboardingResult(),
+            RecordingOnboardingResult(),
+        ]
+    )
+    repository, connect_count = onboarding_repository(monkeypatch, connection)
+
+    member = repository.redeem_invite(
+        INVITE_TOKEN_HASH,
+        RAW_SESSION_TOKEN,
+        1800,
+    )
+
+    assert member == {
+        "assignment_id": connection.calls[2][1][0],
+        "store_id": REPOSITORY_STORE_ID,
+        "display_name": "New Member",
+        "role": invite_role,
+        "status": "active",
+    }
+    assert connection.committed is True
+    assert connection.rolled_back is False
+    assert connection.enter_count == 1
+    assert connect_count() == 1
+    assert len(connection.calls) == 6
+    lock_sql, lock_params = connection.calls[0]
+    account_sql, account_params = connection.calls[1]
+    assignment_sql, assignment_params = connection.calls[2]
+    update_sql, update_params = connection.calls[3]
+    event_sql, event_params = connection.calls[4]
+    session_sql, session_params = connection.calls[5]
+    assert "FROM hxy_member_invites AS invite" in lock_sql
+    assert "invite.status = 'pending'" in lock_sql
+    assert "invite.expires_at > NOW()" in lock_sql
+    assert "creator.status = 'active'" in lock_sql
+    assert "creator_account.status = 'active'" in lock_sql
+    assert "organization.status = 'active'" in lock_sql
+    assert "store.status = 'active'" in lock_sql
+    assert "FOR UPDATE OF invite" in lock_sql
+    assert lock_params == (INVITE_TOKEN_HASH,)
+    assert "INSERT INTO staff_accounts" in account_sql
+    account_id, username, display_name, password_marker, mapped_role, store_id = (
+        account_params
+    )
+    assert len(str(account_id)) == 36
+    assert username == f"hxy-onboard-{str(account_id).replace('-', '')}"
+    assert display_name == "New Member"
+    assert password_marker == "!hxy-gateway-only$onboarding-passwordless-v1"
+    assert mapped_role == account_role
+    assert store_id == REPOSITORY_STORE_ID
+    assert "INSERT INTO hxy_role_assignments" in assignment_sql
+    assignment_id = assignment_params[0]
+    assert len(str(assignment_id)) == 36
+    assert assignment_params[1:] == (
+        account_id,
+        REPOSITORY_ORGANIZATION_ID,
+        REPOSITORY_STORE_ID,
+        invite_role,
+    )
+    assert "UPDATE hxy_member_invites" in update_sql
+    assert "status = 'pending'" in update_sql
+    assert update_params == (
+        account_id,
+        assignment_id,
+        REPOSITORY_ORGANIZATION_ID,
+        REPOSITORY_STORE_ID,
+        REPOSITORY_INVITE_ID,
+    )
+    assert "'redeemed'" in event_sql
+    assert event_params == (
+        REPOSITORY_ORGANIZATION_ID,
+        REPOSITORY_STORE_ID,
+        REPOSITORY_INVITE_ID,
+        assignment_id,
+        assignment_id,
+    )
+    assert "INSERT INTO staff_sessions" in session_sql
+    assert session_params == (
+        hashlib.sha256(RAW_SESSION_TOKEN.encode("utf-8")).hexdigest(),
+        account_id,
+        assignment_id,
+        1800,
+    )
+    for statement, params in connection.calls:
+        assert RAW_INVITE_TOKEN not in statement
+        assert RAW_INVITE_TOKEN not in params
+        assert RAW_SESSION_TOKEN not in statement
+        assert RAW_SESSION_TOKEN not in params
+
+
+def test_onboarding_repository_rejects_unavailable_redemption_generically(
+    monkeypatch,
+) -> None:
+    from apps.api.hxy_product.onboarding_repository import InviteRedemptionError
+
+    connection = RecordingOnboardingConnection([RecordingOnboardingResult(row=None)])
+    repository, _ = onboarding_repository(monkeypatch, connection)
+
+    with pytest.raises(InviteRedemptionError, match="invitation is not available") as caught:
+        repository.redeem_invite(INVITE_TOKEN_HASH, RAW_SESSION_TOKEN, 1800)
+
+    message = str(caught.value)
+    assert "pending" not in message
+    assert "expired" not in message
+    assert "revoked" not in message
+    assert RAW_INVITE_TOKEN not in message
+    assert INVITE_TOKEN_HASH not in message
+    assert connection.rolled_back is True
+    assert len(connection.calls) == 1
+
+
+def test_onboarding_repository_rolls_back_redeem_conflict_generically(
+    monkeypatch,
+) -> None:
+    from apps.api.hxy_product.onboarding_repository import InviteRedemptionError
+
+    connection = RecordingOnboardingConnection(
+        [
+            RecordingOnboardingResult(
+                row={
+                    "id": REPOSITORY_INVITE_ID,
+                    "organization_id": REPOSITORY_ORGANIZATION_ID,
+                    "store_id": REPOSITORY_STORE_ID,
+                    "role": "store_employee",
+                    "display_name": "New Member",
+                }
+            ),
+            RecordingOnboardingResult(),
+            RecordingOnboardingResult(),
+            RecordingOnboardingResult(),
+            RecordingOnboardingResult(),
+            psycopg.errors.UniqueViolation("duplicate session digest"),
+        ]
+    )
+    repository, connect_count = onboarding_repository(monkeypatch, connection)
+
+    with pytest.raises(InviteRedemptionError, match="invitation is not available"):
+        repository.redeem_invite(INVITE_TOKEN_HASH, RAW_SESSION_TOKEN, 1800)
+
+    assert connection.committed is False
+    assert connection.rolled_back is True
+    assert connection.enter_count == 1
+    assert connect_count() == 1
+    assert len(connection.calls) == 6
+
+
+@pytest.mark.parametrize("ttl_seconds", (59, 86401))
+def test_onboarding_repository_rejects_unsafe_session_ttl_before_connecting(
+    monkeypatch,
+    ttl_seconds: int,
+) -> None:
+    from apps.api.hxy_product.onboarding_repository import OnboardingValidationError
+
+    connection = RecordingOnboardingConnection([])
+    repository, connect_count = onboarding_repository(monkeypatch, connection)
+
+    with pytest.raises(OnboardingValidationError, match="input is invalid"):
+        repository.redeem_invite(
+            INVITE_TOKEN_HASH,
+            RAW_SESSION_TOKEN,
+            ttl_seconds,
+        )
+
+    assert connect_count() == 0
+    assert connection.calls == []
+
+
+def test_onboarding_repository_deactivates_only_scoped_assignment_and_sessions(
+    monkeypatch,
+) -> None:
+    connection = RecordingOnboardingConnection(
+        [
+            RecordingOnboardingResult(
+                row={
+                    "assignment_id": REPOSITORY_TARGET_ASSIGNMENT_ID,
+                    "store_id": REPOSITORY_STORE_ID,
+                    "display_name": "Employee",
+                    "role": "store_employee",
+                    "status": "active",
+                }
+            ),
+            RecordingOnboardingResult(),
+            RecordingOnboardingResult(),
+            RecordingOnboardingResult(),
+        ]
+    )
+    repository, connect_count = onboarding_repository(monkeypatch, connection)
+
+    member = repository.deactivate_member(
+        REPOSITORY_ORGANIZATION_ID,
+        REPOSITORY_STORE_ID,
+        REPOSITORY_ACTOR_ASSIGNMENT_ID,
+        REPOSITORY_TARGET_ASSIGNMENT_ID,
+    )
+
+    assert member == {
+        "assignment_id": REPOSITORY_TARGET_ASSIGNMENT_ID,
+        "store_id": REPOSITORY_STORE_ID,
+        "display_name": "Employee",
+        "role": "store_employee",
+        "status": "inactive",
+    }
+    assert connection.committed is True
+    assert connect_count() == 1
+    lock_sql, lock_params = connection.calls[0]
+    update_sql, update_params = connection.calls[1]
+    delete_sql, delete_params = connection.calls[2]
+    event_sql, event_params = connection.calls[3]
+    expected_scope = (
+        REPOSITORY_ORGANIZATION_ID,
+        REPOSITORY_STORE_ID,
+        REPOSITORY_TARGET_ASSIGNMENT_ID,
+    )
+    assert "FROM hxy_role_assignments AS assignment" in lock_sql
+    assert "assignment.status = 'active'" in lock_sql
+    assert "FOR UPDATE OF assignment" in lock_sql
+    assert lock_params == expected_scope
+    assert "UPDATE hxy_role_assignments" in update_sql
+    assert "SET status = 'inactive'" in update_sql
+    assert "staff_accounts" not in update_sql
+    assert update_params == expected_scope
+    assert "DELETE FROM staff_sessions" in delete_sql
+    assert delete_params == (REPOSITORY_TARGET_ASSIGNMENT_ID,)
+    assert "'member_deactivated'" in event_sql
+    assert event_params == (
+        REPOSITORY_ORGANIZATION_ID,
+        REPOSITORY_STORE_ID,
+        REPOSITORY_ACTOR_ASSIGNMENT_ID,
+        REPOSITORY_TARGET_ASSIGNMENT_ID,
+    )
+    assert all("UPDATE staff_accounts" not in statement for statement, _ in connection.calls)
+
+
+def test_onboarding_repository_returns_none_for_unavailable_member_deactivation(
+    monkeypatch,
+) -> None:
+    connection = RecordingOnboardingConnection([RecordingOnboardingResult(row=None)])
+    repository, _ = onboarding_repository(monkeypatch, connection)
+
+    result = repository.deactivate_member(
+        REPOSITORY_ORGANIZATION_ID,
+        REPOSITORY_STORE_ID,
+        REPOSITORY_ACTOR_ASSIGNMENT_ID,
+        REPOSITORY_TARGET_ASSIGNMENT_ID,
+    )
+
+    assert result is None
+    assert connection.committed is True
+    assert len(connection.calls) == 1
