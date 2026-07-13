@@ -245,55 +245,39 @@ def test_founder_can_deactivate_organization_manager() -> None:
 
 
 @pytest.mark.parametrize(
-    ("actor", "target"),
-    (
-        (
-            resolved_assignment(AssignmentRole.FOUNDER),
-            resolved_assignment(AssignmentRole.STORE_EMPLOYEE, store_id=STORE_ID),
-        ),
-        (
-            resolved_assignment(AssignmentRole.STORE_MANAGER, store_id=STORE_ID),
-            resolved_assignment(
-                AssignmentRole.STORE_MANAGER,
-                assignment_id="other-manager",
-                store_id=STORE_ID,
-            ),
-        ),
-        (
-            resolved_assignment(AssignmentRole.STORE_EMPLOYEE, store_id=STORE_ID),
-            resolved_assignment(AssignmentRole.STORE_MANAGER, store_id=STORE_ID),
-        ),
-        (
-            resolved_assignment(AssignmentRole.STORE_EMPLOYEE, store_id=STORE_ID),
-            resolved_assignment(
-                AssignmentRole.STORE_EMPLOYEE,
-                assignment_id="other-employee",
-                store_id=STORE_ID,
-            ),
-        ),
-        (
-            resolved_assignment(AssignmentRole.HQ_OPERATIONS),
-            resolved_assignment(AssignmentRole.STORE_MANAGER, store_id=STORE_ID),
-        ),
-        (
-            resolved_assignment(AssignmentRole.HQ_OPERATIONS),
-            resolved_assignment(AssignmentRole.STORE_EMPLOYEE, store_id=STORE_ID),
-        ),
-        (
-            resolved_assignment(AssignmentRole.SYSTEM_ADMIN),
-            resolved_assignment(AssignmentRole.STORE_MANAGER, store_id=STORE_ID),
-        ),
-        (
-            resolved_assignment(AssignmentRole.SYSTEM_ADMIN),
-            resolved_assignment(AssignmentRole.STORE_EMPLOYEE, store_id=STORE_ID),
-        ),
+    ("actor_role", "target_role"),
+    tuple(
+        (actor_role, target_role)
+        for actor_role in AssignmentRole
+        for target_role in AssignmentRole
     ),
 )
-def test_deactivation_policy_denies_every_unlisted_role_pair(
-    actor: ResolvedAssignment,
-    target: ResolvedAssignment,
+def test_deactivation_policy_enforces_exhaustive_role_matrix(
+    actor_role: AssignmentRole,
+    target_role: AssignmentRole,
 ) -> None:
-    assert can_deactivate_member(actor, target) is False
+    store_scoped_roles = {
+        AssignmentRole.STORE_MANAGER,
+        AssignmentRole.STORE_EMPLOYEE,
+    }
+    actor = resolved_assignment(
+        actor_role,
+        assignment_id=f"actor-{actor_role.value}",
+        store_id=STORE_ID if actor_role in store_scoped_roles else None,
+    )
+    target = resolved_assignment(
+        target_role,
+        assignment_id=f"target-{target_role.value}",
+        store_id=STORE_ID if target_role in store_scoped_roles else None,
+    )
+    allowed_pairs = {
+        (AssignmentRole.FOUNDER, AssignmentRole.STORE_MANAGER),
+        (AssignmentRole.STORE_MANAGER, AssignmentRole.STORE_EMPLOYEE),
+    }
+
+    assert can_deactivate_member(actor, target) is (
+        (actor_role, target_role) in allowed_pairs
+    )
 
 
 @pytest.mark.parametrize(
