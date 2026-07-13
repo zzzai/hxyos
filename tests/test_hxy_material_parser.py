@@ -6,12 +6,24 @@ from pathlib import Path
 
 import pytest
 from docx import Document
+from packaging.requirements import Requirement
 
 
 ASSIGNMENT_ID = "20000000-0000-0000-0000-000000000001"
 MATERIAL_ID = "70000000-0000-0000-0000-000000000001"
 JOB_ID = "80000000-0000-0000-0000-000000000001"
 CREATED_AT = datetime(2026, 7, 10, 12, 0, tzinfo=timezone.utc)
+
+
+def test_docx_test_dependency_is_explicitly_declared() -> None:
+    requirements_path = Path(__file__).parents[1] / "apps" / "api" / "requirements.txt"
+    dependencies = {
+        Requirement(line).name.lower()
+        for line in requirements_path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+
+    assert "python-docx" in dependencies
 
 
 def test_markitdown_parser_extracts_text_and_docx_content(tmp_path: Path) -> None:
