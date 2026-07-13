@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 from typing import Any
 
@@ -508,3 +509,103 @@ def test_preflight_requires_prerequisite_postgres_16_clean_git_and_017() -> None
         migration_loader=lambda _root, _name: b"-- migration\n",
     )
     assert wrong_postgres["status"] == "failed"
+
+
+def _runbook_sections(markdown: str) -> dict[str, str]:
+    headings = list(re.finditer(r"^## (?P<title>[^\r\n]+)\s*$", markdown, re.MULTILINE))
+    return {
+        match.group("title"): markdown[
+            match.end() : headings[index + 1].start()
+            if index + 1 < len(headings)
+            else len(markdown)
+        ].strip()
+        for index, match in enumerate(headings)
+    }
+
+
+def test_public_edge_throttles_exact_redemption_route() -> None:
+    config = (ROOT / "ops/nginx/hxyos-public-edge.conf.example").read_text(
+        encoding="utf-8"
+    )
+
+    zone = re.search(
+        r"limit_req_zone\s+\$binary_remote_addr\s+zone=hxy_invite_redeem_per_ip:10m\s+rate=6r/m;",
+        config,
+    )
+    server = re.search(r"\bserver\s*\{", config)
+    assert zone is not None
+    assert server is not None
+    assert zone.start() < server.start()
+
+    exact = re.search(
+        r"location\s+=\s+/api/v1/onboarding/invites/redeem\s*\{(?P<body>.*?)\n\s*\}",
+        config,
+        re.DOTALL,
+    )
+    assert exact is not None
+    body = exact.group("body")
+    for required in (
+        "limit_req zone=hxy_invite_redeem_per_ip burst=3 nodelay;",
+        "limit_req_status 429;",
+        "client_max_body_size 1k;",
+        "proxy_pass http://127.0.0.1:18081;",
+        "proxy_set_header X-Forwarded-Proto $scheme;",
+    ):
+        assert required in body
+
+    lowered = config.lower()
+    for forbidden in ("$arg_token", "?token=", "#invite=", "access_token"):
+        assert forbidden not in lowered
+
+
+def test_release_runbook_has_ordered_fail_closed_gates() -> None:
+    markdown = (
+        ROOT / "docs/operations/hxy-governed-onboarding-release.md"
+    ).read_text(encoding="utf-8")
+    sections = _runbook_sections(markdown)
+    expected = [
+        "Gate 1: Immutable Source",
+        "Gate 2: Test Build And Seal",
+        "Gate 3: Read-Only Preflight",
+        "Gate 4: Verified Restorable Backup",
+        "Gate 5: Apply 017",
+        "Gate 6: Read-Only Postflight",
+        "Gate 7: Environment And Edge",
+        "Gate 8: Isolated Canary",
+        "Gate 9: Atomic Activation",
+        "Gate 10: Production Canaries And Evidence",
+        "Rollback",
+    ]
+    assert [heading for heading in sections if heading in expected] == expected
+
+    whole = "\n".join(sections.values())
+    for required in (
+        "HXY_PUBLIC_APP_URL=https://hxyos.hexiaoyue.com",
+        "APPLY-HXY-017",
+        "hxy-governed-onboarding-release.py preflight",
+        "hxy-governed-onboarding-release.py backup",
+        "hxy-governed-onboarding-release.py apply",
+        "hxy-governed-onboarding-release.py postflight",
+        "nginx -t",
+        "115.190.245.14",
+        "release-commit.txt",
+        "hxy-knowledge-api.service",
+        "hxy-product-web.service",
+        "invite_created",
+        "invite_redeemed",
+    ):
+        assert required in whole
+
+    gate_10 = sections["Gate 10: Production Canaries And Evidence"]
+    for forbidden_log_value in (
+        "request body",
+        "cookie",
+        "fragment",
+        "invitation token",
+    ):
+        assert forbidden_log_value in gate_10.lower()
+
+    rollback = sections["Rollback"]
+    assert "releases/previous" in rollback
+    assert "migration 017" in rollback.lower()
+    assert "must not" in rollback.lower()
