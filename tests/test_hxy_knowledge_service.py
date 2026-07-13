@@ -12,6 +12,47 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def write_risk_material_fixtures(root: Path) -> None:
+    risk_dir = root / "knowledge" / "raw" / "inbox" / "荷小悦资料" / "09_知识库与参考资料" / "09_风险与合规"
+    risk_dir.mkdir(parents=True)
+    (risk_dir / "荷小悦禁用表达库.md").write_text(
+        """# 风险词库
+
+### 4.1 疾病与症状承诺类
+
+```text
+治疗脚气
+改善睡眠
+```
+
+## 6. 常见错误与替换
+
+|不要这样说|建议这样说|
+|---|---|
+|治疗颈椎病|久坐肩颈紧，按一按松一点|
+""",
+        encoding="utf-8",
+    )
+    (risk_dir / "荷小悦员工功效问题标准话术.md").write_text(
+        """# 员工话术
+
+## 2. 员工绝对不能说
+
+```text
+你这是湿气重
+```
+""",
+        encoding="utf-8",
+    )
+    (risk_dir / "荷小悦项目红线卡.md").write_text(
+        """# 项目红线
+
+        |不能怎么说|调理体质、改善慢病|
+""",
+        encoding="utf-8",
+    )
+
+
 def load_module(name: str, relative_path: str):
     spec = importlib.util.spec_from_file_location(name, ROOT / relative_path)
     module = importlib.util.module_from_spec(spec)
@@ -117,7 +158,10 @@ class HxyKnowledgeServiceTest(unittest.TestCase):
     def test_compliance_rules_load_forbidden_terms_from_risk_materials(self):
         compliance_rules = load_module("hxy_compliance_rules", "apps/api/hxy_knowledge/compliance_rules.py")
 
-        result = compliance_rules.load_brand_risk_rules(root_dir=ROOT)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            write_risk_material_fixtures(root)
+            result = compliance_rules.load_brand_risk_rules(root_dir=root)
 
         self.assertEqual(result["version"], "hxy-brand-risk-rules.v1")
         self.assertFalse(result["official_use_allowed"])
@@ -130,8 +174,11 @@ class HxyKnowledgeServiceTest(unittest.TestCase):
     def test_compliance_rules_check_text_uses_loaded_terms_and_skips_boundary_language(self):
         compliance_rules = load_module("hxy_compliance_rules_check", "apps/api/hxy_knowledge/compliance_rules.py")
 
-        risky = compliance_rules.check_brand_risk_text("草本泡脚可以祛湿排毒，改善睡眠，一次见效。", root_dir=ROOT)
-        safe = compliance_rules.check_brand_risk_text("我们不做祛湿排毒承诺，也不能替代医疗治疗。", root_dir=ROOT)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            write_risk_material_fixtures(root)
+            risky = compliance_rules.check_brand_risk_text("草本泡脚可以祛湿排毒，改善睡眠，一次见效。", root_dir=root)
+            safe = compliance_rules.check_brand_risk_text("我们不做祛湿排毒承诺，也不能替代医疗治疗。", root_dir=root)
 
         self.assertEqual(risky["status"], "bad")
         self.assertIn("保证", {hit["type"] for hit in risky["hits"]})
