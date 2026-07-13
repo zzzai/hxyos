@@ -61,6 +61,11 @@ MIGRATIONS = tuple(
 )
 
 
+def _reject_ambient_pgpassword() -> None:
+    if os.environ.get("PGPASSWORD"):
+        raise ValueError("ambient PostgreSQL password is not allowed")
+
+
 def _require_safe_database_name(database_name: str) -> str:
     if not DATABASE_NAME_PATTERN.fullmatch(database_name):
         raise ValueError(
@@ -122,6 +127,7 @@ class _SafeDatabaseConfig:
 
 
 def _parse_safe_database_config(database_url: str) -> _SafeDatabaseConfig:
+    _reject_ambient_pgpassword()
     try:
         parsed = conninfo_to_dict(database_url)
     except psycopg.Error as exc:
@@ -163,6 +169,7 @@ def require_safe_test_database_url(database_url: str) -> _SafeDatabaseConfig:
 
 @contextmanager
 def _temporary_pgpass(config: _SafeDatabaseConfig) -> Iterator[Path]:
+    _reject_ambient_pgpassword()
     if config.password is None:
         raise ValueError("test database password is required")
     descriptor, raw_path = tempfile.mkstemp(prefix="hxy-onboarding-pgpass-")
@@ -193,6 +200,7 @@ def _make_connection_url(
     application_name: str,
     schema_name: str | None = None,
 ) -> str:
+    _reject_ambient_pgpassword()
     options = [
         f"-crole={RUNNER_ROLE}",
         f"-cstatement_timeout={STATEMENT_TIMEOUT_MS}",
@@ -208,6 +216,11 @@ def _make_connection_url(
         options=" ".join(options),
         application_name=application_name,
     )
+
+
+def _connect(database_url: str, **kwargs: Any) -> psycopg.Connection[Any]:
+    _reject_ambient_pgpassword()
+    return psycopg.connect(database_url, **kwargs)
 
 
 def _assert_restricted_database_connection(
@@ -293,10 +306,10 @@ class PostgresHarness:
     schema_name: str
 
     def connect(self, *, autocommit: bool = False) -> psycopg.Connection[Any]:
-        return psycopg.connect(self.repository_url, autocommit=autocommit)
+        return _connect(self.repository_url, autocommit=autocommit)
 
     def repository(self) -> OnboardingRepository:
-        return OnboardingRepository(self.repository_url)
+        return _SafeOnboardingRepository(self.repository_url)
 
     def connection_url(self, application_name: str) -> str:
         return _make_connection_url(
@@ -307,7 +320,13 @@ class PostgresHarness:
         )
 
 
-class _PidRecordingRepository(OnboardingRepository):
+class _SafeOnboardingRepository(OnboardingRepository):
+    def connect(self):
+        _reject_ambient_pgpassword()
+        return super().connect()
+
+
+class _PidRecordingRepository(_SafeOnboardingRepository):
     def __init__(self, database_url: str, backend_pids: Queue[int]):
         super().__init__(database_url)
         self.backend_pids = backend_pids
@@ -336,7 +355,7 @@ def postgres_harness() -> PostgresHarness:
         schema_created = False
 
         try:
-            with psycopg.connect(control_url, autocommit=True) as connection:
+            with _connect(control_url, autocommit=True) as connection:
                 _assert_restricted_database_connection(connection, config)
                 connection.execute(
                     sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema_name))
@@ -377,7 +396,7 @@ def postgres_harness() -> PostgresHarness:
             yield harness
         finally:
             if schema_created:
-                with psycopg.connect(control_url, autocommit=True) as connection:
+                with _connect(control_url, autocommit=True) as connection:
                     _assert_restricted_database_connection(connection, config)
                     connection.execute(
                         sql.SQL("DROP SCHEMA {} CASCADE").format(
@@ -543,7 +562,7 @@ def _wait_for_lock_waiters(
 ) -> None:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
-        with psycopg.connect(harness.control_url, autocommit=True) as connection:
+        with _connect(harness.control_url, autocommit=True) as connection:
             waiting = connection.execute(
                 """
                 SELECT count(DISTINCT pid)
@@ -613,20 +632,56 @@ def test_connection_config_scopes_pgpass_and_all_timeouts(
         "sentinel%3Apassword%5Cfor-config-test@invalid.example:6543/"
         "hxy_onboarding_test_abcdef123456"
     )
-    monkeypatch.setenv("PGPASSFILE", "/tmp/original-config-pgpass")
-    monkeypatch.setenv("PGPASSWORD", "original-config-password")
-    original_environment = (
-        os.environ["PGPASSFILE"],
-        os.environ["PGPASSWORD"],
+    ambient_password = "ambient-password-must-not-be-used"
+    observed = {"tempfile": False, "connect": False}
+    real_mkstemp = tempfile.mkstemp
+
+    def record_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+        observed["tempfile"] = True
+        return real_mkstemp(*args, **kwargs)
+
+    def record_connect(*args: object, **kwargs: object) -> None:
+        observed["connect"] = True
+
+    monkeypatch.setenv("PGPASSWORD", ambient_password)
+    monkeypatch.setattr(tempfile, "mkstemp", record_mkstemp)
+    monkeypatch.setattr(psycopg, "connect", record_connect)
+    with pytest.raises(ValueError, match="ambient PostgreSQL password") as captured:
+        rejected_config = _parse_safe_database_config(full_database_url)
+        with _temporary_pgpass(rejected_config) as rejected_passfile:
+            rejected_url = _make_connection_url(
+                rejected_config.conninfo,
+                passfile_path=rejected_passfile,
+                application_name="hxy-onboarding-ambient-password-test",
+            )
+            _connect(rejected_url)
+    rendered = "".join(
+        (
+            str(captured.value),
+            repr(captured.value),
+            "".join(traceback.format_exception(captured.value)),
+        )
     )
+    if ambient_password in rendered:
+        pytest.fail("ambient PostgreSQL password appeared in rejection output")
+    assert observed == {"tempfile": False, "connect": False}
+
+    monkeypatch.setattr(tempfile, "mkstemp", real_mkstemp)
+    allowed_unset_connection = {"called": False}
+
+    def allow_unset_connect(*args: object, **kwargs: object) -> object:
+        allowed_unset_connection["called"] = True
+        return object()
+
+    monkeypatch.setattr(psycopg, "connect", allow_unset_connect)
+    monkeypatch.setenv("PGPASSFILE", "/tmp/original-config-pgpass")
+    monkeypatch.delenv("PGPASSWORD", raising=False)
+    original_passfile = os.environ["PGPASSFILE"]
     config = _parse_safe_database_config(full_database_url)
 
     with _temporary_pgpass(config) as passfile_path:
-        if (
-            os.environ["PGPASSFILE"],
-            os.environ["PGPASSWORD"],
-        ) != original_environment:
-            pytest.fail("pgpass helper mutated the process password environment")
+        assert os.environ["PGPASSFILE"] == original_passfile
+        assert "PGPASSWORD" not in os.environ
         expected_line = (
             "invalid.example:6543:hxy_onboarding_test_abcdef123456:"
             "sentinel\\:user:sentinel\\:password\\\\for-config-test\n"
@@ -654,12 +709,12 @@ def test_connection_config_scopes_pgpass_and_all_timeouts(
             assert required_option in options
         assert "password" not in parsed_connection
         assert "*" not in expected_line
+        _connect(connection_url)
         created_passfile_path = passfile_path
 
-    assert original_environment == (
-        os.environ["PGPASSFILE"],
-        os.environ["PGPASSWORD"],
-    )
+    assert os.environ["PGPASSFILE"] == original_passfile
+    assert "PGPASSWORD" not in os.environ
+    assert allowed_unset_connection["called"] is True
     assert not created_passfile_path.exists()
 
 
@@ -673,9 +728,8 @@ def test_connection_failure_cannot_render_database_password(
         "hxy_onboarding_test_abcdef123456"
     )
     original_passfile = "/tmp/original-pgpass-for-test"
-    original_pgpassword = "original-environment-password"
     monkeypatch.setenv("PGPASSFILE", original_passfile)
-    monkeypatch.setenv("PGPASSWORD", original_pgpassword)
+    monkeypatch.setenv("PGPASSWORD", "")
     observed: dict[str, object] = {}
 
     def fail_connect(conninfo: str, *args: object, **kwargs: object) -> None:
@@ -689,7 +743,7 @@ def test_connection_failure_cannot_render_database_password(
         )
         observed["password_environment"] = (
             os.environ["PGPASSFILE"],
-            os.environ["PGPASSWORD"],
+            os.environ.get("PGPASSWORD"),
         )
         raise psycopg.OperationalError(f"simulated connection failure for {conninfo}")
 
@@ -702,7 +756,7 @@ def test_connection_failure_cannot_render_database_password(
             application_name="hxy-onboarding-failure-test",
         )
         with pytest.raises(psycopg.OperationalError) as captured:
-            psycopg.connect(connection_url)
+            _connect(connection_url)
     rendered = "".join(
         (
             str(captured.value),
@@ -723,10 +777,10 @@ def test_connection_failure_cannot_render_database_password(
     assert observed["password_present"] is True
     assert observed["password_environment"] == (
         original_passfile,
-        original_pgpassword,
+        "",
     )
     assert os.environ["PGPASSFILE"] == original_passfile
-    assert os.environ["PGPASSWORD"] == original_pgpassword
+    assert os.environ["PGPASSWORD"] == ""
     assert not Path(observed["passfile_path"]).exists()
 
 
@@ -737,7 +791,7 @@ def test_concurrent_same_invite_redemption_has_one_winner(
     scenario = _seed_scenario(postgres_harness)
     application_name = f"hxy-onboarding-concurrency-test-{uuid4().hex[:8]}"
     repository_url = postgres_harness.connection_url(application_name)
-    repository = OnboardingRepository(repository_url)
+    repository = _SafeOnboardingRepository(repository_url)
     raw_invite_token = f"invite-{uuid4().hex}"
     display_name = f"Concurrent manager {uuid4().hex}"
     invite = _create_invite(
@@ -1328,7 +1382,7 @@ def test_state_change_race_prevents_redemption(
     scenario = _seed_scenario(postgres_harness)
     application_name = f"hxy-onboarding-state-race-test-{uuid4().hex[:8]}"
     repository_url = postgres_harness.connection_url(application_name)
-    repository = OnboardingRepository(repository_url)
+    repository = _SafeOnboardingRepository(repository_url)
     raw_invite_token = f"state-race-invite-{uuid4().hex}"
     display_name = f"State race manager {uuid4().hex}"
     invite = _create_invite(
