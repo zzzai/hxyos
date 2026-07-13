@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import App from "./App";
-import { MeRequestError } from "./api/client";
+import { MeRequestError, type OnboardingClient } from "./api/client";
 
 const TEST_SESSION = {
   user: {
@@ -78,8 +78,46 @@ const HQ_SESSION = {
   },
 };
 
+const FOUNDER_SESSION = {
+  ...TEST_SESSION,
+  user: {
+    account_id: "account-test-founder",
+    display_name: "测试创始人",
+  },
+  active_assignment: {
+    ...TEST_SESSION.active_assignment,
+    assignment_id: "assignment-test-founder",
+    store: null,
+    role: "founder" as const,
+    role_label: "创始人",
+    capabilities: [
+      "conversation:use",
+      "organization:read",
+      "stores:read",
+      "tasks:manage",
+      "tasks:read",
+    ],
+  },
+};
+
 function renderApp() {
   return render(<App initialSession={TEST_SESSION} />);
+}
+
+function onboardingGateway(
+  overrides: Partial<OnboardingClient> = {},
+): OnboardingClient {
+  return {
+    listStores: vi.fn().mockResolvedValue([]),
+    createStore: vi.fn(),
+    listMembers: vi.fn().mockResolvedValue([]),
+    listInvites: vi.fn().mockResolvedValue([]),
+    createInvite: vi.fn(),
+    revokeInvite: vi.fn(),
+    deactivateMember: vi.fn(),
+    redeemInvite: vi.fn(),
+    ...overrides,
+  };
 }
 
 function conversationGateway(overrides: Record<string, unknown> = {}) {
@@ -314,6 +352,69 @@ const FORBIDDEN_FRONTSTAGE_TERMS = [
 ];
 
 describe("HXYOS product shell", () => {
+  it("mounts employee profile without organization reads and completes logout", async () => {
+    const user = userEvent.setup();
+    const onboardingClient = onboardingGateway();
+    const logout = vi.fn().mockResolvedValue(undefined);
+    const onLoggedOut = vi.fn();
+
+    render(
+      <App
+        initialSession={TEST_SESSION}
+        onboardingClient={onboardingClient}
+        logout={logout}
+        onLoggedOut={onLoggedOut}
+      />,
+    );
+
+    expect(onboardingClient.listStores).not.toHaveBeenCalled();
+    expect(onboardingClient.listMembers).not.toHaveBeenCalled();
+    expect(onboardingClient.listInvites).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "我的" }));
+
+    const identity = screen.getByRole("region", { name: "测试店员" });
+    expect(within(identity).getByRole("heading", { name: "测试店员" })).toBeVisible();
+    expect(within(identity).getByText("门店员工")).toBeVisible();
+    expect(within(identity).getByText("测试门店")).toBeVisible();
+    expect(onboardingClient.listStores).not.toHaveBeenCalled();
+    expect(onboardingClient.listMembers).not.toHaveBeenCalled();
+    expect(onboardingClient.listInvites).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("textbox", { name: "告诉 HXYOS 你要做什么" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "查看当前对话详情" }),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "退出登录" }));
+
+    await waitFor(() => expect(logout).toHaveBeenCalledOnce());
+    expect(onLoggedOut).toHaveBeenCalledOnce();
+  });
+
+  it("loads founder organization data only after the profile panel mounts", async () => {
+    const user = userEvent.setup();
+    const onboardingClient = onboardingGateway();
+    render(
+      <App
+        initialSession={FOUNDER_SESSION}
+        onboardingClient={onboardingClient}
+      />,
+    );
+
+    expect(onboardingClient.listStores).not.toHaveBeenCalled();
+    expect(onboardingClient.listMembers).not.toHaveBeenCalled();
+    expect(onboardingClient.listInvites).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "我的" }));
+
+    expect(await screen.findByRole("heading", { name: "门店与成员" })).toBeVisible();
+    expect(onboardingClient.listStores).toHaveBeenCalledOnce();
+    expect(onboardingClient.listMembers).toHaveBeenCalledOnce();
+    expect(onboardingClient.listInvites).toHaveBeenCalledOnce();
+  });
+
   it("shows one accessible composer in the main experience", () => {
     renderApp();
 
@@ -1040,7 +1141,7 @@ describe("HXYOS product shell", () => {
     expect(screen.getByRole("heading", { name: "今天的待办" })).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "我的" }));
-    expect(screen.getByRole("heading", { name: "我的" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "测试店员" })).toBeVisible();
   });
 
   it("opens an authorized material citation from the existing details drawer", async () => {

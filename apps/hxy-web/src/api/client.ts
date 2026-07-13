@@ -453,6 +453,22 @@ export async function exchangeSessionGrant(grant: string): Promise<void> {
   }
 }
 
+export async function logoutSession(): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch("/api/v1/auth/logout", {
+      method: "POST",
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    });
+  } catch {
+    throw new MeRequestError(0, "Unable to log out");
+  }
+  if (!response.ok) {
+    throw new MeRequestError(response.status, "Unable to log out");
+  }
+}
+
 export async function loadMe(): Promise<MeResponse> {
   // The relative URL intentionally keeps credentialed requests same-origin.
   const response = await fetch("/api/v1/me", {

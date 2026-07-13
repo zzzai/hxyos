@@ -22,7 +22,13 @@ import {
   X,
 } from "lucide-react";
 
-import type { CanonicalRole, MeResponse } from "./api/client";
+import {
+  logoutSession,
+  productOnboardingClient,
+  type CanonicalRole,
+  type MeResponse,
+  type OnboardingClient,
+} from "./api/client";
 import {
   type ConversationClient,
   type ConversationMessage,
@@ -49,6 +55,7 @@ import {
   type SessionLoader,
   useSession,
 } from "./features/session/SessionProvider";
+import { OrganizationPanel } from "./features/onboarding/OrganizationPanel";
 
 type PrimaryView = "conversation" | "tasks" | "profile";
 
@@ -105,6 +112,9 @@ interface ProductShellProps {
   journeyClient: JourneyClient;
   clientMessageIdFactory: () => string;
   materialUploadIdFactory: () => string;
+  onboardingClient: OnboardingClient;
+  logout: () => Promise<void>;
+  onLoggedOut: () => void;
 }
 
 function ProductShell({
@@ -114,6 +124,9 @@ function ProductShell({
   journeyClient,
   clientMessageIdFactory,
   materialUploadIdFactory,
+  onboardingClient,
+  logout,
+  onLoggedOut,
 }: ProductShellProps) {
   const { retry, session, status } = useSession();
   const [activeView, setActiveView] = useState<PrimaryView>("conversation");
@@ -850,29 +863,33 @@ function ProductShell({
             ) : null}
           </div>
           <div className="stage-actions">
-            {messages.length > 0 ? (
-              <button
-                className="icon-button stage-icon-button"
-                type="button"
-                aria-label="新建对话"
-                title="新建对话"
-                disabled={!isAuthenticated || isSending}
-                onClick={startNewConversation}
-              >
-                <SquarePen aria-hidden="true" />
-              </button>
+            {activeView === "conversation" ? (
+              <>
+                {messages.length > 0 ? (
+                  <button
+                    className="icon-button stage-icon-button"
+                    type="button"
+                    aria-label="新建对话"
+                    title="新建对话"
+                    disabled={!isAuthenticated || isSending}
+                    onClick={startNewConversation}
+                  >
+                    <SquarePen aria-hidden="true" />
+                  </button>
+                ) : null}
+                <button
+                  ref={detailsTriggerRef}
+                  className="source-button"
+                  type="button"
+                  aria-label="查看当前对话详情"
+                  disabled={!isAuthenticated}
+                  onClick={() => setIsDetailsOpen(true)}
+                >
+                  <Info aria-hidden="true" />
+                  <span>查看详情</span>
+                </button>
+              </>
             ) : null}
-            <button
-              ref={detailsTriggerRef}
-              className="source-button"
-              type="button"
-              aria-label="查看当前对话详情"
-              disabled={!isAuthenticated}
-              onClick={() => setIsDetailsOpen(true)}
-            >
-              <Info aria-hidden="true" />
-              <span>查看详情</span>
-            </button>
           </div>
         </header>
 
@@ -990,13 +1007,15 @@ function ProductShell({
               )}
             </div>
           ) : activeView === "profile" ? (
-            <div className="empty-state">
-              <div className="empty-symbol" aria-hidden="true">
-                <MessageSquare />
-              </div>
-              <h1>{viewHeadings[activeView]}</h1>
-              <p className="empty-note">个人信息尚未接入</p>
-            </div>
+            session && assignment ? (
+              <OrganizationPanel
+                user={session.user}
+                assignment={assignment}
+                client={onboardingClient}
+                logout={logout}
+                onLoggedOut={onLoggedOut}
+              />
+            ) : null
           ) : journeyMode === "training" ? (
             <div className="journey-panel">
               <div className="journey-heading">
@@ -1241,11 +1260,12 @@ function ProductShell({
           )}
         </section>
 
-        <div
-          className="composer-wrap"
-          data-testid="composer-region"
-          aria-live="polite"
-        >
+        {activeView === "conversation" ? (
+          <div
+            className="composer-wrap"
+            data-testid="composer-region"
+            aria-live="polite"
+          >
           {latestMaterial ? (
             <article className="material-receipt">
               <div className="material-receipt-heading">
@@ -1357,7 +1377,8 @@ function ProductShell({
               </button>
             </div>
           </form>
-        </div>
+          </div>
+        ) : null}
       </main>
 
       {isDetailsOpen ? (
@@ -1449,6 +1470,13 @@ interface AppProps {
   journeyClient?: JourneyClient;
   clientMessageIdFactory?: () => string;
   materialUploadIdFactory?: () => string;
+  onboardingClient?: OnboardingClient;
+  logout?: () => Promise<void>;
+  onLoggedOut?: () => void;
+}
+
+function reloadAfterLogout() {
+  window.location.reload();
 }
 
 export default function App({
@@ -1460,6 +1488,9 @@ export default function App({
   journeyClient = productJourneyClient,
   clientMessageIdFactory = () => crypto.randomUUID(),
   materialUploadIdFactory = () => crypto.randomUUID(),
+  onboardingClient = productOnboardingClient,
+  logout = logoutSession,
+  onLoggedOut = reloadAfterLogout,
 }: AppProps) {
   return (
     <SessionProvider loader={sessionLoader} initialSession={initialSession}>
@@ -1470,6 +1501,9 @@ export default function App({
         journeyClient={journeyClient}
         clientMessageIdFactory={clientMessageIdFactory}
         materialUploadIdFactory={materialUploadIdFactory}
+        onboardingClient={onboardingClient}
+        logout={logout}
+        onLoggedOut={onLoggedOut}
       />
     </SessionProvider>
   );

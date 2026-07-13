@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  logoutSession,
   OnboardingRequestError,
   productOnboardingClient,
 } from "./client";
@@ -61,6 +62,27 @@ function expectRequest(
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+describe("logoutSession", () => {
+  it("posts to the same-origin logout endpoint without a body or secret", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(null, { status: 204 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(logoutSession()).resolves.toBeUndefined();
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [path, init] = fetchMock.mock.calls[0];
+    const headers = new Headers(init?.headers);
+    expect(path).toBe("/api/v1/auth/logout");
+    expect(init?.method).toBe("POST");
+    expect(init?.credentials).toBe("include");
+    expect(init?.body).toBeUndefined();
+    expect(headers.has("Authorization")).toBe(false);
+    expect(headers.has("Content-Type")).toBe(false);
+  });
 });
 
 describe("productOnboardingClient", () => {
