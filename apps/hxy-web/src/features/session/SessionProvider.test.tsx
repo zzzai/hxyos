@@ -192,6 +192,25 @@ describe("SessionProvider", () => {
     );
   });
 
+  it("loads a normal no-fragment session once under StrictMode", async () => {
+    const loader = vi.fn<SessionLoader>(async () => TEST_SESSION);
+
+    render(
+      <StrictMode>
+        <SessionProvider loader={loader}>
+          <SessionProbe />
+        </SessionProvider>
+      </StrictMode>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("session-status")).toHaveTextContent(
+        "authenticated",
+      ),
+    );
+    expect(loader).toHaveBeenCalledOnce();
+  });
+
   it("loads /api/v1/me with included credentials and no browser token", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify(TEST_SESSION), {

@@ -56,7 +56,7 @@ type InviteFragment =
 
 interface BootstrapAttempt {
   attempt: number;
-  promise: Promise<void> | null;
+  request: Promise<MeResponse>;
 }
 
 function redeemSessionInvite(token: string): Promise<void> {
@@ -160,9 +160,9 @@ export function SessionProvider({
     let active = true;
     setState({ status: "loading", session: null });
     if (bootstrapAttempt.current?.attempt !== attempt) {
-      let promise: Promise<void> | null;
+      let bootstrap: Promise<void> | null;
       if (inviteToken.current !== null) {
-        promise = Promise.resolve()
+        bootstrap = Promise.resolve()
           .then(() => {
             const token = inviteToken.current;
             if (token === null) throw RECOVERABLE_INVITE_REDEMPTION;
@@ -185,21 +185,19 @@ export function SessionProvider({
           );
       } else if (invalidInvitePending.current) {
         invalidInvitePending.current = false;
-        promise = Promise.reject(INVALID_INVITE_FRAGMENT);
+        bootstrap = Promise.reject(INVALID_INVITE_FRAGMENT);
       } else {
         const grant = takeSessionGrantFromFragment();
-        promise = grant ? grantExchanger(grant) : null;
+        bootstrap = grant ? grantExchanger(grant) : null;
       }
-      bootstrapAttempt.current = { attempt, promise };
+      bootstrapAttempt.current = {
+        attempt,
+        request: bootstrap ? bootstrap.then(() => loader()) : loader(),
+      };
     }
-    const sessionRequest = bootstrapAttempt.current.promise
-      ? bootstrapAttempt.current.promise.then(() => {
-          return active ? loader() : null;
-        })
-      : loader();
-    sessionRequest.then(
+    bootstrapAttempt.current.request.then(
       (session) => {
-        if (active && session) setState({ status: "authenticated", session });
+        if (active) setState({ status: "authenticated", session });
       },
       (error: unknown) => {
         if (!active) return;
