@@ -1,13 +1,31 @@
 from __future__ import annotations
 
 import os
+from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
 
 import psycopg
 import pytest
+from pydantic import ValidationError
 from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict
+
+from apps.api.hxy_product.onboarding_policy import (
+    INVITABLE_ROLES_BY_ACTOR,
+    ResolvedAssignment,
+    ResolvedStore,
+    can_deactivate_member,
+    can_invite_member,
+)
+from apps.api.hxy_product.onboarding_schemas import (
+    INVITE_LIFETIME,
+    AssignmentRole,
+    CreateInviteRequest,
+    CreateStoreRequest,
+    InviteRole,
+    RedeemInviteRequest,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,6 +53,279 @@ REQUIRED_MIGRATIONS = tuple(
         "017_hxy_governed_onboarding.sql",
     )
 )
+
+
+ORGANIZATION_ID = "organization-a"
+STORE_ID = "store-a"
+OTHER_STORE_ID = "store-b"
+
+
+def resolved_assignment(
+    role: AssignmentRole,
+    *,
+    assignment_id: str | None = None,
+    organization_id: str = ORGANIZATION_ID,
+    store_id: str | None = None,
+) -> ResolvedAssignment:
+    return ResolvedAssignment(
+        assignment_id=assignment_id or f"assignment-{role.value}",
+        organization_id=organization_id,
+        store_id=store_id,
+        role=role,
+    )
+
+
+@pytest.mark.parametrize(
+    ("actor", "target_store", "invite_role", "expected"),
+    (
+        (
+            resolved_assignment(AssignmentRole.FOUNDER),
+            ResolvedStore(organization_id=ORGANIZATION_ID, store_id=STORE_ID),
+            InviteRole.STORE_MANAGER,
+            True,
+        ),
+        (
+            resolved_assignment(AssignmentRole.FOUNDER),
+            ResolvedStore(organization_id=ORGANIZATION_ID, store_id=STORE_ID),
+            InviteRole.STORE_EMPLOYEE,
+            False,
+        ),
+        (
+            resolved_assignment(AssignmentRole.STORE_MANAGER, store_id=STORE_ID),
+            ResolvedStore(organization_id=ORGANIZATION_ID, store_id=STORE_ID),
+            InviteRole.STORE_EMPLOYEE,
+            True,
+        ),
+        (
+            resolved_assignment(AssignmentRole.STORE_MANAGER, store_id=STORE_ID),
+            ResolvedStore(organization_id=ORGANIZATION_ID, store_id=STORE_ID),
+            InviteRole.STORE_MANAGER,
+            False,
+        ),
+        (
+            resolved_assignment(AssignmentRole.STORE_MANAGER, store_id=STORE_ID),
+            ResolvedStore(
+                organization_id=ORGANIZATION_ID,
+                store_id=OTHER_STORE_ID,
+            ),
+            InviteRole.STORE_EMPLOYEE,
+            False,
+        ),
+        (
+            resolved_assignment(AssignmentRole.STORE_EMPLOYEE, store_id=STORE_ID),
+            ResolvedStore(organization_id=ORGANIZATION_ID, store_id=STORE_ID),
+            InviteRole.STORE_MANAGER,
+            False,
+        ),
+        (
+            resolved_assignment(AssignmentRole.STORE_EMPLOYEE, store_id=STORE_ID),
+            ResolvedStore(organization_id=ORGANIZATION_ID, store_id=STORE_ID),
+            InviteRole.STORE_EMPLOYEE,
+            False,
+        ),
+    ),
+)
+def test_invite_policy_matrix(
+    actor: ResolvedAssignment,
+    target_store: ResolvedStore,
+    invite_role: InviteRole,
+    expected: bool,
+) -> None:
+    assert can_invite_member(actor, target_store, invite_role) is expected
+
+
+def test_invite_policy_rejects_store_outside_actor_organization() -> None:
+    actor = resolved_assignment(AssignmentRole.FOUNDER)
+    foreign_store = ResolvedStore(
+        organization_id="organization-b",
+        store_id=STORE_ID,
+    )
+
+    assert can_invite_member(actor, foreign_store, InviteRole.STORE_MANAGER) is False
+
+
+def test_invite_policy_mapping_is_immutable() -> None:
+    assert INVITABLE_ROLES_BY_ACTOR[AssignmentRole.FOUNDER] == frozenset(
+        {InviteRole.STORE_MANAGER}
+    )
+
+    with pytest.raises(TypeError):
+        INVITABLE_ROLES_BY_ACTOR[AssignmentRole.FOUNDER] = frozenset()  # type: ignore[index]
+
+
+def test_manager_cannot_deactivate_self() -> None:
+    manager = resolved_assignment(
+        AssignmentRole.STORE_MANAGER,
+        assignment_id="manager",
+        store_id=STORE_ID,
+    )
+
+    assert can_deactivate_member(manager, manager) is False
+
+
+def test_manager_can_deactivate_same_store_employee() -> None:
+    manager = resolved_assignment(AssignmentRole.STORE_MANAGER, store_id=STORE_ID)
+    employee = resolved_assignment(
+        AssignmentRole.STORE_EMPLOYEE,
+        store_id=STORE_ID,
+    )
+
+    assert can_deactivate_member(manager, employee) is True
+
+
+def test_founder_can_deactivate_organization_manager() -> None:
+    founder = resolved_assignment(AssignmentRole.FOUNDER)
+    manager = resolved_assignment(AssignmentRole.STORE_MANAGER, store_id=STORE_ID)
+
+    assert can_deactivate_member(founder, manager) is True
+
+
+@pytest.mark.parametrize(
+    ("actor", "target"),
+    (
+        (
+            resolved_assignment(AssignmentRole.STORE_MANAGER, store_id=STORE_ID),
+            resolved_assignment(
+                AssignmentRole.STORE_EMPLOYEE,
+                store_id=OTHER_STORE_ID,
+            ),
+        ),
+        (
+            resolved_assignment(AssignmentRole.FOUNDER),
+            resolved_assignment(
+                AssignmentRole.STORE_MANAGER,
+                organization_id="organization-b",
+                store_id=STORE_ID,
+            ),
+        ),
+    ),
+)
+def test_deactivation_policy_rejects_targets_outside_actor_scope(
+    actor: ResolvedAssignment,
+    target: ResolvedAssignment,
+) -> None:
+    assert can_deactivate_member(actor, target) is False
+
+
+def test_onboarding_request_schemas_accept_bounded_normalized_text() -> None:
+    store = CreateStoreRequest(
+        name=f"  {'n' * 120}  ",
+        city=f"  {'c' * 80}  ",
+        address=f"  {'a' * 240}  ",
+    )
+    invite = CreateInviteRequest(
+        store_id=STORE_ID,
+        role=InviteRole.STORE_MANAGER,
+        display_name=f"  {'d' * 80}  ",
+    )
+
+    assert store.name == "n" * 120
+    assert store.city == "c" * 80
+    assert store.address == "a" * 240
+    assert invite.display_name == "d" * 80
+
+
+@pytest.mark.parametrize(
+    ("model", "payload"),
+    (
+        (
+            CreateStoreRequest,
+            {"name": " ", "city": "Shanghai", "address": "Road 1"},
+        ),
+        (
+            CreateStoreRequest,
+            {"name": "Store", "city": " ", "address": "Road 1"},
+        ),
+        (
+            CreateStoreRequest,
+            {"name": "Store", "city": "Shanghai", "address": " "},
+        ),
+        (
+            CreateStoreRequest,
+            {"name": "n" * 121, "city": "Shanghai", "address": "Road 1"},
+        ),
+        (
+            CreateStoreRequest,
+            {"name": "Store", "city": "c" * 81, "address": "Road 1"},
+        ),
+        (
+            CreateStoreRequest,
+            {"name": "Store", "city": "Shanghai", "address": "a" * 241},
+        ),
+        (
+            CreateInviteRequest,
+            {
+                "store_id": STORE_ID,
+                "role": "store_employee",
+                "display_name": " ",
+            },
+        ),
+        (
+            CreateInviteRequest,
+            {
+                "store_id": STORE_ID,
+                "role": "store_employee",
+                "display_name": "d" * 81,
+            },
+        ),
+    ),
+)
+def test_onboarding_request_schemas_reject_blank_or_oversized_text(
+    model: type[CreateStoreRequest] | type[CreateInviteRequest],
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        model.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("model", "payload"),
+    (
+        (
+            CreateStoreRequest,
+            {"name": "Store", "city": "Shanghai", "address": "Road 1"},
+        ),
+        (
+            CreateInviteRequest,
+            {
+                "store_id": STORE_ID,
+                "role": "store_manager",
+                "display_name": "Manager",
+            },
+        ),
+        (RedeemInviteRequest, {"token": "t" * 43}),
+    ),
+)
+@pytest.mark.parametrize(
+    "authority_field",
+    ("organization_id", "organization_authority"),
+)
+def test_onboarding_requests_reject_client_supplied_organization_authority(
+    model: type[CreateStoreRequest]
+    | type[CreateInviteRequest]
+    | type[RedeemInviteRequest],
+    payload: dict[str, object],
+    authority_field: str,
+) -> None:
+    with pytest.raises(ValidationError):
+        model.model_validate({**payload, authority_field: ORGANIZATION_ID})
+
+
+@pytest.mark.parametrize("lifetime_field", ("ttl", "ttl_seconds", "expires_at"))
+def test_invite_request_rejects_client_supplied_lifetime(lifetime_field: str) -> None:
+    payload = {
+        "store_id": STORE_ID,
+        "role": "store_manager",
+        "display_name": "Manager",
+        lifetime_field: 3600,
+    }
+
+    with pytest.raises(ValidationError):
+        CreateInviteRequest.model_validate(payload)
+
+
+def test_invite_lifetime_is_fixed_server_side_at_24_hours() -> None:
+    assert INVITE_LIFETIME == timedelta(hours=24)
 
 
 def migration_sql() -> tuple[str, str]:
