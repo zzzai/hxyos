@@ -129,13 +129,18 @@ class OnboardingRepository:
                 """
                 SELECT creator.assignment_id::text AS assignment_id
                 FROM hxy_role_assignments AS creator
+                JOIN staff_accounts AS creator_account
+                  ON creator_account.id = creator.account_id
                 JOIN hxy_organizations AS organization
                   ON organization.organization_id = creator.organization_id
                 WHERE creator.assignment_id = %s::uuid
                   AND creator.organization_id = %s::uuid
                   AND creator.status = 'active'
+                  AND creator.role = 'founder'
+                  AND creator_account.status = 'active'
                   AND organization.status = 'active'
                 LIMIT 1
+                FOR UPDATE OF creator, creator_account, organization
                 """,
                 (creator_assignment_id, organization_id),
             ).fetchone()
@@ -286,6 +291,16 @@ class OnboardingRepository:
                       AND creator_account.status = 'active'
                       AND organization.status = 'active'
                       AND store.status = 'active'
+                      AND (
+                        (creator.role = 'founder' AND %s = 'store_manager')
+                        OR (
+                          creator.role = 'store_manager'
+                          AND creator.store_id = organization_store.store_id
+                          AND %s = 'store_employee'
+                        )
+                      )
+                    FOR UPDATE OF creator, creator_account, organization,
+                                  organization_store, store
                     RETURNING invite_id::text AS id,
                               store_id,
                               role,
@@ -300,6 +315,8 @@ class OnboardingRepository:
                         store_id,
                         creator_assignment_id,
                         organization_id,
+                        normalized_role,
+                        normalized_role,
                     ),
                 ).fetchone()
                 if row is None:
@@ -337,15 +354,40 @@ class OnboardingRepository:
         with self.connect() as connection:
             current = connection.execute(
                 """
-                SELECT invite_id::text AS id
-                FROM hxy_member_invites
-                WHERE organization_id = %s::uuid
-                  AND store_id = %s
-                  AND invite_id = %s::uuid
-                  AND status = 'pending'
-                FOR UPDATE
+                SELECT invite.invite_id::text AS id
+                FROM hxy_member_invites AS invite
+                JOIN hxy_role_assignments AS actor
+                  ON actor.assignment_id = %s::uuid
+                 AND actor.organization_id = invite.organization_id
+                JOIN staff_accounts AS actor_account
+                  ON actor_account.id = actor.account_id
+                JOIN hxy_organizations AS organization
+                  ON organization.organization_id = invite.organization_id
+                JOIN hxy_organization_stores AS organization_store
+                  ON organization_store.organization_id = invite.organization_id
+                 AND organization_store.store_id = invite.store_id
+                JOIN stores AS store
+                  ON store.store_id = organization_store.store_id
+                WHERE invite.organization_id = %s::uuid
+                  AND invite.store_id = %s
+                  AND invite.invite_id = %s::uuid
+                  AND invite.status = 'pending'
+                  AND actor.status = 'active'
+                  AND actor_account.status = 'active'
+                  AND organization.status = 'active'
+                  AND store.status = 'active'
+                  AND (
+                    (actor.role = 'founder' AND invite.role = 'store_manager')
+                    OR (
+                      actor.role = 'store_manager'
+                      AND actor.store_id = invite.store_id
+                      AND invite.role = 'store_employee'
+                    )
+                  )
+                FOR UPDATE OF invite, actor, actor_account, organization,
+                              organization_store, store
                 """,
-                scope,
+                (actor_assignment_id, *scope),
             ).fetchone()
             if current is None:
                 return None
@@ -428,7 +470,8 @@ class OnboardingRepository:
                       AND creator_account.status = 'active'
                       AND organization.status = 'active'
                       AND store.status = 'active'
-                    FOR UPDATE OF invite
+                    FOR UPDATE OF invite, creator, creator_account, organization,
+                                  organization_store, store
                     """,
                     (token_hash,),
                 ).fetchone()
@@ -575,13 +618,39 @@ class OnboardingRepository:
                        assignment.status
                 FROM hxy_role_assignments AS assignment
                 JOIN staff_accounts AS account ON account.id = assignment.account_id
+                JOIN hxy_role_assignments AS actor
+                  ON actor.assignment_id = %s::uuid
+                 AND actor.organization_id = assignment.organization_id
+                JOIN staff_accounts AS actor_account
+                  ON actor_account.id = actor.account_id
+                JOIN hxy_organizations AS organization
+                  ON organization.organization_id = assignment.organization_id
+                JOIN hxy_organization_stores AS organization_store
+                  ON organization_store.organization_id = assignment.organization_id
+                 AND organization_store.store_id = assignment.store_id
+                JOIN stores AS store
+                  ON store.store_id = organization_store.store_id
                 WHERE assignment.organization_id = %s::uuid
                   AND assignment.store_id = %s
                   AND assignment.assignment_id = %s::uuid
                   AND assignment.status = 'active'
-                FOR UPDATE OF assignment
+                  AND actor.status = 'active'
+                  AND actor_account.status = 'active'
+                  AND organization.status = 'active'
+                  AND store.status = 'active'
+                  AND actor.assignment_id <> assignment.assignment_id
+                  AND (
+                    (actor.role = 'founder' AND assignment.role = 'store_manager')
+                    OR (
+                      actor.role = 'store_manager'
+                      AND actor.store_id = assignment.store_id
+                      AND assignment.role = 'store_employee'
+                    )
+                  )
+                FOR UPDATE OF assignment, actor, actor_account, organization,
+                              organization_store, store
                 """,
-                scope,
+                (actor_assignment_id, *scope),
             ).fetchone()
             if target is None:
                 return None
@@ -593,6 +662,7 @@ class OnboardingRepository:
                 WHERE organization_id = %s::uuid
                   AND store_id = %s
                   AND assignment_id = %s::uuid
+                  AND status = 'active'
                 """,
                 scope,
             )

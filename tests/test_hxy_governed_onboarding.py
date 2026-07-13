@@ -1503,8 +1503,16 @@ def test_onboarding_repository_creates_store_atomically_with_server_id(
     store_sql, store_params = connection.calls[1]
     link_sql, link_params = connection.calls[2]
     assert "FROM hxy_role_assignments AS creator" in validate_sql
+    assert "JOIN staff_accounts AS creator_account" in validate_sql
+    assert "creator_account.id = creator.account_id" in validate_sql
     assert "creator.organization_id = %s::uuid" in validate_sql
     assert "creator.status = 'active'" in validate_sql
+    assert "creator.role = 'founder'" in validate_sql
+    assert "creator_account.status = 'active'" in validate_sql
+    assert "organization.status = 'active'" in validate_sql
+    assert (
+        "FOR UPDATE OF creator, creator_account, organization" in validate_sql
+    )
     assert validate_params == (
         REPOSITORY_CREATOR_ASSIGNMENT_ID,
         REPOSITORY_ORGANIZATION_ID,
@@ -1539,7 +1547,10 @@ def test_onboarding_repository_rejects_inactive_store_creator_without_writes(
     assert REPOSITORY_CREATOR_ASSIGNMENT_ID not in str(caught.value)
     assert connection.rolled_back is True
     assert len(connection.calls) == 1
-    assert "INSERT INTO" not in connection.calls[0][0]
+    validate_sql, _ = connection.calls[0]
+    assert "creator.role = 'founder'" in validate_sql
+    assert "creator_account.status = 'active'" in validate_sql
+    assert "INSERT INTO" not in validate_sql
 
 
 def test_onboarding_repository_creates_hashed_invite_and_created_event(
@@ -1601,6 +1612,14 @@ def test_onboarding_repository_creates_hashed_invite_and_created_event(
     assert "creator_account.status = 'active'" in invite_sql
     assert "organization.status = 'active'" in invite_sql
     assert "store.status = 'active'" in invite_sql
+    assert "creator.role = 'founder' AND %s = 'store_manager'" in invite_sql
+    assert "creator.role = 'store_manager'" in invite_sql
+    assert "creator.store_id = organization_store.store_id" in invite_sql
+    assert "%s = 'store_employee'" in invite_sql
+    assert (
+        "FOR UPDATE OF creator, creator_account, organization, organization_store, store"
+        in invite_sql
+    )
     assert "NOW() + INTERVAL '24 hours'" in invite_sql
     assert invite_params == (
         "store_employee",
@@ -1609,6 +1628,8 @@ def test_onboarding_repository_creates_hashed_invite_and_created_event(
         REPOSITORY_STORE_ID,
         REPOSITORY_CREATOR_ASSIGNMENT_ID,
         REPOSITORY_ORGANIZATION_ID,
+        "store_employee",
+        "store_employee",
     )
     assert "token_hash" not in invite_sql.split("RETURNING", 1)[1]
     assert "INSERT INTO hxy_member_invite_events" in event_sql
@@ -1660,6 +1681,10 @@ def test_onboarding_repository_rejects_unavailable_invite_scope_without_event(
     assert len(connection.calls) == 1
     invite_sql, _ = connection.calls[0]
     assert "INSERT INTO hxy_member_invites" in invite_sql
+    assert "creator.role = 'founder' AND %s = 'store_manager'" in invite_sql
+    assert "creator.role = 'store_manager'" in invite_sql
+    assert "creator.store_id = organization_store.store_id" in invite_sql
+    assert "%s = 'store_employee'" in invite_sql
     assert "INSERT INTO hxy_member_invite_events" not in invite_sql
 
 
@@ -1701,9 +1726,26 @@ def test_onboarding_repository_revokes_locked_scoped_pending_invite(
         REPOSITORY_STORE_ID,
         REPOSITORY_INVITE_ID,
     )
+    assert "FROM hxy_member_invites AS invite" in lock_sql
+    assert "JOIN hxy_role_assignments AS actor" in lock_sql
+    assert "JOIN staff_accounts AS actor_account" in lock_sql
+    assert "JOIN hxy_organizations AS organization" in lock_sql
+    assert "JOIN hxy_organization_stores AS organization_store" in lock_sql
+    assert "JOIN stores AS store" in lock_sql
+    assert "actor.status = 'active'" in lock_sql
+    assert "actor_account.status = 'active'" in lock_sql
+    assert "organization.status = 'active'" in lock_sql
+    assert "store.status = 'active'" in lock_sql
+    assert "actor.role = 'founder' AND invite.role = 'store_manager'" in lock_sql
+    assert "actor.role = 'store_manager'" in lock_sql
+    assert "actor.store_id = invite.store_id" in lock_sql
+    assert "invite.role = 'store_employee'" in lock_sql
     assert "status = 'pending'" in lock_sql
-    assert "FOR UPDATE" in lock_sql
-    assert lock_params == expected_scope
+    assert (
+        "FOR UPDATE OF invite, actor, actor_account, organization, organization_store, store"
+        in lock_sql
+    )
+    assert lock_params == (REPOSITORY_ACTOR_ASSIGNMENT_ID, *expected_scope)
     assert "UPDATE hxy_member_invites" in update_sql
     assert "status = 'pending'" in update_sql
     assert update_params == expected_scope
@@ -1727,6 +1769,17 @@ def test_onboarding_repository_returns_none_for_unavailable_invite_revoke(
     assert result is None
     assert connection.committed is True
     assert len(connection.calls) == 1
+    lock_sql, lock_params = connection.calls[0]
+    assert "actor.role = 'founder' AND invite.role = 'store_manager'" in lock_sql
+    assert "actor.role = 'store_manager'" in lock_sql
+    assert "actor.store_id = invite.store_id" in lock_sql
+    assert "invite.role = 'store_employee'" in lock_sql
+    assert lock_params == (
+        REPOSITORY_ACTOR_ASSIGNMENT_ID,
+        REPOSITORY_ORGANIZATION_ID,
+        REPOSITORY_STORE_ID,
+        REPOSITORY_INVITE_ID,
+    )
 
 
 @pytest.mark.parametrize(
@@ -1789,7 +1842,10 @@ def test_onboarding_repository_redeems_invite_atomically_without_raw_secrets(
     assert "creator_account.status = 'active'" in lock_sql
     assert "organization.status = 'active'" in lock_sql
     assert "store.status = 'active'" in lock_sql
-    assert "FOR UPDATE OF invite" in lock_sql
+    assert (
+        "FOR UPDATE OF invite, creator, creator_account, organization, "
+        "organization_store, store" in lock_sql
+    )
     assert lock_params == (INVITE_TOKEN_HASH,)
     assert "INSERT INTO staff_accounts" in account_sql
     account_id, username, display_name, password_marker, mapped_role, store_id = (
@@ -1965,9 +2021,26 @@ def test_onboarding_repository_deactivates_only_scoped_assignment_and_sessions(
         REPOSITORY_TARGET_ASSIGNMENT_ID,
     )
     assert "FROM hxy_role_assignments AS assignment" in lock_sql
+    assert "JOIN hxy_role_assignments AS actor" in lock_sql
+    assert "JOIN staff_accounts AS actor_account" in lock_sql
+    assert "JOIN hxy_organizations AS organization" in lock_sql
+    assert "JOIN hxy_organization_stores AS organization_store" in lock_sql
+    assert "JOIN stores AS store" in lock_sql
     assert "assignment.status = 'active'" in lock_sql
-    assert "FOR UPDATE OF assignment" in lock_sql
-    assert lock_params == expected_scope
+    assert "actor.status = 'active'" in lock_sql
+    assert "actor_account.status = 'active'" in lock_sql
+    assert "organization.status = 'active'" in lock_sql
+    assert "store.status = 'active'" in lock_sql
+    assert "actor.assignment_id <> assignment.assignment_id" in lock_sql
+    assert "actor.role = 'founder' AND assignment.role = 'store_manager'" in lock_sql
+    assert "actor.role = 'store_manager'" in lock_sql
+    assert "actor.store_id = assignment.store_id" in lock_sql
+    assert "assignment.role = 'store_employee'" in lock_sql
+    assert (
+        "FOR UPDATE OF assignment, actor, actor_account, organization, "
+        "organization_store, store" in lock_sql
+    )
+    assert lock_params == (REPOSITORY_ACTOR_ASSIGNMENT_ID, *expected_scope)
     assert "UPDATE hxy_role_assignments" in update_sql
     assert "SET status = 'inactive'" in update_sql
     assert "updated_at = NOW()" in update_sql
@@ -2001,6 +2074,18 @@ def test_onboarding_repository_returns_none_for_unavailable_member_deactivation(
     assert result is None
     assert connection.committed is True
     assert len(connection.calls) == 1
+    lock_sql, lock_params = connection.calls[0]
+    assert "actor.assignment_id <> assignment.assignment_id" in lock_sql
+    assert "actor.role = 'founder' AND assignment.role = 'store_manager'" in lock_sql
+    assert "actor.role = 'store_manager'" in lock_sql
+    assert "actor.store_id = assignment.store_id" in lock_sql
+    assert "assignment.role = 'store_employee'" in lock_sql
+    assert lock_params == (
+        REPOSITORY_ACTOR_ASSIGNMENT_ID,
+        REPOSITORY_ORGANIZATION_ID,
+        REPOSITORY_STORE_ID,
+        REPOSITORY_TARGET_ASSIGNMENT_ID,
+    )
 
 
 def test_onboarding_repository_does_not_hide_psycopg_initialization_failures(
@@ -2386,6 +2471,34 @@ def onboarding_bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+MANAGEMENT_MUTATIONS = (
+    (
+        "/api/v1/organization/stores",
+        {"name": "New Store", "city": "Suzhou", "address": "Road 3"},
+        "create_store_calls",
+    ),
+    (
+        "/api/v1/organization/invites",
+        {
+            "store_id": API_OTHER_STORE_ID,
+            "role": "store_manager",
+            "display_name": "New Manager",
+        },
+        "create_invite_calls",
+    ),
+    (
+        "/api/v1/organization/invites/invite-manager-b/revoke",
+        None,
+        "revoke_calls",
+    ),
+    (
+        f"/api/v1/organization/members/{API_OTHER_MANAGER_ASSIGNMENT_ID}/deactivate",
+        None,
+        "deactivate_calls",
+    ),
+)
+
+
 @pytest.fixture
 def onboarding_api(tmp_path: Path):
     identity_repository = ApiIdentityRepository()
@@ -2403,6 +2516,109 @@ def onboarding_api(tmp_path: Path):
         product_auth_settings=auth_settings,
     )
     return OnboardingApiClient(app), onboarding_repository, auth_settings
+
+
+@pytest.mark.parametrize(("path", "json_body", "call_attribute"), MANAGEMENT_MUTATIONS)
+def test_cookie_authenticated_management_mutations_require_exact_public_origin(
+    onboarding_api,
+    path: str,
+    json_body: dict[str, Any] | None,
+    call_attribute: str,
+) -> None:
+    client, repository, _ = onboarding_api
+    kwargs: dict[str, Any] = {
+        "headers": {
+            "Cookie": "hxy_session=founder-session",
+            "Host": "attacker.example",
+            "Origin": "https://app.hxy.example",
+        },
+    }
+    if json_body is not None:
+        kwargs["json"] = json_body
+
+    response = client.request("POST", path, **kwargs)
+
+    assert response.status_code in {200, 201}
+    assert len(getattr(repository, call_attribute)) == 1
+
+
+@pytest.mark.parametrize(("path", "json_body", "call_attribute"), MANAGEMENT_MUTATIONS)
+@pytest.mark.parametrize(
+    "origin",
+    (None, "null", "https://sub.app.hxy.example", "://malformed"),
+    ids=["absent", "null", "hostile-same-site-subdomain", "malformed"],
+)
+def test_cookie_authenticated_management_mutations_reject_untrusted_origin_without_writes(
+    onboarding_api,
+    path: str,
+    json_body: dict[str, Any] | None,
+    call_attribute: str,
+    origin: str | None,
+) -> None:
+    client, repository, _ = onboarding_api
+    headers = {"Cookie": "hxy_session=founder-session"}
+    if origin is not None:
+        headers["Origin"] = origin
+    kwargs: dict[str, Any] = {
+        "headers": headers,
+    }
+    if json_body is not None:
+        kwargs["json"] = json_body
+
+    response = client.request("POST", path, **kwargs)
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Forbidden"}
+    assert getattr(repository, call_attribute) == []
+
+
+def test_bearer_management_mutation_bypasses_origin_check(onboarding_api) -> None:
+    client, repository, _ = onboarding_api
+
+    response = client.request(
+        "POST",
+        "/api/v1/organization/stores",
+        headers={
+            **onboarding_bearer("founder-session"),
+            "Origin": "https://sub.app.hxy.example",
+            "Host": "attacker.example",
+        },
+        json={"name": "New Store", "city": "Suzhou", "address": "Road 3"},
+    )
+
+    assert response.status_code == 201
+    assert len(repository.create_store_calls) == 1
+
+
+def test_malformed_authorization_does_not_bypass_cookie_origin_check(
+    onboarding_api,
+) -> None:
+    client, repository, _ = onboarding_api
+
+    response = client.request(
+        "POST",
+        "/api/v1/organization/stores",
+        headers={
+            "Authorization": "Basic founder-session",
+            "Cookie": "hxy_session=founder-session",
+            "Origin": "https://sub.app.hxy.example",
+        },
+        json={"name": "New Store", "city": "Suzhou", "address": "Road 3"},
+    )
+
+    assert response.status_code == 403
+    assert repository.create_store_calls == []
+
+
+def test_cookie_authenticated_management_get_is_origin_exempt(onboarding_api) -> None:
+    client, _, _ = onboarding_api
+
+    response = client.get(
+        "/api/v1/organization/stores",
+        headers={"Cookie": "hxy_session=founder-session"},
+    )
+
+    assert response.status_code == 200
 
 
 def test_founder_lists_and_creates_organization_stores(onboarding_api) -> None:
@@ -2782,6 +2998,7 @@ def test_public_redemption_maps_all_repository_states_to_generic_unauthorized(
     assert response.json() == {"detail": "Unauthorized"}
     assert "set-cookie" not in response.headers
     assert str(repository_error) not in response.text
+    assert raw_token not in response.text
 
 
 def test_public_redemption_replay_is_generic_and_has_no_cookie(onboarding_api) -> None:
@@ -2806,44 +3023,251 @@ def test_public_redemption_replay_is_generic_and_has_no_cookie(onboarding_api) -
 
 
 @pytest.mark.parametrize(
-    "payload",
-    ({}, {"token": "short"}, {"token": "x" * 257}, {"token": "x" * 43, "role": "founder"}),
+    ("request_kwargs", "submitted_secrets"),
+    (
+        ({"json": {}}, ()),
+        ({"json": {"token": "short-secret"}}, ("short-secret",)),
+        ({"json": {"token": "overlong-secret-" + "x" * 257}}, ("overlong-secret",)),
+        ({"json": {"token": " " * 214 + API_VALID_INVITE_TOKEN}}, ()),
+        ({"json": {"token": 123456789}}, ("123456789",)),
+        (
+            {"json": {"token": "extra-secret-" + "x" * 43, "role": "founder"}},
+            ("extra-secret",),
+        ),
+        (
+            {
+                "content": '{"token":"malformed-secret-' + "x" * 43,
+                "headers": {"Content-Type": "application/json"},
+            },
+            ("malformed-secret",),
+        ),
+    ),
+    ids=[
+        "missing",
+        "short",
+        "overlong",
+        "overlong-before-normalization",
+        "non-string",
+        "extra",
+        "malformed-json",
+    ],
 )
-def test_public_redemption_malformed_body_remains_validation_error(
+def test_public_redemption_malformed_body_is_generic_and_secret_safe(
     onboarding_api,
-    payload: dict[str, Any],
+    request_kwargs: dict[str, Any],
+    submitted_secrets: tuple[str, ...],
 ) -> None:
     client, repository, _ = onboarding_api
 
     response = client.request(
         "POST",
         "/api/v1/onboarding/invites/redeem",
-        json=payload,
+        **request_kwargs,
     )
 
     assert response.status_code == 422
+    assert response.json() == {"detail": "Unprocessable Entity"}
+    for submitted_secret in submitted_secrets:
+        assert submitted_secret not in response.text
     assert repository.redeem_calls == []
 
 
-def test_onboarding_router_wiring_is_conditional(monkeypatch, tmp_path: Path) -> None:
+def test_public_redemption_constructs_response_model(monkeypatch, tmp_path: Path) -> None:
+    from hxy_product import onboarding_routes
+
+    constructed: list[dict[str, Any]] = []
+    response_model = onboarding_routes.AuthenticatedResponse
+
+    class TrackingAuthenticatedResponse(response_model):
+        def __init__(self, **data: Any) -> None:
+            constructed.append(data)
+            super().__init__(**data)
+
+    monkeypatch.setattr(
+        onboarding_routes,
+        "AuthenticatedResponse",
+        TrackingAuthenticatedResponse,
+    )
+    repository = StatefulOnboardingRepository()
+    app = create_app(
+        root_dir=tmp_path,
+        product_identity_repository_factory=ApiIdentityRepository,
+        onboarding_repository_factory=lambda: repository,
+        onboarding_public_app_url=API_PUBLIC_APP_URL,
+        product_auth_settings=ProductAuthSettings(
+            gateway_secret="",
+            session_ttl_seconds=1800,
+            secure_cookie=True,
+        ),
+    )
+
+    response = OnboardingApiClient(app).request(
+        "POST",
+        "/api/v1/onboarding/invites/redeem",
+        json={"token": API_VALID_INVITE_TOKEN},
+    )
+
+    assert response.status_code == 200
+    assert constructed == [{"status": "authenticated"}]
+
+
+def test_public_redemption_openapi_keeps_secret_request_shape(onboarding_api) -> None:
+    client, _, _ = onboarding_api
+
+    operation = client.app.openapi()["paths"][
+        "/api/v1/onboarding/invites/redeem"
+    ]["post"]
+    schema = operation["requestBody"]["content"]["application/json"]["schema"]
+
+    assert schema == {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["token"],
+        "properties": {
+            "token": {
+                "type": "string",
+                "minLength": 43,
+                "maxLength": 256,
+                "writeOnly": True,
+            }
+        },
+    }
+
+
+def test_onboarding_router_requires_repository_and_public_url(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
     monkeypatch.delenv("HXY_DATABASE_URL", raising=False)
     monkeypatch.delenv("HXY_PUBLIC_APP_URL", raising=False)
-
-    absent_app = create_app(root_dir=tmp_path / "absent")
-    absent_paths = {getattr(route, "path", "") for route in absent_app.routes}
-    assert "/api/v1/onboarding/invites/redeem" not in absent_paths
-
     repository = StatefulOnboardingRepository()
-    explicit_app = create_app(
-        root_dir=tmp_path / "explicit",
+
+    missing_both = OnboardingApiClient(create_app(root_dir=tmp_path / "missing-both"))
+    repository_only = OnboardingApiClient(
+        create_app(
+            root_dir=tmp_path / "repository-only",
+            onboarding_repository_factory=lambda: repository,
+        )
+    )
+    monkeypatch.setenv("HXY_DATABASE_URL", "postgresql://hxy.invalid/hxy")
+    database_only = OnboardingApiClient(
+        create_app(root_dir=tmp_path / "database-only")
+    )
+    monkeypatch.delenv("HXY_DATABASE_URL", raising=False)
+    monkeypatch.setenv("HXY_PUBLIC_APP_URL", API_PUBLIC_APP_URL)
+    public_url_only = OnboardingApiClient(create_app(root_dir=tmp_path / "url-only"))
+
+    for client in (missing_both, repository_only, database_only, public_url_only):
+        response = client.request(
+            "POST",
+            "/api/v1/onboarding/invites/redeem",
+            json={"token": API_VALID_INVITE_TOKEN},
+        )
+        assert response.status_code == 404
+        assert repository.redeem_calls == []
+
+
+def test_onboarding_router_registers_with_explicit_ready_configuration(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("HXY_DATABASE_URL", raising=False)
+    monkeypatch.delenv("HXY_PUBLIC_APP_URL", raising=False)
+    repository = StatefulOnboardingRepository()
+    app = create_app(
+        root_dir=tmp_path,
         onboarding_repository_factory=lambda: repository,
         onboarding_public_app_url=API_PUBLIC_APP_URL,
     )
-    explicit_paths = {getattr(route, "path", "") for route in explicit_app.routes}
-    assert "/api/v1/onboarding/invites/redeem" in explicit_paths
 
+    response = OnboardingApiClient(app).request(
+        "POST",
+        "/api/v1/onboarding/invites/redeem",
+        json={"token": API_VALID_INVITE_TOKEN},
+    )
+
+    assert response.status_code == 200
+    assert len(repository.redeem_calls) == 1
+
+
+def test_onboarding_router_registers_with_environment_ready_configuration(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
     monkeypatch.setenv("HXY_DATABASE_URL", "postgresql://hxy.invalid/hxy")
     monkeypatch.setenv("HXY_PUBLIC_APP_URL", API_PUBLIC_APP_URL)
-    configured_app = create_app(root_dir=tmp_path / "configured")
-    configured_paths = {getattr(route, "path", "") for route in configured_app.routes}
-    assert "/api/v1/onboarding/invites/redeem" in configured_paths
+    app = create_app(root_dir=tmp_path)
+
+    response = OnboardingApiClient(app).get("/api/v1/organization/stores")
+
+    assert response.status_code == 401
+
+
+@pytest.mark.parametrize(
+    "public_app_url",
+    (
+        "http://app.hxy.example/onboarding/",
+        "ftp://app.hxy.example/onboarding/",
+        "https://user:configuration-secret@app.hxy.example/onboarding/",
+        "https://app.hxy.example/onboarding/?configuration-secret=1",
+        "https://app.hxy.example/onboarding/#configuration-secret",
+        "https://app.hxy.example:99999/onboarding/",
+        "https://app.hxy.example:/onboarding/",
+        "https://app.hxy.example/onboarding/?",
+        "https://app.hxy.example/onboarding/#",
+    ),
+    ids=[
+        "insecure-remote",
+        "scheme",
+        "credentials",
+        "query",
+        "fragment",
+        "port",
+        "empty-port",
+        "empty-query",
+        "empty-fragment",
+    ],
+)
+def test_invalid_nonblank_public_url_fails_fast_without_echoing_configuration(
+    monkeypatch,
+    tmp_path: Path,
+    public_app_url: str,
+) -> None:
+    monkeypatch.delenv("HXY_DATABASE_URL", raising=False)
+    monkeypatch.delenv("HXY_PUBLIC_APP_URL", raising=False)
+
+    with pytest.raises(ValueError, match="public app URL") as caught:
+        create_app(
+            root_dir=tmp_path,
+            onboarding_repository_factory=StatefulOnboardingRepository,
+            onboarding_public_app_url=public_app_url,
+        )
+
+    assert "configuration-secret" not in str(caught.value)
+    assert public_app_url not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "public_app_url",
+    (
+        "http://localhost:3000/onboarding/",
+        "http://127.0.0.1:3000/onboarding/",
+        "http://[::1]:3000/onboarding/",
+    ),
+)
+def test_localhost_http_public_url_is_ready(
+    monkeypatch,
+    tmp_path: Path,
+    public_app_url: str,
+) -> None:
+    monkeypatch.delenv("HXY_DATABASE_URL", raising=False)
+    monkeypatch.delenv("HXY_PUBLIC_APP_URL", raising=False)
+    app = create_app(
+        root_dir=tmp_path,
+        onboarding_repository_factory=StatefulOnboardingRepository,
+        onboarding_public_app_url=public_app_url,
+    )
+
+    response = OnboardingApiClient(app).get("/api/v1/organization/stores")
+
+    assert response.status_code == 401

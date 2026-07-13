@@ -48,6 +48,8 @@ class CreateInviteRequest(StrictOnboardingRequest):
 
 
 class RedeemInviteRequest(StrictOnboardingRequest):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+
     token: str = Field(min_length=43, max_length=256)
 
 

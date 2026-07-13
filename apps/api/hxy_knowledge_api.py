@@ -90,7 +90,7 @@ from hxy_product.material_repository import MaterialRepository
 from hxy_product.material_routes import create_material_router
 from hxy_product.material_understanding import build_material_understanding
 from hxy_product.onboarding_repository import OnboardingRepository
-from hxy_product.onboarding_routes import create_onboarding_router
+from hxy_product.onboarding_routes import create_onboarding_router, validate_public_app_url
 from hxy_product.repository import IdentityRepository
 from hxy_product.routes import create_identity_router
 from hxy_product.task_repository import TaskRepository
@@ -3621,6 +3621,11 @@ def create_app(
         if onboarding_public_app_url is not None
         else os.environ.get("HXY_PUBLIC_APP_URL", "")
     )
+    validated_onboarding_public_app_url = ""
+    if resolved_onboarding_public_app_url.strip():
+        validated_onboarding_public_app_url, _ = validate_public_app_url(
+            resolved_onboarding_public_app_url
+        )
     make_conversation_repository = (
         conversation_repository_factory
         or _default_conversation_repository_factory(settings.database_url)
@@ -3658,13 +3663,13 @@ def create_app(
             resolved_product_auth_settings,
         )
     )
-    if make_onboarding_repository is not None:
+    if make_onboarding_repository is not None and validated_onboarding_public_app_url:
         app.include_router(
             create_onboarding_router(
                 make_product_identity_repository,
                 make_onboarding_repository,
                 resolved_product_auth_settings,
-                resolved_onboarding_public_app_url,
+                validated_onboarding_public_app_url,
             )
         )
 

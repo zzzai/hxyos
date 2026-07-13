@@ -6,8 +6,8 @@ from collections.abc import Mapping
 from typing import Any, Callable
 from urllib.parse import quote, urlsplit, urlunsplit
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response
+from pydantic import ValidationError
 
 from .auth import Principal, ProductAuthSettings, build_principal_resolver
 from .onboarding_policy import (
@@ -83,13 +83,16 @@ def _invite_response(record: Mapping[str, Any]) -> InviteResponse:
     )
 
 
-def _invite_link(public_app_url: str, raw_token: str) -> str:
-    parsed = urlsplit(public_app_url.strip())
-    local_hosts = {"127.0.0.1", "localhost", "::1"}
+def validate_public_app_url(public_app_url: str) -> tuple[str, str]:
+    normalized = public_app_url.strip()
+    if not normalized or any(character.isspace() for character in normalized):
+        raise ValueError("HXY public app URL is invalid")
     try:
-        port_is_valid = parsed.port is None or 1 <= parsed.port <= 65535
+        parsed = urlsplit(normalized)
+        port = parsed.port
     except ValueError:
-        port_is_valid = False
+        raise ValueError("HXY public app URL is invalid") from None
+    local_hosts = {"127.0.0.1", "localhost", "::1"}
     if (
         not parsed.netloc
         or not parsed.hostname
@@ -99,11 +102,38 @@ def _invite_link(public_app_url: str, raw_token: str) -> str:
         or parsed.password is not None
         or parsed.query
         or parsed.fragment
-        or not port_is_valid
+        or "?" in normalized
+        or "#" in normalized
+        or "\\" in parsed.netloc
+        or parsed.netloc.endswith(":")
+        or (port is not None and not 1 <= port <= 65535)
     ):
-        raise HTTPException(status_code=503, detail="Service Unavailable")
+        raise ValueError("HXY public app URL is invalid")
+
+    hostname = parsed.hostname.lower()
+    rendered_hostname = f"[{hostname}]" if ":" in hostname else hostname
+    default_port = 443 if parsed.scheme == "https" else 80
+    rendered_port = f":{port}" if port is not None and port != default_port else ""
+    origin = f"{parsed.scheme}://{rendered_hostname}{rendered_port}"
+    path = parsed.path or "/"
+    return urlunsplit((parsed.scheme, f"{rendered_hostname}{rendered_port}", path, "", "")), origin
+
+
+def _invite_link(public_app_url: str, raw_token: str) -> str:
+    parsed = urlsplit(public_app_url)
     fragment = f"invite={quote(raw_token, safe='-._~')}"
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path or "/", "", fragment))
+
+
+def _has_bearer_credential(authorization: str | None) -> bool:
+    if authorization is None:
+        return False
+    parts = authorization.split(" ")
+    return len(parts) == 2 and parts[0].lower() == "bearer" and bool(parts[1])
+
+
+def _unprocessable_redemption() -> HTTPException:
+    return HTTPException(status_code=422, detail="Unprocessable Entity")
 
 
 def _management_repository_error(exc: OnboardingRepositoryError) -> HTTPException:
@@ -123,6 +153,7 @@ def create_onboarding_router(
     public_app_url: str,
 ) -> APIRouter:
     router = APIRouter()
+    validated_public_app_url, public_app_origin = validate_public_app_url(public_app_url)
 
     def get_identity_repository() -> Any:
         return identity_repository_factory()
@@ -131,6 +162,23 @@ def create_onboarding_router(
         return onboarding_repository_factory()
 
     resolve_principal = build_principal_resolver(get_identity_repository)
+
+    def require_management_origin(
+        authorization: str | None = Header(default=None),
+        hxy_session: str | None = Cookie(default=None, alias="hxy_session"),
+        origin: str | None = Header(default=None),
+    ) -> None:
+        if _has_bearer_credential(authorization):
+            return
+        if hxy_session and origin != public_app_origin:
+            raise _forbidden()
+
+    async def parse_redemption_request(request: Request) -> RedeemInviteRequest:
+        try:
+            payload = await request.json()
+            return RedeemInviteRequest.model_validate(payload)
+        except (UnicodeDecodeError, ValueError, ValidationError):
+            raise _unprocessable_redemption() from None
 
     def resolve_actor(
         principal: Principal = Depends(resolve_principal),
@@ -200,6 +248,7 @@ def create_onboarding_router(
         "/api/v1/organization/stores",
         response_model=StoreResponse,
         status_code=201,
+        dependencies=[Depends(require_management_origin)],
     )
     def create_store(
         request: CreateStoreRequest,
@@ -260,6 +309,7 @@ def create_onboarding_router(
         "/api/v1/organization/invites",
         response_model=CreateInviteResponse,
         status_code=201,
+        dependencies=[Depends(require_management_origin)],
     )
     def create_invite(
         request: CreateInviteRequest,
@@ -313,6 +363,7 @@ def create_onboarding_router(
     @router.post(
         "/api/v1/organization/invites/{invite_id}/revoke",
         response_model=InviteResponse,
+        dependencies=[Depends(require_management_origin)],
     )
     def revoke_invite(
         invite_id: str,
@@ -359,6 +410,7 @@ def create_onboarding_router(
     @router.post(
         "/api/v1/organization/members/{assignment_id}/deactivate",
         response_model=MemberResponse,
+        dependencies=[Depends(require_management_origin)],
     )
     def deactivate_member(
         assignment_id: str,
@@ -410,11 +462,34 @@ def create_onboarding_router(
     @router.post(
         "/api/v1/onboarding/invites/redeem",
         response_model=AuthenticatedResponse,
+        openapi_extra={
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": ["token"],
+                            "properties": {
+                                "token": {
+                                    "type": "string",
+                                    "minLength": 43,
+                                    "maxLength": 256,
+                                    "writeOnly": True,
+                                }
+                            },
+                        }
+                    }
+                },
+            }
+        },
     )
     def redeem_invite(
-        request: RedeemInviteRequest,
+        response: Response,
+        request: RedeemInviteRequest = Depends(parse_redemption_request),
         repository: Any = Depends(get_onboarding_repository),
-    ) -> JSONResponse:
+    ) -> AuthenticatedResponse:
         token_hash = hashlib.sha256(request.token.encode("utf-8")).hexdigest()
         raw_session_token = secrets.token_urlsafe(32)
         try:
@@ -425,7 +500,6 @@ def create_onboarding_router(
             )
         except OnboardingRepositoryError:
             raise HTTPException(status_code=401, detail="Unauthorized") from None
-        response = JSONResponse({"status": "authenticated"})
         response.set_cookie(
             key="hxy_session",
             value=raw_session_token,
@@ -435,6 +509,6 @@ def create_onboarding_router(
             httponly=True,
             samesite="lax",
         )
-        return response
+        return AuthenticatedResponse(status="authenticated")
 
     return router
