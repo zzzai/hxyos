@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import timedelta
 from enum import Enum
+from unicodedata import category
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 INVITE_LIFETIME = timedelta(hours=24)
@@ -24,6 +25,13 @@ class InviteRole(str, Enum):
 
 class StrictOnboardingRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    @field_validator("name", "city", "address", "display_name", check_fields=False)
+    @classmethod
+    def reject_unsafe_human_readable_text(cls, value: str) -> str:
+        if any(category(character) in {"Cc", "Cf"} for character in value):
+            raise ValueError("value contains unsupported control or format characters")
+        return value
 
 
 class CreateStoreRequest(StrictOnboardingRequest):

@@ -12,6 +12,7 @@ from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict
 
 from apps.api.hxy_product.onboarding_policy import (
+    DEACTIVATABLE_ROLES_BY_ACTOR,
     INVITABLE_ROLES_BY_ACTOR,
     ResolvedAssignment,
     ResolvedStore,
@@ -144,13 +145,76 @@ def test_invite_policy_rejects_store_outside_actor_organization() -> None:
     assert can_invite_member(actor, foreign_store, InviteRole.STORE_MANAGER) is False
 
 
-def test_invite_policy_mapping_is_immutable() -> None:
+def test_resolved_assignment_normalizes_repository_role_string() -> None:
+    founder = ResolvedAssignment(
+        assignment_id="founder",
+        organization_id=ORGANIZATION_ID,
+        store_id=None,
+        role="founder",  # type: ignore[arg-type]
+    )
+    store = ResolvedStore(organization_id=ORGANIZATION_ID, store_id=STORE_ID)
+
+    assert founder.role is AssignmentRole.FOUNDER
+    assert can_invite_member(founder, store, InviteRole.STORE_MANAGER) is True
+
+
+def test_resolved_assignment_rejects_unknown_role() -> None:
+    with pytest.raises(ValueError, match="unsupported assignment role"):
+        ResolvedAssignment(
+            assignment_id="unknown",
+            organization_id=ORGANIZATION_ID,
+            store_id=None,
+            role="organization_owner",  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize(
+    ("actor_role", "invite_role"),
+    (
+        (AssignmentRole.HQ_OPERATIONS, InviteRole.STORE_MANAGER),
+        (AssignmentRole.HQ_OPERATIONS, InviteRole.STORE_EMPLOYEE),
+        (AssignmentRole.SYSTEM_ADMIN, InviteRole.STORE_MANAGER),
+        (AssignmentRole.SYSTEM_ADMIN, InviteRole.STORE_EMPLOYEE),
+    ),
+)
+def test_non_onboarding_authority_roles_cannot_invite(
+    actor_role: AssignmentRole,
+    invite_role: InviteRole,
+) -> None:
+    actor = resolved_assignment(actor_role)
+    store = ResolvedStore(organization_id=ORGANIZATION_ID, store_id=STORE_ID)
+
+    assert can_invite_member(actor, store, invite_role) is False
+
+
+def test_policy_mappings_cover_every_assignment_role() -> None:
+    expected_roles = set(AssignmentRole)
+
+    assert set(INVITABLE_ROLES_BY_ACTOR) == expected_roles
+    assert set(DEACTIVATABLE_ROLES_BY_ACTOR) == expected_roles
+
+
+@pytest.mark.parametrize(
+    "policy_mapping",
+    (INVITABLE_ROLES_BY_ACTOR, DEACTIVATABLE_ROLES_BY_ACTOR),
+)
+def test_policy_mappings_and_nested_role_sets_are_immutable(
+    policy_mapping: object,
+) -> None:
+    role_mapping = policy_mapping
+    founder_roles = role_mapping[AssignmentRole.FOUNDER]  # type: ignore[index]
+    assert isinstance(founder_roles, frozenset)
+
+    with pytest.raises(TypeError):
+        role_mapping[AssignmentRole.FOUNDER] = frozenset()  # type: ignore[index]
+    with pytest.raises(AttributeError):
+        founder_roles.add(InviteRole.STORE_EMPLOYEE)  # type: ignore[attr-defined]
+
+
+def test_invite_policy_mapping_has_expected_founder_rule() -> None:
     assert INVITABLE_ROLES_BY_ACTOR[AssignmentRole.FOUNDER] == frozenset(
         {InviteRole.STORE_MANAGER}
     )
-
-    with pytest.raises(TypeError):
-        INVITABLE_ROLES_BY_ACTOR[AssignmentRole.FOUNDER] = frozenset()  # type: ignore[index]
 
 
 def test_manager_cannot_deactivate_self() -> None:
@@ -178,6 +242,58 @@ def test_founder_can_deactivate_organization_manager() -> None:
     manager = resolved_assignment(AssignmentRole.STORE_MANAGER, store_id=STORE_ID)
 
     assert can_deactivate_member(founder, manager) is True
+
+
+@pytest.mark.parametrize(
+    ("actor", "target"),
+    (
+        (
+            resolved_assignment(AssignmentRole.FOUNDER),
+            resolved_assignment(AssignmentRole.STORE_EMPLOYEE, store_id=STORE_ID),
+        ),
+        (
+            resolved_assignment(AssignmentRole.STORE_MANAGER, store_id=STORE_ID),
+            resolved_assignment(
+                AssignmentRole.STORE_MANAGER,
+                assignment_id="other-manager",
+                store_id=STORE_ID,
+            ),
+        ),
+        (
+            resolved_assignment(AssignmentRole.STORE_EMPLOYEE, store_id=STORE_ID),
+            resolved_assignment(AssignmentRole.STORE_MANAGER, store_id=STORE_ID),
+        ),
+        (
+            resolved_assignment(AssignmentRole.STORE_EMPLOYEE, store_id=STORE_ID),
+            resolved_assignment(
+                AssignmentRole.STORE_EMPLOYEE,
+                assignment_id="other-employee",
+                store_id=STORE_ID,
+            ),
+        ),
+        (
+            resolved_assignment(AssignmentRole.HQ_OPERATIONS),
+            resolved_assignment(AssignmentRole.STORE_MANAGER, store_id=STORE_ID),
+        ),
+        (
+            resolved_assignment(AssignmentRole.HQ_OPERATIONS),
+            resolved_assignment(AssignmentRole.STORE_EMPLOYEE, store_id=STORE_ID),
+        ),
+        (
+            resolved_assignment(AssignmentRole.SYSTEM_ADMIN),
+            resolved_assignment(AssignmentRole.STORE_MANAGER, store_id=STORE_ID),
+        ),
+        (
+            resolved_assignment(AssignmentRole.SYSTEM_ADMIN),
+            resolved_assignment(AssignmentRole.STORE_EMPLOYEE, store_id=STORE_ID),
+        ),
+    ),
+)
+def test_deactivation_policy_denies_every_unlisted_role_pair(
+    actor: ResolvedAssignment,
+    target: ResolvedAssignment,
+) -> None:
+    assert can_deactivate_member(actor, target) is False
 
 
 @pytest.mark.parametrize(
@@ -223,6 +339,82 @@ def test_onboarding_request_schemas_accept_bounded_normalized_text() -> None:
     assert store.city == "c" * 80
     assert store.address == "a" * 240
     assert invite.display_name == "d" * 80
+
+
+def test_store_address_accepts_useful_spaces_and_punctuation() -> None:
+    request = CreateStoreRequest(
+        name="East Store",
+        city="Shanghai",
+        address="Building A, Room 2 / No. 8 (East)",
+    )
+
+    assert request.address == "Building A, Room 2 / No. 8 (East)"
+
+
+@pytest.mark.parametrize(
+    ("model", "payload"),
+    (
+        (
+            CreateStoreRequest,
+            {"name": "Main\x00Store", "city": "Shanghai", "address": "Road 1"},
+        ),
+        (
+            CreateStoreRequest,
+            {"name": "Main Store", "city": "Shang\nhai", "address": "Road 1"},
+        ),
+        (
+            CreateStoreRequest,
+            {"name": "Main Store", "city": "Shanghai", "address": "Road\t1"},
+        ),
+        (
+            CreateInviteRequest,
+            {
+                "store_id": STORE_ID,
+                "role": "store_employee",
+                "display_name": "Team\x00Member",
+            },
+        ),
+    ),
+)
+def test_human_readable_fields_reject_embedded_control_characters(
+    model: type[CreateStoreRequest] | type[CreateInviteRequest],
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        model.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("model", "payload"),
+    (
+        (
+            CreateStoreRequest,
+            {"name": "\u200b", "city": "Shanghai", "address": "Road 1"},
+        ),
+        (
+            CreateStoreRequest,
+            {"name": "Main Store", "city": "\u2060", "address": "Road 1"},
+        ),
+        (
+            CreateStoreRequest,
+            {"name": "Main Store", "city": "Shanghai", "address": "\u200b\u2060"},
+        ),
+        (
+            CreateInviteRequest,
+            {
+                "store_id": STORE_ID,
+                "role": "store_employee",
+                "display_name": "\u200b",
+            },
+        ),
+    ),
+)
+def test_human_readable_fields_reject_invisible_format_characters(
+    model: type[CreateStoreRequest] | type[CreateInviteRequest],
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        model.model_validate(payload)
 
 
 @pytest.mark.parametrize(

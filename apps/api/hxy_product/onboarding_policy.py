@@ -14,6 +14,13 @@ class ResolvedAssignment:
     store_id: str | None
     role: AssignmentRole
 
+    def __post_init__(self) -> None:
+        try:
+            normalized_role = AssignmentRole(self.role)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("unsupported assignment role") from exc
+        object.__setattr__(self, "role", normalized_role)
+
 
 @dataclass(frozen=True, slots=True)
 class ResolvedStore:
