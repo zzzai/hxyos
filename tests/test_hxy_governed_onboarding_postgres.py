@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import os
+import stat
+import tempfile
 import time
+import traceback
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Barrier
-from typing import Any
+from typing import Any, Iterator, TextIO
 from uuid import UUID, uuid4
 
 import psycopg
@@ -63,7 +67,30 @@ def _require_safe_database_name(database_name: str) -> str:
     return normalized
 
 
-def require_safe_test_database_url(database_url: str) -> tuple[str, str]:
+class _PasswordSecret:
+    __slots__ = ("__value",)
+
+    def __init__(self, value: str):
+        if "\n" in value or "\r" in value:
+            raise ValueError("test database password cannot contain line breaks")
+        self.__value = value
+
+    def __repr__(self) -> str:
+        return "<database-password redacted>"
+
+    def write_pgpass(self, stream: TextIO) -> None:
+        escaped = self.__value.replace("\\", "\\\\").replace(":", "\\:")
+        stream.write(f"*:*:*:*:{escaped}\n")
+
+
+@dataclass(frozen=True)
+class _SafeDatabaseConfig:
+    conninfo: str = field(repr=False)
+    database_name: str
+    password: _PasswordSecret | None = field(repr=False)
+
+
+def _parse_safe_database_config(database_url: str) -> _SafeDatabaseConfig:
     try:
         parsed = conninfo_to_dict(database_url)
     except psycopg.Error as exc:
@@ -71,7 +98,54 @@ def require_safe_test_database_url(database_url: str) -> tuple[str, str]:
             "HXY_TEST_DATABASE_URL is not valid PostgreSQL conninfo"
         ) from exc
     database_name = _require_safe_database_name(parsed.get("dbname", ""))
-    return database_url, database_name
+    password_value = parsed.pop("password", None)
+    if password_value is not None:
+        parsed.pop("passfile", None)
+    password = _PasswordSecret(password_value) if password_value is not None else None
+    return _SafeDatabaseConfig(
+        conninfo=make_conninfo(**parsed),
+        database_name=database_name,
+        password=password,
+    )
+
+
+def require_safe_test_database_url(database_url: str) -> _SafeDatabaseConfig:
+    return _parse_safe_database_config(database_url)
+
+
+@contextmanager
+def _scoped_database_password(
+    password: _PasswordSecret | None,
+) -> Iterator[None]:
+    if password is None:
+        yield
+        return
+
+    previous_passfile = os.environ.get("PGPASSFILE")
+    previous_pgpassword = os.environ.get("PGPASSWORD")
+    descriptor, raw_path = tempfile.mkstemp(prefix="hxy-onboarding-pgpass-")
+    passfile_path = Path(raw_path)
+    stream_open = False
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream_open = True
+            password.write_pgpass(stream)
+        os.environ["PGPASSFILE"] = str(passfile_path)
+        os.environ.pop("PGPASSWORD", None)
+        yield
+    finally:
+        if not stream_open:
+            os.close(descriptor)
+        if previous_passfile is None:
+            os.environ.pop("PGPASSFILE", None)
+        else:
+            os.environ["PGPASSFILE"] = previous_passfile
+        if previous_pgpassword is None:
+            os.environ.pop("PGPASSWORD", None)
+        else:
+            os.environ["PGPASSWORD"] = previous_pgpassword
+        passfile_path.unlink(missing_ok=True)
 
 
 @dataclass(frozen=True)
@@ -103,85 +177,89 @@ def postgres_harness() -> PostgresHarness:
     if not configured_url:
         pytest.skip("HXY_TEST_DATABASE_URL is not configured")
 
-    database_url, parsed_database_name = require_safe_test_database_url(configured_url)
-    control_url = make_conninfo(
-        database_url,
-        connect_timeout=5,
-        application_name="hxy-onboarding-postgres-control-test",
-    )
-    schema_name = f"hxy_onboarding_test_{uuid4().hex}"
-    schema_created = False
-
-    try:
-        with psycopg.connect(control_url, autocommit=True) as connection:
-            actual_database_name = connection.execute(
-                "SELECT current_database()"
-            ).fetchone()[0]
-            if (
-                _require_safe_database_name(actual_database_name)
-                != parsed_database_name
-            ):
-                raise RuntimeError(
-                    "HXY_TEST_DATABASE_URL parsed and connected database names differ"
-                )
-            connection.execute(
-                sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema_name))
-            )
-            schema_created = True
-            connection.execute(
-                sql.SQL("SET search_path TO {}, public").format(
-                    sql.Identifier(schema_name)
-                )
-            )
-            current_schema = connection.execute(
-                "SELECT current_schema()"
-            ).fetchone()[0]
-            assert current_schema == schema_name
-            for migration in MIGRATIONS:
-                connection.execute(migration.read_text(encoding="utf-8"))
-
-        repository_url = make_conninfo(
-            database_url,
+    config = require_safe_test_database_url(configured_url)
+    del configured_url
+    with _scoped_database_password(config.password):
+        control_url = make_conninfo(
+            config.conninfo,
             connect_timeout=5,
-            options=f"-csearch_path={schema_name},public",
-            application_name="hxy-onboarding-postgres-test",
+            application_name="hxy-onboarding-postgres-control-test",
         )
-        harness = PostgresHarness(
-            database_url=database_url,
-            repository_url=repository_url,
-            control_url=control_url,
-            database_name=parsed_database_name,
-            schema_name=schema_name,
-        )
-        with harness.connect() as connection:
-            current_schema = connection.execute(
-                "SELECT current_schema()"
-            ).fetchone()[0]
-            assert current_schema == schema_name
-        yield harness
-    finally:
-        if schema_created:
+        schema_name = f"hxy_onboarding_test_{uuid4().hex}"
+        schema_created = False
+
+        try:
             with psycopg.connect(control_url, autocommit=True) as connection:
                 actual_database_name = connection.execute(
                     "SELECT current_database()"
                 ).fetchone()[0]
                 if (
                     _require_safe_database_name(actual_database_name)
-                    != parsed_database_name
+                    != config.database_name
                 ):
                     raise RuntimeError(
-                        "refusing PostgreSQL cleanup after database identity changed"
+                        "HXY_TEST_DATABASE_URL parsed and connected database "
+                        "names differ"
                     )
                 connection.execute(
-                    sql.SQL("DROP SCHEMA {} CASCADE").format(
+                    sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema_name))
+                )
+                schema_created = True
+                connection.execute(
+                    sql.SQL("SET search_path TO {}, public").format(
                         sql.Identifier(schema_name)
                     )
                 )
-                residue = connection.execute(
-                    "SELECT 1 FROM pg_namespace WHERE nspname = %s",
-                    (schema_name,),
-                ).fetchone()
-                assert residue is None, f"test schema cleanup failed: {schema_name}"
+                current_schema = connection.execute(
+                    "SELECT current_schema()"
+                ).fetchone()[0]
+                assert current_schema == schema_name
+                for migration in MIGRATIONS:
+                    connection.execute(migration.read_text(encoding="utf-8"))
+
+            repository_url = make_conninfo(
+                config.conninfo,
+                connect_timeout=5,
+                options=f"-csearch_path={schema_name},public",
+                application_name="hxy-onboarding-postgres-test",
+            )
+            harness = PostgresHarness(
+                database_url=config.conninfo,
+                repository_url=repository_url,
+                control_url=control_url,
+                database_name=config.database_name,
+                schema_name=schema_name,
+            )
+            with harness.connect() as connection:
+                current_schema = connection.execute(
+                    "SELECT current_schema()"
+                ).fetchone()[0]
+                assert current_schema == schema_name
+            yield harness
+        finally:
+            if schema_created:
+                with psycopg.connect(control_url, autocommit=True) as connection:
+                    actual_database_name = connection.execute(
+                        "SELECT current_database()"
+                    ).fetchone()[0]
+                    if (
+                        _require_safe_database_name(actual_database_name)
+                        != config.database_name
+                    ):
+                        raise RuntimeError(
+                            "refusing PostgreSQL cleanup after database identity "
+                            "changed"
+                        )
+                    connection.execute(
+                        sql.SQL("DROP SCHEMA {} CASCADE").format(
+                            sql.Identifier(schema_name)
+                        )
+                    )
+                    residue = connection.execute(
+                        "SELECT 1 FROM pg_namespace WHERE nspname = %s",
+                        (schema_name,),
+                    ).fetchone()
+                    assert residue is None, f"test schema cleanup failed: {schema_name}"
 
 
 @dataclass(frozen=True)
@@ -379,6 +457,58 @@ def _future_result(future: Future[Any]) -> Any:
 def test_safe_database_helper_rejects_non_hxy_test_names(database_url: str) -> None:
     with pytest.raises(ValueError, match="exact underscore-delimited segment"):
         require_safe_test_database_url(database_url)
+
+
+def test_connection_failure_cannot_render_database_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel_password = "sentinel-password-not-for-a-database"
+    full_database_url = (
+        "postgresql://sentinel-user:"
+        f"{sentinel_password}@invalid.example/hxy_onboarding_test"
+    )
+    original_passfile = "/tmp/original-pgpass-for-test"
+    original_pgpassword = "original-environment-password"
+    monkeypatch.setenv("PGPASSFILE", original_passfile)
+    monkeypatch.setenv("PGPASSWORD", original_pgpassword)
+    observed: dict[str, object] = {}
+
+    def fail_connect(conninfo: str, *args: object, **kwargs: object) -> None:
+        passfile_path = Path(os.environ["PGPASSFILE"])
+        observed["conninfo"] = conninfo
+        observed["passfile_path"] = passfile_path
+        observed["passfile_mode"] = stat.S_IMODE(passfile_path.stat().st_mode)
+        observed["password_present"] = (
+            sentinel_password in passfile_path.read_text(encoding="utf-8")
+        )
+        raise psycopg.OperationalError(f"simulated connection failure for {conninfo}")
+
+    monkeypatch.setattr(psycopg, "connect", fail_connect)
+    config = _parse_safe_database_config(full_database_url)
+    with _scoped_database_password(config.password):
+        with pytest.raises(psycopg.OperationalError) as captured:
+            psycopg.connect(config.conninfo)
+    rendered = "".join(
+        (
+            str(captured.value),
+            repr(captured.value),
+            repr(config),
+            "".join(traceback.format_exception(captured.value)),
+            str(observed.get("conninfo", "")),
+        )
+    )
+
+    for forbidden in (sentinel_password, full_database_url):
+        if forbidden in rendered:
+            pytest.fail("database credential appeared in connection failure output")
+    observed_conninfo = conninfo_to_dict(str(observed["conninfo"]))
+    if "password" in observed_conninfo:
+        pytest.fail("password remained in conninfo passed to psycopg")
+    assert observed["passfile_mode"] == 0o600
+    assert observed["password_present"] is True
+    assert os.environ["PGPASSFILE"] == original_passfile
+    assert os.environ["PGPASSWORD"] == original_pgpassword
+    assert not Path(observed["passfile_path"]).exists()
 
 
 def test_concurrent_same_invite_redemption_has_one_winner(
@@ -1004,6 +1134,8 @@ def test_deactivate_removes_only_target_assignment_sessions(
     )
     target_assignment_id = UUID(member["assignment_id"])
     second_target_hash = _hash(f"deactivate-session-b-{uuid4().hex}")
+    second_assignment_id = uuid4()
+    second_assignment_hash = _hash(f"deactivate-second-assignment-{uuid4().hex}")
     actor_session_hash = _hash(f"deactivate-actor-session-{uuid4().hex}")
 
     with postgres_harness.connect() as connection:
@@ -1011,6 +1143,20 @@ def test_deactivate_removes_only_target_assignment_sessions(
             "SELECT account_id FROM hxy_role_assignments WHERE assignment_id = %s",
             (target_assignment_id,),
         ).fetchone()[0]
+        connection.execute(
+            """
+            INSERT INTO hxy_role_assignments (
+              assignment_id, account_id, organization_id, store_id, role
+            )
+            VALUES (%s, %s, %s, %s, 'store_employee')
+            """,
+            (
+                second_assignment_id,
+                target_account_id,
+                scenario.organization_id,
+                scenario.store_b,
+            ),
+        )
         with connection.cursor() as cursor:
             cursor.executemany(
                 """
@@ -1022,12 +1168,26 @@ def test_deactivate_removes_only_target_assignment_sessions(
                 (
                     (second_target_hash, target_account_id, target_assignment_id),
                     (
+                        second_assignment_hash,
+                        target_account_id,
+                        second_assignment_id,
+                    ),
+                    (
                         actor_session_hash,
                         scenario.manager_a.account_id,
                         scenario.manager_a.assignment_id,
                     ),
                 ),
             )
+        session_counts = connection.execute(
+            """
+            SELECT
+              (SELECT count(*) FROM staff_sessions WHERE assignment_id = %s),
+              (SELECT count(*) FROM staff_sessions WHERE assignment_id = %s)
+            """,
+            (target_assignment_id, second_assignment_id),
+        ).fetchone()
+    assert session_counts == (2, 1)
 
     deactivated = repository.deactivate_member(
         str(scenario.organization_id),
@@ -1046,6 +1206,15 @@ def test_deactivate_removes_only_target_assignment_sessions(
                    (SELECT count(*)
                       FROM staff_sessions
                      WHERE assignment_id = assignment.assignment_id),
+                   (SELECT status
+                      FROM hxy_role_assignments
+                     WHERE assignment_id = %s),
+                   (SELECT account_id
+                      FROM hxy_role_assignments
+                     WHERE assignment_id = %s),
+                   (SELECT count(*)
+                      FROM staff_sessions
+                     WHERE assignment_id = %s),
                    (SELECT count(*)
                       FROM staff_sessions
                      WHERE assignment_id = %s),
@@ -1059,12 +1228,21 @@ def test_deactivate_removes_only_target_assignment_sessions(
              AND event.event_type = 'member_deactivated'
             WHERE assignment.assignment_id = %s
             """,
-            (scenario.manager_a.assignment_id, target_assignment_id),
+            (
+                second_assignment_id,
+                second_assignment_id,
+                second_assignment_id,
+                scenario.manager_a.assignment_id,
+                target_assignment_id,
+            ),
         ).fetchone()
     assert persisted == (
         "inactive",
         "active",
         0,
+        "active",
+        target_account_id,
+        1,
         1,
         scenario.manager_a.assignment_id,
         target_assignment_id,
