@@ -18,13 +18,35 @@ DEFAULT_RULES: list[dict[str, Any]] = [
     {
         "type": "医疗",
         "level": "bad",
-        "words": ["治疗", "治愈", "治好", "根治", "诊断", "处方", "治疗失眠", "改善睡眠", "治疗颈椎病"],
+        "words": [
+            "治疗",
+            "治愈",
+            "治好",
+            "根治",
+            "诊断",
+            "处方",
+            "治疗失眠",
+            "改善睡眠",
+            "治疗颈椎病",
+            "治疗脚气",
+            "慢病",
+        ],
         "advice": "不要把生活放松服务说成医疗、诊疗或疾病处理。",
     },
     {
         "type": "保证",
         "level": "bad",
-        "words": ["疗效", "见效", "一次见效", "立刻见效", "包好", "保证有效", "祛湿排毒"],
+        "words": [
+            "疗效",
+            "见效",
+            "一次见效",
+            "立刻见效",
+            "包好",
+            "保证有效",
+            "祛湿排毒",
+            "调理体质",
+            "你这是湿气重",
+        ],
         "advice": "不要承诺确定结果，也不要把草本、泡脚、按摩包装成功效保证。",
     },
     {
@@ -42,6 +64,10 @@ SECTION_RULE_MAP = {
     "排毒祛湿类": "保证",
     "医美与容貌焦虑类": "夸大",
 }
+
+DEFAULT_SAFE_REPLACEMENTS = [
+    {"unsafe": "治疗颈椎病", "safe": "久坐肩颈紧，按一按松一点"},
+]
 
 REFERENCE_MARKERS = [
     "不能",
@@ -210,8 +236,6 @@ def _project_red_line_terms(markdown: str) -> list[str]:
 
 def _material_markdown(root: Path, material: Path) -> str:
     material_path = root / material
-    if not material_path.exists() and root != _project_root():
-        material_path = _project_root() / material
     if not material_path.exists():
         return ""
     return material_path.read_text(encoding="utf-8")
@@ -221,7 +245,7 @@ def load_brand_risk_rules(*, root_dir: str | Path | None = None) -> dict[str, An
     root = Path(root_dir).resolve() if root_dir else _project_root()
     rules = deepcopy(DEFAULT_RULES)
     source_paths: list[str] = []
-    safe_replacements: list[dict[str, str]] = []
+    safe_replacements: list[dict[str, str]] = deepcopy(DEFAULT_SAFE_REPLACEMENTS)
     safe_answer_snippets: list[dict[str, str]] = []
     for material in RISK_MATERIALS:
         markdown = _material_markdown(root, material)

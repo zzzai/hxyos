@@ -16,6 +16,47 @@ if str(API_ROOT) not in sys.path:
     sys.path.insert(0, str(API_ROOT))
 
 
+def write_risk_material_fixtures(root: Path) -> None:
+    risk_dir = root / "knowledge" / "raw" / "inbox" / "荷小悦资料" / "09_知识库与参考资料" / "09_风险与合规"
+    risk_dir.mkdir(parents=True)
+    (risk_dir / "荷小悦禁用表达库.md").write_text(
+        """# 风险词库
+
+### 4.1 疾病与症状承诺类
+
+```text
+治疗脚气
+改善睡眠
+```
+
+## 6. 常见错误与替换
+
+|不要这样说|建议这样说|
+|---|---|
+|治疗颈椎病|久坐肩颈紧，按一按松一点|
+""",
+        encoding="utf-8",
+    )
+    (risk_dir / "荷小悦员工功效问题标准话术.md").write_text(
+        """# 员工话术
+
+## 2. 员工绝对不能说
+
+```text
+你这是湿气重
+```
+""",
+        encoding="utf-8",
+    )
+    (risk_dir / "荷小悦项目红线卡.md").write_text(
+        """# 项目红线
+
+        |不能怎么说|调理体质、改善慢病|
+""",
+        encoding="utf-8",
+    )
+
+
 class TestClient:
     def __init__(self, app):
         self.app = app
@@ -363,6 +404,7 @@ class HxyKnowledgeApiTest(unittest.TestCase):
         self.root = Path(self.tmp.name)
         (self.root / "knowledge" / "raw" / "inbox").mkdir(parents=True)
         (self.root / "knowledge" / "structured").mkdir(parents=True)
+        write_risk_material_fixtures(self.root)
         self.previous_api_token = os.environ.get("HXY_API_TOKEN")
         self.previous_max_upload_bytes = os.environ.get("HXY_MAX_UPLOAD_BYTES")
         self.previous_allowed_upload_extensions = os.environ.get("HXY_ALLOWED_UPLOAD_EXTENSIONS")
