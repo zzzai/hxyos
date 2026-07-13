@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import builtins
+import inspect
 import os
+import runpy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -1307,6 +1310,14 @@ def onboarding_repository(monkeypatch, connection: RecordingOnboardingConnection
     return repository, lambda: connect_count
 
 
+def test_onboarding_repository_create_invite_has_no_expiry_input() -> None:
+    from apps.api.hxy_product.onboarding_repository import OnboardingRepository
+
+    assert "expires_at" not in inspect.signature(
+        OnboardingRepository.create_invite
+    ).parameters
+
+
 def test_onboarding_repository_lists_stores_with_bounded_organization_scope(
     monkeypatch,
 ) -> None:
@@ -1546,7 +1557,6 @@ def test_onboarding_repository_creates_hashed_invite_and_created_event(
         "store_employee",
         "Employee",
         INVITE_TOKEN_HASH,
-        INVITE_EXPIRES_AT,
     )
 
     assert invite == {
@@ -1562,14 +1572,31 @@ def test_onboarding_repository_creates_hashed_invite_and_created_event(
     invite_sql, invite_params = connection.calls[0]
     event_sql, event_params = connection.calls[1]
     assert "INSERT INTO hxy_member_invites" in invite_sql
+    assert "SELECT creator.organization_id" in invite_sql
+    assert "FROM hxy_role_assignments AS creator" in invite_sql
+    assert "JOIN staff_accounts AS creator_account" in invite_sql
+    assert "creator_account.id = creator.account_id" in invite_sql
+    assert "JOIN hxy_organizations AS organization" in invite_sql
+    assert "organization.organization_id = creator.organization_id" in invite_sql
+    assert "JOIN hxy_organization_stores AS organization_store" in invite_sql
+    assert "organization_store.organization_id = creator.organization_id" in invite_sql
+    assert "organization_store.store_id = %s" in invite_sql
+    assert "JOIN stores AS store" in invite_sql
+    assert "store.store_id = organization_store.store_id" in invite_sql
+    assert "creator.assignment_id = %s::uuid" in invite_sql
+    assert "creator.organization_id = %s::uuid" in invite_sql
+    assert "creator.status = 'active'" in invite_sql
+    assert "creator_account.status = 'active'" in invite_sql
+    assert "organization.status = 'active'" in invite_sql
+    assert "store.status = 'active'" in invite_sql
+    assert "NOW() + INTERVAL '24 hours'" in invite_sql
     assert invite_params == (
-        REPOSITORY_ORGANIZATION_ID,
-        REPOSITORY_STORE_ID,
         "store_employee",
         "Employee",
         INVITE_TOKEN_HASH,
+        REPOSITORY_STORE_ID,
         REPOSITORY_CREATOR_ASSIGNMENT_ID,
-        INVITE_EXPIRES_AT,
+        REPOSITORY_ORGANIZATION_ID,
     )
     assert "token_hash" not in invite_sql.split("RETURNING", 1)[1]
     assert "INSERT INTO hxy_member_invite_events" in event_sql
@@ -1581,6 +1608,47 @@ def test_onboarding_repository_creates_hashed_invite_and_created_event(
         REPOSITORY_CREATOR_ASSIGNMENT_ID,
     )
     assert all(RAW_INVITE_TOKEN not in params for _sql, params in connection.calls)
+
+
+@pytest.mark.parametrize(
+    "unavailable_scope",
+    (
+        "inactive creator assignment",
+        "disabled creator account",
+        "inactive organization",
+        "closed store",
+        "foreign organization/store",
+    ),
+)
+def test_onboarding_repository_rejects_unavailable_invite_scope_without_event(
+    monkeypatch,
+    unavailable_scope: str,
+) -> None:
+    from apps.api.hxy_product.onboarding_repository import OnboardingScopeError
+
+    connection = RecordingOnboardingConnection([RecordingOnboardingResult(row=None)])
+    repository, _ = onboarding_repository(monkeypatch, connection)
+
+    with pytest.raises(OnboardingScopeError, match="operation is not available") as caught:
+        repository.create_invite(
+            REPOSITORY_ORGANIZATION_ID,
+            REPOSITORY_STORE_ID,
+            REPOSITORY_CREATOR_ASSIGNMENT_ID,
+            "store_employee",
+            "Employee",
+            INVITE_TOKEN_HASH,
+        )
+
+    assert unavailable_scope not in str(caught.value)
+    assert REPOSITORY_ORGANIZATION_ID not in str(caught.value)
+    assert REPOSITORY_STORE_ID not in str(caught.value)
+    assert REPOSITORY_CREATOR_ASSIGNMENT_ID not in str(caught.value)
+    assert connection.committed is False
+    assert connection.rolled_back is True
+    assert len(connection.calls) == 1
+    invite_sql, _ = connection.calls[0]
+    assert "INSERT INTO hxy_member_invites" in invite_sql
+    assert "INSERT INTO hxy_member_invite_events" not in invite_sql
 
 
 def test_onboarding_repository_revokes_locked_scoped_pending_invite(
@@ -1890,6 +1958,7 @@ def test_onboarding_repository_deactivates_only_scoped_assignment_and_sessions(
     assert lock_params == expected_scope
     assert "UPDATE hxy_role_assignments" in update_sql
     assert "SET status = 'inactive'" in update_sql
+    assert "updated_at = NOW()" in update_sql
     assert "staff_accounts" not in update_sql
     assert update_params == expected_scope
     assert "DELETE FROM staff_sessions" in delete_sql
@@ -1920,3 +1989,20 @@ def test_onboarding_repository_returns_none_for_unavailable_member_deactivation(
     assert result is None
     assert connection.committed is True
     assert len(connection.calls) == 1
+
+
+def test_onboarding_repository_does_not_hide_psycopg_initialization_failures(
+    monkeypatch,
+) -> None:
+    repository_path = ROOT / "apps" / "api" / "hxy_product" / "onboarding_repository.py"
+    real_import = builtins.__import__
+
+    def fail_psycopg_errors_import(name, *args, **kwargs):
+        if name == "psycopg.errors":
+            raise RuntimeError("psycopg initialization failed")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fail_psycopg_errors_import)
+
+    with pytest.raises(RuntimeError, match="psycopg initialization failed"):
+        runpy.run_path(str(repository_path))

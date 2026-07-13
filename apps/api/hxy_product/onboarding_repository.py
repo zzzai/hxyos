@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Mapping
-from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
@@ -11,7 +10,7 @@ try:
     import psycopg
     from psycopg.errors import UniqueViolation
     from psycopg.rows import dict_row
-except Exception:  # pragma: no cover - deployment dependency may be installed later
+except ImportError:  # pragma: no cover - deployment dependency may be installed later
     psycopg = None
     UniqueViolation = Exception
     dict_row = None
@@ -245,7 +244,6 @@ class OnboardingRepository:
         role: str,
         display_name: str,
         token_hash: str,
-        expires_at: datetime,
     ) -> dict[str, Any]:
         normalized_role = str(getattr(role, "value", role))
         if normalized_role not in ACCOUNT_ROLE_BY_INVITE_ROLE or not _SHA256_HEX.fullmatch(
@@ -265,7 +263,29 @@ class OnboardingRepository:
                       created_by_assignment_id,
                       expires_at
                     )
-                    VALUES (%s::uuid, %s, %s, %s, %s, %s::uuid, %s)
+                    SELECT creator.organization_id,
+                           organization_store.store_id,
+                           %s,
+                           %s,
+                           %s,
+                           creator.assignment_id,
+                           NOW() + INTERVAL '24 hours'
+                    FROM hxy_role_assignments AS creator
+                    JOIN staff_accounts AS creator_account
+                      ON creator_account.id = creator.account_id
+                    JOIN hxy_organizations AS organization
+                      ON organization.organization_id = creator.organization_id
+                    JOIN hxy_organization_stores AS organization_store
+                      ON organization_store.organization_id = creator.organization_id
+                     AND organization_store.store_id = %s
+                    JOIN stores AS store
+                      ON store.store_id = organization_store.store_id
+                    WHERE creator.assignment_id = %s::uuid
+                      AND creator.organization_id = %s::uuid
+                      AND creator.status = 'active'
+                      AND creator_account.status = 'active'
+                      AND organization.status = 'active'
+                      AND store.status = 'active'
                     RETURNING invite_id::text AS id,
                               store_id,
                               role,
@@ -274,15 +294,16 @@ class OnboardingRepository:
                               expires_at
                     """,
                     (
-                        organization_id,
-                        store_id,
                         normalized_role,
                         display_name,
                         token_hash,
+                        store_id,
                         creator_assignment_id,
-                        expires_at,
+                        organization_id,
                     ),
                 ).fetchone()
+                if row is None:
+                    raise OnboardingScopeError("onboarding operation is not available")
                 connection.execute(
                     """
                     INSERT INTO hxy_member_invite_events (
@@ -567,7 +588,8 @@ class OnboardingRepository:
             connection.execute(
                 """
                 UPDATE hxy_role_assignments
-                SET status = 'inactive'
+                SET status = 'inactive',
+                    updated_at = NOW()
                 WHERE organization_id = %s::uuid
                   AND store_id = %s
                   AND assignment_id = %s::uuid
