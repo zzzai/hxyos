@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import builtins
 import inspect
 import os
 import runpy
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
+import httpx
 import psycopg
 import pytest
 from pydantic import ValidationError
@@ -31,6 +35,14 @@ from apps.api.hxy_product.onboarding_schemas import (
     InviteRole,
     RedeemInviteRequest,
 )
+from apps.api.hxy_product.auth import ProductAuthSettings
+from hxy_product.onboarding_repository import (
+    InviteRedemptionError,
+    OnboardingConflict,
+    OnboardingScopeError,
+    OnboardingValidationError,
+)
+from apps.api.hxy_knowledge_api import create_app
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -2006,3 +2018,832 @@ def test_onboarding_repository_does_not_hide_psycopg_initialization_failures(
 
     with pytest.raises(RuntimeError, match="psycopg initialization failed"):
         runpy.run_path(str(repository_path))
+
+
+API_ORGANIZATION_ID = "60000000-0000-0000-0000-000000000001"
+API_FOUNDER_ACCOUNT_ID = "61000000-0000-0000-0000-000000000001"
+API_MANAGER_ACCOUNT_ID = "61000000-0000-0000-0000-000000000002"
+API_EMPLOYEE_ACCOUNT_ID = "61000000-0000-0000-0000-000000000003"
+API_FOUNDER_ASSIGNMENT_ID = "62000000-0000-0000-0000-000000000001"
+API_MANAGER_ASSIGNMENT_ID = "62000000-0000-0000-0000-000000000002"
+API_EMPLOYEE_ASSIGNMENT_ID = "62000000-0000-0000-0000-000000000003"
+API_OTHER_MANAGER_ASSIGNMENT_ID = "62000000-0000-0000-0000-000000000004"
+API_OTHER_EMPLOYEE_ASSIGNMENT_ID = "62000000-0000-0000-0000-000000000005"
+API_STORE_ID = "hxy-store-a"
+API_OTHER_STORE_ID = "hxy-store-b"
+API_PUBLIC_APP_URL = "https://app.hxy.example/onboarding/"
+API_VALID_INVITE_TOKEN = "v" * 43
+API_EXPIRES_AT = datetime(2031, 2, 3, 4, 5, tzinfo=timezone.utc)
+
+
+@dataclass(frozen=True)
+class ApiPrincipal:
+    account_id: str
+    display_name: str
+    assignment_id: str
+
+
+@dataclass(frozen=True)
+class ApiAssignment:
+    assignment_id: str
+    organization_id: str
+    organization_name: str
+    store_id: str | None
+    store_name: str | None
+    role: str
+
+
+class ApiIdentityRepository:
+    def __init__(self) -> None:
+        self.principals = {
+            "founder-session": ApiPrincipal(
+                API_FOUNDER_ACCOUNT_ID,
+                "Founder",
+                API_FOUNDER_ASSIGNMENT_ID,
+            ),
+            "manager-session": ApiPrincipal(
+                API_MANAGER_ACCOUNT_ID,
+                "Manager A",
+                API_MANAGER_ASSIGNMENT_ID,
+            ),
+            "employee-session": ApiPrincipal(
+                API_EMPLOYEE_ACCOUNT_ID,
+                "Employee A",
+                API_EMPLOYEE_ASSIGNMENT_ID,
+            ),
+        }
+        self.assignments = {
+            API_FOUNDER_ACCOUNT_ID: [
+                ApiAssignment(
+                    API_FOUNDER_ASSIGNMENT_ID,
+                    API_ORGANIZATION_ID,
+                    "HXY Test Organization",
+                    None,
+                    None,
+                    "founder",
+                )
+            ],
+            API_MANAGER_ACCOUNT_ID: [
+                ApiAssignment(
+                    API_MANAGER_ASSIGNMENT_ID,
+                    API_ORGANIZATION_ID,
+                    "HXY Test Organization",
+                    API_STORE_ID,
+                    "Store A",
+                    "store_manager",
+                )
+            ],
+            API_EMPLOYEE_ACCOUNT_ID: [
+                ApiAssignment(
+                    API_EMPLOYEE_ASSIGNMENT_ID,
+                    API_ORGANIZATION_ID,
+                    "HXY Test Organization",
+                    API_STORE_ID,
+                    "Store A",
+                    "store_employee",
+                )
+            ],
+        }
+
+    def resolve_session(self, raw_token: str) -> ApiPrincipal | None:
+        return self.principals.get(raw_token)
+
+    def list_assignments(self, account_id: str) -> list[ApiAssignment]:
+        return list(self.assignments.get(account_id, []))
+
+
+class StatefulOnboardingRepository:
+    def __init__(self) -> None:
+        self.stores = [
+            {
+                "id": API_STORE_ID,
+                "name": "Store A",
+                "city": "Shanghai",
+                "address": "Road 1",
+                "status": "active",
+                "database_secret": "must-not-leak",
+            },
+            {
+                "id": API_OTHER_STORE_ID,
+                "name": "Store B",
+                "city": "Hangzhou",
+                "address": "Road 2",
+                "status": "active",
+                "database_secret": "must-not-leak",
+            },
+        ]
+        self.members = [
+            self._member(
+                API_MANAGER_ASSIGNMENT_ID,
+                API_STORE_ID,
+                "Manager A",
+                "store_manager",
+            ),
+            self._member(
+                API_EMPLOYEE_ASSIGNMENT_ID,
+                API_STORE_ID,
+                "Employee A",
+                "store_employee",
+            ),
+            self._member(
+                API_OTHER_MANAGER_ASSIGNMENT_ID,
+                API_OTHER_STORE_ID,
+                "Manager B",
+                "store_manager",
+            ),
+            self._member(
+                API_OTHER_EMPLOYEE_ASSIGNMENT_ID,
+                API_OTHER_STORE_ID,
+                "Employee B",
+                "store_employee",
+            ),
+        ]
+        self.invites = [
+            self._invite("invite-manager-a", API_STORE_ID, "store_manager", "Next Manager A"),
+            self._invite("invite-employee-a", API_STORE_ID, "store_employee", "Next Employee A"),
+            self._invite(
+                "invite-manager-b",
+                API_OTHER_STORE_ID,
+                "store_manager",
+                "Next Manager B",
+            ),
+            self._invite(
+                "invite-employee-b",
+                API_OTHER_STORE_ID,
+                "store_employee",
+                "Next Employee B",
+            ),
+        ]
+        self.create_store_calls: list[tuple[str, str, Any]] = []
+        self.create_invite_calls: list[tuple[str, str, str, str, str, str]] = []
+        self.revoke_calls: list[tuple[str, str, str, str]] = []
+        self.deactivate_calls: list[tuple[str, str, str, str]] = []
+        self.redeem_calls: list[tuple[str, str, int]] = []
+        self.redemption_failures: dict[str, Exception] = {}
+        self.redeemed_hashes: set[str] = set()
+
+    @staticmethod
+    def _member(
+        assignment_id: str,
+        store_id: str,
+        display_name: str,
+        role: str,
+    ) -> dict[str, Any]:
+        return {
+            "assignment_id": assignment_id,
+            "store_id": store_id,
+            "display_name": display_name,
+            "role": role,
+            "status": "active",
+            "account_id": "must-not-leak",
+        }
+
+    @staticmethod
+    def _invite(
+        invite_id: str,
+        store_id: str,
+        role: str,
+        display_name: str,
+    ) -> dict[str, Any]:
+        return {
+            "id": invite_id,
+            "store_id": store_id,
+            "role": role,
+            "display_name": display_name,
+            "status": "pending",
+            "expires_at": API_EXPIRES_AT,
+            "token_hash": "must-not-leak",
+            "one_time_link": "must-not-leak",
+        }
+
+    def list_stores(self, organization_id: str) -> list[dict[str, Any]]:
+        assert organization_id == API_ORGANIZATION_ID
+        return [dict(store) for store in self.stores]
+
+    def create_store(
+        self,
+        organization_id: str,
+        creator_assignment_id: str,
+        payload: Any,
+    ) -> dict[str, Any]:
+        self.create_store_calls.append((organization_id, creator_assignment_id, payload))
+        store = {
+            "id": "hxy-store-created",
+            "name": payload.name,
+            "city": payload.city,
+            "address": payload.address,
+            "status": "active",
+            "internal": "must-not-leak",
+        }
+        self.stores.append(store)
+        return dict(store)
+
+    def list_members(
+        self,
+        organization_id: str,
+        store_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        assert organization_id == API_ORGANIZATION_ID
+        return [
+            dict(member)
+            for member in self.members
+            if store_id is None or member["store_id"] == store_id
+        ]
+
+    def list_invites(
+        self,
+        organization_id: str,
+        store_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        assert organization_id == API_ORGANIZATION_ID
+        return [
+            dict(invite)
+            for invite in self.invites
+            if store_id is None or invite["store_id"] == store_id
+        ]
+
+    def create_invite(
+        self,
+        organization_id: str,
+        store_id: str,
+        creator_assignment_id: str,
+        role: str,
+        display_name: str,
+        token_hash: str,
+    ) -> dict[str, Any]:
+        self.create_invite_calls.append(
+            (
+                organization_id,
+                store_id,
+                creator_assignment_id,
+                role,
+                display_name,
+                token_hash,
+            )
+        )
+        invite = self._invite(
+            f"invite-created-{len(self.create_invite_calls)}",
+            store_id,
+            role,
+            display_name,
+        )
+        self.invites.append(invite)
+        return dict(invite)
+
+    def revoke_invite(
+        self,
+        organization_id: str,
+        store_id: str,
+        actor_assignment_id: str,
+        invite_id: str,
+    ) -> dict[str, Any] | None:
+        self.revoke_calls.append(
+            (organization_id, store_id, actor_assignment_id, invite_id)
+        )
+        invite = next(
+            (
+                item
+                for item in self.invites
+                if item["id"] == invite_id
+                and item["store_id"] == store_id
+                and item["status"] == "pending"
+            ),
+            None,
+        )
+        if invite is None:
+            return None
+        invite["status"] = "revoked"
+        return dict(invite)
+
+    def deactivate_member(
+        self,
+        organization_id: str,
+        store_id: str,
+        actor_assignment_id: str,
+        target_assignment_id: str,
+    ) -> dict[str, Any] | None:
+        self.deactivate_calls.append(
+            (
+                organization_id,
+                store_id,
+                actor_assignment_id,
+                target_assignment_id,
+            )
+        )
+        member = next(
+            (
+                item
+                for item in self.members
+                if item["assignment_id"] == target_assignment_id
+                and item["store_id"] == store_id
+                and item["status"] == "active"
+            ),
+            None,
+        )
+        if member is None:
+            return None
+        member["status"] = "inactive"
+        return dict(member)
+
+    def redeem_invite(
+        self,
+        token_hash: str,
+        raw_session_token: str,
+        session_ttl_seconds: int,
+    ) -> dict[str, Any]:
+        self.redeem_calls.append((token_hash, raw_session_token, session_ttl_seconds))
+        failure = self.redemption_failures.get(token_hash)
+        if failure is not None:
+            raise failure
+        expected_hash = hashlib.sha256(API_VALID_INVITE_TOKEN.encode("utf-8")).hexdigest()
+        if token_hash != expected_hash or token_hash in self.redeemed_hashes:
+            raise InviteRedemptionError("state-specific detail must not leak")
+        self.redeemed_hashes.add(token_hash)
+        return {"status": "active", "internal": "must-not-leak"}
+
+
+class OnboardingApiClient:
+    def __init__(self, app: Any, *, base_url: str = "http://request-host.invalid") -> None:
+        self.app = app
+        self.base_url = base_url
+
+    def request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        async def run() -> httpx.Response:
+            transport = httpx.ASGITransport(app=self.app)
+            async with httpx.AsyncClient(
+                transport=transport,
+                base_url=self.base_url,
+            ) as client:
+                return await client.request(method, url, **kwargs)
+
+        return asyncio.run(run())
+
+    def get(self, url: str, **kwargs: Any) -> httpx.Response:
+        return self.request("GET", url, **kwargs)
+
+
+def onboarding_bearer(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def onboarding_api(tmp_path: Path):
+    identity_repository = ApiIdentityRepository()
+    onboarding_repository = StatefulOnboardingRepository()
+    auth_settings = ProductAuthSettings(
+        gateway_secret="",
+        session_ttl_seconds=1800,
+        secure_cookie=True,
+    )
+    app = create_app(
+        root_dir=tmp_path,
+        product_identity_repository_factory=lambda: identity_repository,
+        onboarding_repository_factory=lambda: onboarding_repository,
+        onboarding_public_app_url=API_PUBLIC_APP_URL,
+        product_auth_settings=auth_settings,
+    )
+    return OnboardingApiClient(app), onboarding_repository, auth_settings
+
+
+def test_founder_lists_and_creates_organization_stores(onboarding_api) -> None:
+    client, repository, _ = onboarding_api
+    headers = onboarding_bearer("founder-session")
+
+    listed = client.get(
+        "/api/v1/organization/stores",
+        headers=headers,
+    )
+    members = client.get("/api/v1/organization/members", headers=headers)
+    invites = client.get("/api/v1/organization/invites", headers=headers)
+    created = client.request(
+        "POST",
+        "/api/v1/organization/stores",
+        headers=headers,
+        json={"name": "New Store", "city": "Suzhou", "address": "Road 3"},
+    )
+
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()] == [API_STORE_ID, API_OTHER_STORE_ID]
+    assert members.status_code == invites.status_code == 200
+    assert {item["store_id"] for item in members.json()} == {
+        API_STORE_ID,
+        API_OTHER_STORE_ID,
+    }
+    assert {item["store_id"] for item in invites.json()} == {
+        API_STORE_ID,
+        API_OTHER_STORE_ID,
+    }
+    assert all(
+        set(item) == {"id", "name", "city", "address", "status"}
+        for item in listed.json()
+    )
+    assert created.status_code == 201
+    assert created.json() == {
+        "id": "hxy-store-created",
+        "name": "New Store",
+        "city": "Suzhou",
+        "address": "Road 3",
+        "status": "active",
+    }
+    assert repository.create_store_calls[0][:2] == (
+        API_ORGANIZATION_ID,
+        API_FOUNDER_ASSIGNMENT_ID,
+    )
+
+
+def test_manager_lists_only_confirmed_own_store_members_and_invites(
+    onboarding_api,
+) -> None:
+    client, _, _ = onboarding_api
+    headers = onboarding_bearer("manager-session")
+
+    stores = client.get("/api/v1/organization/stores", headers=headers)
+    members = client.get("/api/v1/organization/members", headers=headers)
+    invites = client.get("/api/v1/organization/invites", headers=headers)
+
+    assert stores.status_code == members.status_code == invites.status_code == 200
+    assert [item["id"] for item in stores.json()] == [API_STORE_ID]
+    assert {item["store_id"] for item in members.json()} == {API_STORE_ID}
+    assert {item["store_id"] for item in invites.json()} == {API_STORE_ID}
+    assert all(
+        set(item)
+        == {"assignment_id", "store_id", "display_name", "role", "status"}
+        for item in members.json()
+    )
+    assert all(
+        set(item)
+        == {"id", "store_id", "role", "display_name", "status", "expires_at"}
+        for item in invites.json()
+    )
+    assert "token_hash" not in invites.text
+    assert "one_time_link" not in invites.text
+    assert "must-not-leak" not in stores.text + members.text + invites.text
+
+
+def test_founder_invites_manager_with_one_server_based_link(onboarding_api) -> None:
+    client, repository, _ = onboarding_api
+
+    response = client.request(
+        "POST",
+        "/api/v1/organization/invites",
+        headers={**onboarding_bearer("founder-session"), "Host": "attacker.example"},
+        json={
+            "store_id": API_OTHER_STORE_ID,
+            "role": "store_manager",
+            "display_name": "New Manager",
+        },
+    )
+
+    assert response.status_code == 201
+    assert set(response.json()) == {"invite", "one_time_link"}
+    assert set(response.json()["invite"]) == {
+        "id",
+        "store_id",
+        "role",
+        "display_name",
+        "status",
+        "expires_at",
+    }
+    link = response.json()["one_time_link"]
+    assert link.startswith(f"{API_PUBLIC_APP_URL}#invite=")
+    assert "attacker.example" not in link
+    raw_token = link.split("#invite=", 1)[1]
+    call = repository.create_invite_calls[0]
+    assert call[:5] == (
+        API_ORGANIZATION_ID,
+        API_OTHER_STORE_ID,
+        API_FOUNDER_ASSIGNMENT_ID,
+        "store_manager",
+        "New Manager",
+    )
+    assert isinstance(call[3], str)
+    assert call[5] == hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    assert raw_token not in repr(repository.create_invite_calls)
+
+
+def test_manager_invite_infers_store_and_serializes_role(onboarding_api) -> None:
+    client, repository, _ = onboarding_api
+
+    response = client.request(
+        "POST",
+        "/api/v1/organization/invites",
+        headers=onboarding_bearer("manager-session"),
+        json={"role": "store_employee", "display_name": "New Employee"},
+    )
+
+    assert response.status_code == 201
+    call = repository.create_invite_calls[0]
+    assert call[1] == API_STORE_ID
+    assert call[3] == "store_employee"
+    assert isinstance(call[3], str)
+
+
+def test_founder_invite_requires_store_and_manager_mismatch_is_forbidden(
+    onboarding_api,
+) -> None:
+    client, repository, _ = onboarding_api
+
+    founder = client.request(
+        "POST",
+        "/api/v1/organization/invites",
+        headers=onboarding_bearer("founder-session"),
+        json={"role": "store_manager", "display_name": "No Store"},
+    )
+    manager = client.request(
+        "POST",
+        "/api/v1/organization/invites",
+        headers=onboarding_bearer("manager-session"),
+        json={
+            "store_id": API_OTHER_STORE_ID,
+            "role": "store_employee",
+            "display_name": "Cross Store",
+        },
+    )
+    manager_store_create = client.request(
+        "POST",
+        "/api/v1/organization/stores",
+        headers=onboarding_bearer("manager-session"),
+        json={"name": "Cross Store", "city": "No", "address": "No"},
+    )
+
+    assert founder.status_code == 422
+    assert manager.status_code == 403
+    assert manager.json() == {"detail": "Forbidden"}
+    assert manager_store_create.status_code == 403
+    assert manager_store_create.json() == {"detail": "Forbidden"}
+    assert API_OTHER_STORE_ID not in manager.text
+    assert repository.create_store_calls == []
+    assert repository.create_invite_calls == []
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "json_body"),
+    (
+        ("GET", "/api/v1/organization/stores", None),
+        (
+            "POST",
+            "/api/v1/organization/stores",
+            {"name": "No", "city": "No", "address": "No"},
+        ),
+        ("GET", "/api/v1/organization/members", None),
+        ("GET", "/api/v1/organization/invites", None),
+        (
+            "POST",
+            "/api/v1/organization/invites",
+            {"role": "store_employee", "display_name": "No"},
+        ),
+        ("POST", "/api/v1/organization/invites/invite-employee-a/revoke", None),
+        (
+            "POST",
+            f"/api/v1/organization/members/{API_MANAGER_ASSIGNMENT_ID}/deactivate",
+            None,
+        ),
+    ),
+)
+def test_employee_is_forbidden_from_every_management_endpoint(
+    onboarding_api,
+    method: str,
+    path: str,
+    json_body: dict[str, Any] | None,
+) -> None:
+    client, repository, _ = onboarding_api
+    kwargs: dict[str, Any] = {"headers": onboarding_bearer("employee-session")}
+    if json_body is not None:
+        kwargs["json"] = json_body
+
+    response = client.request(method, path, **kwargs)
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Forbidden"}
+    assert repository.create_store_calls == []
+    assert repository.create_invite_calls == []
+    assert repository.revoke_calls == []
+    assert repository.deactivate_calls == []
+
+
+def test_manager_cross_store_targets_are_hidden_without_mutation(onboarding_api) -> None:
+    client, repository, _ = onboarding_api
+    headers = onboarding_bearer("manager-session")
+
+    revoke = client.request(
+        "POST",
+        "/api/v1/organization/invites/invite-employee-b/revoke",
+        headers=headers,
+    )
+    deactivate = client.request(
+        "POST",
+        f"/api/v1/organization/members/{API_OTHER_EMPLOYEE_ASSIGNMENT_ID}/deactivate",
+        headers=headers,
+    )
+
+    for response, hidden_id in (
+        (revoke, "invite-employee-b"),
+        (deactivate, API_OTHER_EMPLOYEE_ASSIGNMENT_ID),
+    ):
+        assert response.status_code == 404
+        assert response.json() == {"detail": "Not Found"}
+        assert hidden_id not in response.text
+    assert repository.revoke_calls == []
+    assert repository.deactivate_calls == []
+
+
+@pytest.mark.parametrize(
+    ("session", "invite_id", "expected_status"),
+    (
+        ("founder-session", "invite-manager-b", 200),
+        ("founder-session", "invite-employee-a", 403),
+        ("manager-session", "invite-employee-a", 200),
+        ("manager-session", "invite-manager-a", 403),
+    ),
+)
+def test_invite_revoke_enforces_role_policy(
+    onboarding_api,
+    session: str,
+    invite_id: str,
+    expected_status: int,
+) -> None:
+    client, repository, _ = onboarding_api
+
+    response = client.request(
+        "POST",
+        f"/api/v1/organization/invites/{invite_id}/revoke",
+        headers=onboarding_bearer(session),
+    )
+
+    assert response.status_code == expected_status
+    if expected_status == 200:
+        assert response.json()["status"] == "revoked"
+        assert set(response.json()) == {
+            "id",
+            "store_id",
+            "role",
+            "display_name",
+            "status",
+            "expires_at",
+        }
+        assert len(repository.revoke_calls) == 1
+    else:
+        assert response.json() == {"detail": "Forbidden"}
+        assert repository.revoke_calls == []
+
+
+@pytest.mark.parametrize(
+    ("session", "assignment_id", "expected_status"),
+    (
+        ("founder-session", API_OTHER_MANAGER_ASSIGNMENT_ID, 200),
+        ("founder-session", API_EMPLOYEE_ASSIGNMENT_ID, 403),
+        ("manager-session", API_EMPLOYEE_ASSIGNMENT_ID, 200),
+        ("manager-session", API_MANAGER_ASSIGNMENT_ID, 403),
+    ),
+)
+def test_member_deactivation_enforces_role_and_self_policy(
+    onboarding_api,
+    session: str,
+    assignment_id: str,
+    expected_status: int,
+) -> None:
+    client, repository, _ = onboarding_api
+
+    response = client.request(
+        "POST",
+        f"/api/v1/organization/members/{assignment_id}/deactivate",
+        headers=onboarding_bearer(session),
+    )
+
+    assert response.status_code == expected_status
+    if expected_status == 200:
+        assert response.json()["status"] == "inactive"
+        assert set(response.json()) == {
+            "assignment_id",
+            "store_id",
+            "display_name",
+            "role",
+            "status",
+        }
+        assert len(repository.deactivate_calls) == 1
+    else:
+        assert response.json() == {"detail": "Forbidden"}
+        assert repository.deactivate_calls == []
+
+
+def test_public_invite_redemption_sets_normal_session_cookie_without_gateway_secret(
+    onboarding_api,
+) -> None:
+    client, repository, settings = onboarding_api
+
+    response = client.request(
+        "POST",
+        "/api/v1/onboarding/invites/redeem",
+        json={"token": API_VALID_INVITE_TOKEN},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "authenticated"}
+    token_hash, raw_session_token, ttl = repository.redeem_calls[0]
+    assert token_hash == hashlib.sha256(API_VALID_INVITE_TOKEN.encode("utf-8")).hexdigest()
+    assert API_VALID_INVITE_TOKEN not in raw_session_token
+    assert len(raw_session_token) >= 43
+    assert ttl == settings.session_ttl_seconds
+    cookie = response.headers["set-cookie"].lower()
+    assert cookie.startswith("hxy_session=")
+    assert "httponly" in cookie
+    assert "secure" in cookie
+    assert "samesite=lax" in cookie
+    assert "path=/api/v1" in cookie
+    assert f"max-age={settings.session_ttl_seconds}" in cookie
+
+
+@pytest.mark.parametrize(
+    "repository_error",
+    (
+        InviteRedemptionError("expired"),
+        OnboardingScopeError("foreign organization"),
+        OnboardingValidationError("invalid hash"),
+        OnboardingConflict("replay conflict"),
+    ),
+    ids=["expired-or-revoked", "scope", "invalid", "replay-conflict"],
+)
+def test_public_redemption_maps_all_repository_states_to_generic_unauthorized(
+    onboarding_api,
+    repository_error: Exception,
+) -> None:
+    client, repository, _ = onboarding_api
+    raw_token = "x" * 43
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    repository.redemption_failures[token_hash] = repository_error
+
+    response = client.request(
+        "POST",
+        "/api/v1/onboarding/invites/redeem",
+        json={"token": raw_token},
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Unauthorized"}
+    assert "set-cookie" not in response.headers
+    assert str(repository_error) not in response.text
+
+
+def test_public_redemption_replay_is_generic_and_has_no_cookie(onboarding_api) -> None:
+    client, repository, _ = onboarding_api
+
+    first = client.request(
+        "POST",
+        "/api/v1/onboarding/invites/redeem",
+        json={"token": API_VALID_INVITE_TOKEN},
+    )
+    replay = client.request(
+        "POST",
+        "/api/v1/onboarding/invites/redeem",
+        json={"token": API_VALID_INVITE_TOKEN},
+    )
+
+    assert first.status_code == 200
+    assert replay.status_code == 401
+    assert replay.json() == {"detail": "Unauthorized"}
+    assert "set-cookie" not in replay.headers
+    assert len(repository.redeem_calls) == 2
+
+
+@pytest.mark.parametrize(
+    "payload",
+    ({}, {"token": "short"}, {"token": "x" * 257}, {"token": "x" * 43, "role": "founder"}),
+)
+def test_public_redemption_malformed_body_remains_validation_error(
+    onboarding_api,
+    payload: dict[str, Any],
+) -> None:
+    client, repository, _ = onboarding_api
+
+    response = client.request(
+        "POST",
+        "/api/v1/onboarding/invites/redeem",
+        json=payload,
+    )
+
+    assert response.status_code == 422
+    assert repository.redeem_calls == []
+
+
+def test_onboarding_router_wiring_is_conditional(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("HXY_DATABASE_URL", raising=False)
+    monkeypatch.delenv("HXY_PUBLIC_APP_URL", raising=False)
+
+    absent_app = create_app(root_dir=tmp_path / "absent")
+    absent_paths = {getattr(route, "path", "") for route in absent_app.routes}
+    assert "/api/v1/onboarding/invites/redeem" not in absent_paths
+
+    repository = StatefulOnboardingRepository()
+    explicit_app = create_app(
+        root_dir=tmp_path / "explicit",
+        onboarding_repository_factory=lambda: repository,
+        onboarding_public_app_url=API_PUBLIC_APP_URL,
+    )
+    explicit_paths = {getattr(route, "path", "") for route in explicit_app.routes}
+    assert "/api/v1/onboarding/invites/redeem" in explicit_paths
+
+    monkeypatch.setenv("HXY_DATABASE_URL", "postgresql://hxy.invalid/hxy")
+    monkeypatch.setenv("HXY_PUBLIC_APP_URL", API_PUBLIC_APP_URL)
+    configured_app = create_app(root_dir=tmp_path / "configured")
+    configured_paths = {getattr(route, "path", "") for route in configured_app.routes}
+    assert "/api/v1/onboarding/invites/redeem" in configured_paths

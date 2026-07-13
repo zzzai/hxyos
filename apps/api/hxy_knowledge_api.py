@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 import re
 import base64
 import secrets
@@ -88,6 +89,8 @@ from hxy_product.conversation_routes import create_conversation_router
 from hxy_product.material_repository import MaterialRepository
 from hxy_product.material_routes import create_material_router
 from hxy_product.material_understanding import build_material_understanding
+from hxy_product.onboarding_repository import OnboardingRepository
+from hxy_product.onboarding_routes import create_onboarding_router
 from hxy_product.repository import IdentityRepository
 from hxy_product.routes import create_identity_router
 from hxy_product.task_repository import TaskRepository
@@ -359,6 +362,15 @@ def _default_product_identity_repository_factory(database_url: str) -> Repositor
         if not database_url:
             raise HTTPException(status_code=503, detail="HXY_DATABASE_URL is not configured")
         return IdentityRepository(database_url)
+
+    return make_repository
+
+
+def _default_onboarding_repository_factory(database_url: str) -> RepositoryFactory:
+    def make_repository() -> OnboardingRepository:
+        if not database_url:
+            raise HTTPException(status_code=503, detail="HXY_DATABASE_URL is not configured")
+        return OnboardingRepository(database_url)
 
     return make_repository
 
@@ -3577,6 +3589,8 @@ def create_app(
     repository_factory: RepositoryFactory | None = None,
     model_router: Any | None = None,
     product_identity_repository_factory: RepositoryFactory | None = None,
+    onboarding_repository_factory: RepositoryFactory | None = None,
+    onboarding_public_app_url: str | None = None,
     conversation_repository_factory: RepositoryFactory | None = None,
     material_repository_factory: RepositoryFactory | None = None,
     task_repository_factory: RepositoryFactory | None = None,
@@ -3596,6 +3610,16 @@ def create_app(
     make_product_identity_repository = (
         product_identity_repository_factory
         or _default_product_identity_repository_factory(settings.database_url)
+    )
+    make_onboarding_repository = onboarding_repository_factory
+    if make_onboarding_repository is None and settings.database_url.strip():
+        make_onboarding_repository = _default_onboarding_repository_factory(
+            settings.database_url
+        )
+    resolved_onboarding_public_app_url = (
+        onboarding_public_app_url
+        if onboarding_public_app_url is not None
+        else os.environ.get("HXY_PUBLIC_APP_URL", "")
     )
     make_conversation_repository = (
         conversation_repository_factory
@@ -3634,6 +3658,15 @@ def create_app(
             resolved_product_auth_settings,
         )
     )
+    if make_onboarding_repository is not None:
+        app.include_router(
+            create_onboarding_router(
+                make_product_identity_repository,
+                make_onboarding_repository,
+                resolved_product_auth_settings,
+                resolved_onboarding_public_app_url,
+            )
+        )
 
     def evaluate_journey_training(*, request: Any, principal: Any, assignment: Any) -> dict[str, Any]:
         legacy_request = TrainingEvaluateRequest(
