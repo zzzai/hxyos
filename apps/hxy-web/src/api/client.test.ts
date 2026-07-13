@@ -7,6 +7,17 @@ import {
 
 const EXPIRES_AT = "2026-07-15T10:00:00Z";
 
+function invitePayload(expiresAt: string) {
+  return {
+    id: "invite-timestamp",
+    store_id: "store-1",
+    role: "store_employee",
+    display_name: "Timestamp Invitee",
+    status: "pending",
+    expires_at: expiresAt,
+  };
+}
+
 function stubJsonResponse(payload: unknown, status = 200) {
   const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
     new Response(JSON.stringify(payload), {
@@ -82,6 +93,28 @@ describe("productOnboardingClient", () => {
     expectRequest(fetchMock, "/api/v1/organization/stores");
   });
 
+  it("accepts the closed store status defined by migration 001", async () => {
+    stubJsonResponse([
+      {
+        id: "store-closed",
+        name: "Closed Store",
+        city: "Changsha",
+        address: "Closed Road 1",
+        status: "closed",
+      },
+    ]);
+
+    await expect(productOnboardingClient.listStores()).resolves.toEqual([
+      {
+        id: "store-closed",
+        name: "Closed Store",
+        city: "Changsha",
+        address: "Closed Road 1",
+        status: "closed",
+      },
+    ]);
+  });
+
   it("creates a store without sending client-supplied organization authority", async () => {
     const fetchMock = stubJsonResponse(
       {
@@ -116,7 +149,7 @@ describe("productOnboardingClient", () => {
     });
   });
 
-  it("lists members with canonical roles and bounded fields", async () => {
+  it("lists members with store member roles and bounded fields", async () => {
     const fetchMock = stubJsonResponse([
       {
         assignment_id: "assignment-1",
@@ -142,6 +175,28 @@ describe("productOnboardingClient", () => {
     ]);
     expectRequest(fetchMock, "/api/v1/organization/members");
   });
+
+  it.each(["founder", "hq_operations", "system_admin"])(
+    "rejects the organization-level %s role from member responses",
+    async (role) => {
+      stubJsonResponse([
+        {
+          assignment_id: "assignment-organization-role",
+          store_id: "store-1",
+          display_name: "Organization Role",
+          role,
+          status: "active",
+        },
+      ]);
+
+      await expect(productOnboardingClient.listMembers()).rejects.toEqual(
+        expect.objectContaining({
+          name: "OnboardingRequestError",
+          status: 200,
+        }),
+      );
+    },
+  );
 
   it("lists invites without retaining token material or extra fields", async () => {
     const fetchMock = stubJsonResponse([
@@ -336,7 +391,7 @@ describe("productOnboardingClient", () => {
       [{ id: "store-1", name: "Store", city: "City", status: "active" }],
     ],
     [
-      "stores validate status",
+      "stores reject the deleted status",
       "listStores",
       [
         {
@@ -349,7 +404,20 @@ describe("productOnboardingClient", () => {
       ],
     ],
     [
-      "members validate canonical roles",
+      "stores reject the archived status",
+      "listStores",
+      [
+        {
+          id: "store-1",
+          name: "Store",
+          city: "City",
+          address: "Address",
+          status: "archived",
+        },
+      ],
+    ],
+    [
+      "members reject unknown roles",
       "listMembers",
       [
         {
@@ -430,6 +498,40 @@ describe("productOnboardingClient", () => {
       expect.objectContaining({
         name: "OnboardingRequestError",
         message: "Onboarding request failed",
+        status: 200,
+      }),
+    );
+  });
+
+  it.each([
+    "2024-02-29T10:00:00Z",
+    "2026-07-15T10:00:00+00:00",
+    "2026-07-15T10:00:00.123456-05:30",
+    "2026-07-15T10:00:00.1+08:00",
+  ])("accepts a valid backend ISO timestamp: %s", async (expiresAt) => {
+    stubJsonResponse([invitePayload(expiresAt)]);
+
+    await expect(productOnboardingClient.listInvites()).resolves.toEqual([
+      invitePayload(expiresAt),
+    ]);
+  });
+
+  it.each([
+    "2026-02-31T10:00:00Z",
+    "2026-02-29T10:00:00Z",
+    "2026-04-31T10:00:00Z",
+    "2026-13-01T10:00:00Z",
+    "2026-07-15T24:00:00Z",
+    "2026-07-15T10:60:00Z",
+    "2026-07-15T10:00:60Z",
+    "2026-07-15T10:00:00+24:00",
+    "2026-07-15T10:00:00-05:60",
+  ])("rejects an invalid ISO timestamp: %s", async (expiresAt) => {
+    stubJsonResponse([invitePayload(expiresAt)]);
+
+    await expect(productOnboardingClient.listInvites()).rejects.toEqual(
+      expect.objectContaining({
+        name: "OnboardingRequestError",
         status: 200,
       }),
     );

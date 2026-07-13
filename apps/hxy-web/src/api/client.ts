@@ -35,23 +35,27 @@ export interface MeResponse {
   available_assignments: AssignmentContext[];
 }
 
+export type StoreStatus = "active" | "paused" | "closed";
+
 export interface OrganizationStore {
   id: string;
   name: string;
   city: string;
   address: string;
-  status: "active" | "paused" | "archived";
+  status: StoreStatus;
 }
+
+export type StoreMemberRole = "store_manager" | "store_employee";
 
 export interface OrganizationMember {
   assignment_id: string;
   store_id: string;
   display_name: string;
-  role: CanonicalRole;
+  role: StoreMemberRole;
   status: "active" | "inactive";
 }
 
-export type InviteRole = "store_manager" | "store_employee";
+export type InviteRole = StoreMemberRole;
 
 export interface OrganizationInvite {
   id: string;
@@ -160,24 +164,18 @@ function requireRecord(payload: unknown): Record<string, unknown> {
   return payload;
 }
 
-function isCanonicalRole(value: string): value is CanonicalRole {
-  return (
-    value === "founder" ||
-    value === "hq_operations" ||
-    value === "store_manager" ||
-    value === "store_employee" ||
-    value === "system_admin"
-  );
+function isStoreMemberRole(value: string): value is StoreMemberRole {
+  return value === "store_manager" || value === "store_employee";
 }
 
 function isInviteRole(value: string): value is InviteRole {
-  return value === "store_manager" || value === "store_employee";
+  return isStoreMemberRole(value);
 }
 
 function isStoreStatus(
   value: string,
 ): value is OrganizationStore["status"] {
-  return value === "active" || value === "paused" || value === "archived";
+  return value === "active" || value === "paused" || value === "closed";
 }
 
 function isMemberStatus(
@@ -193,11 +191,52 @@ function isInviteStatus(
 }
 
 function isIsoTimestamp(value: string): boolean {
-  return (
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?(?:Z|[+-](\d{2}):(\d{2}))$/.exec(
       value,
-    ) && Number.isFinite(Date.parse(value))
-  );
+    );
+  if (match === null) {
+    return false;
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  const offsetHour = match[7] === undefined ? 0 : Number(match[7]);
+  const offsetMinute = match[8] === undefined ? 0 : Number(match[8]);
+  if (
+    year < 1 ||
+    month < 1 ||
+    month > 12 ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 59 ||
+    offsetHour > 23 ||
+    offsetMinute > 59
+  ) {
+    return false;
+  }
+
+  const leapYear =
+    year % 400 === 0 || (year % 4 === 0 && year % 100 !== 0);
+  const daysInMonth = [
+    31,
+    leapYear ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ];
+  return day >= 1 && day <= daysInMonth[month - 1];
 }
 
 function parseStore(payload: unknown): OrganizationStore {
@@ -219,7 +258,7 @@ function parseMember(payload: unknown): OrganizationMember {
   const value = requireRecord(payload);
   const role = requiredString(value, "role");
   const status = requiredString(value, "status");
-  if (!isCanonicalRole(role) || !isMemberStatus(status)) {
+  if (!isStoreMemberRole(role) || !isMemberStatus(status)) {
     throw new Error("Invalid onboarding response");
   }
   return {
