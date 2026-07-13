@@ -404,7 +404,6 @@ class HxyKnowledgeApiTest(unittest.TestCase):
         self.root = Path(self.tmp.name)
         (self.root / "knowledge" / "raw" / "inbox").mkdir(parents=True)
         (self.root / "knowledge" / "structured").mkdir(parents=True)
-        write_risk_material_fixtures(self.root)
         self.previous_api_token = os.environ.get("HXY_API_TOKEN")
         self.previous_max_upload_bytes = os.environ.get("HXY_MAX_UPLOAD_BYTES")
         self.previous_allowed_upload_extensions = os.environ.get("HXY_ALLOWED_UPLOAD_EXTENSIONS")
@@ -809,6 +808,7 @@ class HxyKnowledgeApiTest(unittest.TestCase):
         self.assertIn("客户消费数据开店后再接入", visible)
 
     def test_operating_brain_brand_risk_rules_endpoint_uses_compliance_materials(self):
+        write_risk_material_fixtures(self.root)
         response = self.client.get("/api/operating-brain/brand-risk-rules")
 
         self.assertEqual(response.status_code, 200)
@@ -824,6 +824,7 @@ class HxyKnowledgeApiTest(unittest.TestCase):
     def test_brand_risk_rules_compile_employee_scripts_and_project_red_lines(self):
         from hxy_knowledge.compliance_rules import check_brand_risk_text, load_brand_risk_rules
 
+        write_risk_material_fixtures(self.root)
         rules = load_brand_risk_rules(root_dir=self.root)
 
         self.assertEqual(rules["status"], "candidate_rules")
