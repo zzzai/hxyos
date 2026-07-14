@@ -67,7 +67,7 @@ git commit -m "feat: add governed answer authority modes"
 - Modify: `apps/api/hxy_product/material_repository.py`
 - Modify: `apps/api/hxy_product/materials_routes.py` or the current material route module
 - Modify: `apps/api/hxy_knowledge/repository.py`
-- Create: `migrations/018_hxy_source_authority.sql` in the repository's existing migration directory
+- Create: `data/migrations/018_hxy_source_authority.sql`
 - Test: `tests/test_hxy_source_authority.py`
 
 **Step 1: Write failing tests**
@@ -97,7 +97,7 @@ Run unit tests plus the existing PostgreSQL repository tests. Use an additive mi
 **Step 5: Commit**
 
 ```bash
-git add apps/api/hxy_product apps/api/hxy_knowledge migrations tests/test_hxy_source_authority.py
+git add apps/api/hxy_product apps/api/hxy_knowledge data/migrations/018_hxy_source_authority.sql tests/test_hxy_source_authority.py
 git commit -m "feat: classify knowledge at source level"
 ```
 
@@ -247,4 +247,3 @@ Run them through the product API and record only bounded evaluation metadata, ci
 **Step 5: Stop before bulk ingestion**
 
 697-file governance begins only after the benchmark passes and source-level classification is visible in retrieval. Store the batch as queued work; do not expose it to store employees yet.
-
