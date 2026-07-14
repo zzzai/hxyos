@@ -13,6 +13,7 @@ import pytest
 from psycopg.errors import UniqueViolation
 
 from apps.api.hxy_knowledge_api import create_app
+from apps.api.hxy_product.auth import ProductAuthSettings
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -49,6 +50,27 @@ GATEWAY_ASSERTION_ID = "40000000-0000-0000-0000-000000000001"
 TAMPERED_ASSERTION_ID = "40000000-0000-0000-0000-000000000002"
 GATEWAY_SECRET = "gateway-unit-test-key-with-32-bytes"
 SESSION_GRANT = "g" * 64
+
+
+def test_product_auth_settings_load_bounded_session_ttl_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HXY_AUTH_SESSION_TTL_SECONDS", "86400")
+
+    settings = ProductAuthSettings.from_environment()
+
+    assert settings.session_ttl_seconds == 86400
+
+
+@pytest.mark.parametrize("value", ["not-a-number", "59", "86401"])
+def test_product_auth_settings_reject_invalid_session_ttl(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("HXY_AUTH_SESSION_TTL_SECONDS", value)
+
+    with pytest.raises(ValueError):
+        ProductAuthSettings.from_environment()
 
 
 @dataclass(frozen=True)

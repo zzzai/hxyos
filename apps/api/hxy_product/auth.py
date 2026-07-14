@@ -30,9 +30,15 @@ class ProductAuthSettings:
     @classmethod
     def from_environment(cls) -> ProductAuthSettings:
         secure_value = os.environ.get("HXY_AUTH_SECURE_COOKIE", "true").strip().lower()
+        ttl_value = os.environ.get("HXY_AUTH_SESSION_TTL_SECONDS", "3600").strip()
+        try:
+            session_ttl_seconds = int(ttl_value)
+        except ValueError as exc:
+            raise ValueError("HXY_AUTH_SESSION_TTL_SECONDS must be an integer") from exc
         # Rotate this deployment-managed secret regularly; rotation invalidates outstanding assertions.
         return cls(
             gateway_secret=os.environ.get("HXY_AUTH_PROXY_SECRET", ""),
+            session_ttl_seconds=session_ttl_seconds,
             secure_cookie=secure_value not in {"0", "false", "no", "off"},
         )
 
