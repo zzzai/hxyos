@@ -972,6 +972,42 @@ class HxyKnowledgeServiceTest(unittest.TestCase):
         self.assertEqual(evidence[0]["status"], "reference")
         self.assertEqual(evidence[0]["source_type"], "reference_material")
 
+    def test_answer_engine_routes_brand_identity_before_retrieval_domain(self):
+        answer_engine = load_module("hxy_answer_engine_brand_identity", "apps/api/hxy_knowledge/answer_engine.py")
+        items = [
+            {
+                "chunk_id": "store-model-reference",
+                "title": "荷小悦门店模型具象化构思",
+                "domain": "store_model",
+                "stage": "reference",
+                "status": "reference",
+                "source_type": "reference_material",
+                "content": "当前模型把功效茶设计成隐形利润引擎，但会分散顾客的感知重心。",
+                "score": 95,
+            }
+        ]
+
+        intent, audience = answer_engine.classify_intent("荷小悦是什么", items)
+        result = answer_engine.synthesize_answer("荷小悦是什么", "荷小悦是什么", items)
+
+        self.assertEqual((intent, audience), ("brand_positioning", "brand"))
+        self.assertEqual(result["intent"], "brand_positioning")
+        self.assertIn("没有可直接用于回答", result["answer"])
+        self.assertNotIn("门店模型类回答", result["answer"])
+        self.assertNotIn("功效茶", result["answer"])
+
+    def test_answer_engine_decodes_historical_html_and_backslash_entities(self):
+        answer_engine = load_module("hxy_answer_engine_entity_cleanup", "apps/api/hxy_knowledge/answer_engine.py")
+
+        cleaned = answer_engine.normalize_claim_text(
+            r"当前模型把功效茶设计成\&\#34;隐形利润引擎\&\#34;",
+            "store_model",
+        )
+
+        self.assertEqual(cleaned, '当前模型把功效茶设计成"隐形利润引擎"')
+        self.assertNotIn("&#", cleaned)
+        self.assertNotIn("\\", cleaned)
+
     def test_workbench_intake_routes_team_value_workflows(self):
         workbench = load_module("hxy_workbench", "apps/api/hxy_knowledge/workbench.py")
 

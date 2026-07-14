@@ -7,11 +7,13 @@ Wants=network-online.target
 Type=simple
 User=root
 Group=root
-WorkingDirectory=/root/hxy
+WorkingDirectory=/root/hxy/releases/current
 Environment=HOME=/root
 Environment=HXY_ROOT_DIR=/root/hxy
 Environment=HXY_ENV_FILE=/root/hxy/ops/env/hxy-knowledge-api.env
-ExecStart=/usr/bin/env bash /root/hxy/ops/hxy-material-worker.sh
+Environment=PYTHONPATH=/root/hxy/releases/current/apps/api
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/bin/bash -c 'set -a; source /root/hxy/ops/env/hxy-knowledge-api.env; set +a; export HXY_ROOT_DIR=/root/hxy PYTHONPATH=/root/hxy/releases/current/apps/api PYTHONDONTWRITEBYTECODE=1; exec /root/hxy/releases/current/.venv/bin/python /root/hxy/releases/current/scripts/run-hxy-material-worker.py --poll-seconds "${HXY_MATERIAL_WORKER_POLL_SECONDS:-2}" --lease-seconds "${HXY_MATERIAL_WORKER_LEASE_SECONDS:-300}" --base-retry-seconds "${HXY_MATERIAL_WORKER_BASE_RETRY_SECONDS:-30}"'
 Restart=always
 RestartSec=5
 TimeoutStopSec=30

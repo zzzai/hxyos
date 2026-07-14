@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from html import unescape
 import re
 from typing import Any
 
@@ -32,16 +33,40 @@ PRIMARY_CLAIM_DOMAINS = {
     "store_model": {"store_model"},
 }
 
+BRAND_IDENTITY_QUESTIONS = {
+    "荷小悦",
+    "荷小悦是什么",
+    "荷小悦做什么",
+    "荷小悦是做什么的",
+    "介绍荷小悦",
+    "荷小悦品牌是什么",
+}
+
+
+def decode_legacy_entities(value: str) -> str:
+    decoded = re.sub(r"\\([&#])", r"\1", value or "")
+    for _ in range(2):
+        next_value = unescape(decoded)
+        if next_value == decoded:
+            break
+        decoded = next_value
+    return decoded
+
+
+def is_brand_identity_question(question: str) -> bool:
+    normalized = re.sub(r"[\s？?。！!]", "", question or "")
+    return normalized in BRAND_IDENTITY_QUESTIONS
+
 
 def compact_content(content: str, max_length: int = 320) -> str:
-    normalized = " ".join(content.split())
+    normalized = " ".join(decode_legacy_entities(content).split())
     if len(normalized) <= max_length:
         return normalized
     return normalized[: max_length - 1].rstrip() + "..."
 
 
 def compact_evidence_content(content: str, max_length: int = 260, intent: str = "knowledge_lookup") -> str:
-    normalized = " ".join((content or "").split())
+    normalized = " ".join(decode_legacy_entities(content).split())
     if "图片类型：" not in normalized or "业务摘要：" not in normalized:
         if intent == "product_system":
             anchored = anchored_business_excerpt(normalized, max_length=max_length)
@@ -102,7 +127,11 @@ def anchored_business_excerpt(content: str, max_length: int = 260) -> str:
 
 
 def compact_sentence(content: str, max_length: int = 96) -> str:
-    normalized = re.sub(r"[\u200b\u200c\u200d\ufeff]", " ", content or "")
+    normalized = re.sub(
+        r"[\u200b\u200c\u200d\ufeff]",
+        " ",
+        decode_legacy_entities(content),
+    )
     normalized = " ".join(normalized.split())
     normalized = re.sub(r"^[#>*\\-\\s]+", "", normalized).strip()
     if len(normalized) <= max_length:
@@ -133,6 +162,8 @@ def has_metadata_noise(text: str) -> bool:
 
 def classify_intent(question: str, items: list[dict[str, Any]] | None = None) -> tuple[str, str]:
     lowered = question.lower()
+    if is_brand_identity_question(question):
+        return "brand_positioning", "brand"
     for intent, audience, keywords in INTENT_RULES:
         if any(keyword.lower() in lowered for keyword in keywords):
             return intent, audience
@@ -436,7 +467,7 @@ def build_result_card(
 
 
 def split_claims(text: str) -> list[str]:
-    normalized = " ".join((text or "").split())
+    normalized = " ".join(decode_legacy_entities(text).split())
     parts = re.split(r"[。！？!?；;]\s*", normalized)
     return [part.strip(" ，,：:") for part in parts if part.strip(" ，,：:")]
 
@@ -488,7 +519,11 @@ def can_use_item_for_primary_claim(item: dict[str, Any], intent: str, text: str)
 
 
 def normalize_claim_text(claim: str, intent: str) -> str:
-    text = re.sub(r"[\u200b\u200c\u200d\ufeff]", " ", claim or "")
+    text = re.sub(
+        r"[\u200b\u200c\u200d\ufeff]",
+        " ",
+        decode_legacy_entities(claim),
+    )
     text = " ".join(text.split())
     text = re.sub(r"^[#>*\\-\\s]+", "", text).strip()
     if "第一性原理" in text and "：" in text:
@@ -947,6 +982,16 @@ def contextualize_claim_for_question(question: str, intent: str, claim: str) -> 
 def build_direct_answer(question: str, intent: str, evidence: list[dict[str, Any]], scenario: str = "创始人内部决策") -> str:
     if not evidence:
         return f"结论：当前知识库无法可靠回答“{question}”。需要补充资料或确认权威版本后再形成判断。"
+
+    if intent == "brand_positioning" and is_brand_identity_question(question):
+        authoritative = any(
+            item.get("domain") == "approved_answer_card"
+            or item.get("status") in {"approved", "official"}
+            or item.get("stage") in {"approved", "official"}
+            for item in evidence
+        )
+        if not authoritative:
+            return f"结论：当前知识库没有可直接用于回答“{question}”的已核定品牌结论。需要先确认正式品牌定位，再沉淀为权威答案卡。"
 
     claim, _title = extract_primary_claim(evidence, intent)
     if not claim:
