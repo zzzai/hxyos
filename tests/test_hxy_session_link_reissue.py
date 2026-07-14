@@ -157,16 +157,20 @@ def test_reissue_refuses_missing_or_inactive_founder() -> None:
 def test_reissue_validates_username_and_bounded_ttl() -> None:
     connection = FakeReissueConnection(_founder())
 
+    result = _reissue(connection, grant_ttl_seconds=86400)
+
+    assert result["grant_ttl_seconds"] == 86400
+
     for overrides in (
         {"username": "x"},
         {"username": "包含空格"},
         {"grant_ttl_seconds": 59},
-        {"grant_ttl_seconds": 601},
+        {"grant_ttl_seconds": 86401},
     ):
         with pytest.raises(SessionLinkReissueValidationError):
             _reissue(connection, **overrides)
 
-    assert connection.calls == []
+    assert len(connection.calls) == 3
 
 
 def test_reissue_cli_requires_username_app_url_and_confirmation() -> None:
@@ -221,3 +225,38 @@ def test_reissue_cli_does_not_expose_database_errors_or_dsn_secrets(
     assert secret not in output
     assert "password=" not in output
     assert json.loads(output)["error"] == "database operation failed"
+
+
+def test_reissue_cli_reads_separate_founder_grant_ttl_environment(
+    monkeypatch,
+    capsys,
+) -> None:
+    module = importlib.import_module("apps.api.hxy_product.session_link_reissue")
+    captured: dict[str, Any] = {}
+    monkeypatch.setenv("HXY_DATABASE_URL", DATABASE_URL)
+    monkeypatch.setenv("HXY_FOUNDER_GRANT_TTL_SECONDS", "86400")
+
+    def succeed(**kwargs):
+        captured.update(kwargs)
+        return {
+            "status": "issued",
+            "session_grant": RAW_GRANT,
+            "grant_ttl_seconds": kwargs["grant_ttl_seconds"],
+        }
+
+    monkeypatch.setattr(module, "reissue_founder_session_grant", succeed)
+
+    exit_code = module.main(
+        [
+            "--username",
+            "founder",
+            "--app-url",
+            "https://hxyos.hexiaoyue.com/",
+            "--confirm",
+            REISSUE_CONFIRMATION,
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["grant_ttl_seconds"] == 86400
+    assert json.loads(capsys.readouterr().out)["grant_ttl_seconds"] == 86400

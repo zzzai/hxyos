@@ -17,6 +17,7 @@ from .founder_bootstrap import build_session_link
 
 REISSUE_CONFIRMATION = "REISSUE-HXY-SESSION-LINK"
 DEFAULT_GRANT_TTL_SECONDS = 600
+MAX_GRANT_TTL_SECONDS = 86400
 
 _USERNAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$")
 
@@ -57,7 +58,7 @@ def reissue_founder_session_grant(
     normalized_username = username.strip()
     if not _USERNAME.fullmatch(normalized_username):
         raise SessionLinkReissueValidationError("username is invalid")
-    if not 60 <= int(grant_ttl_seconds) <= 600:
+    if not 60 <= int(grant_ttl_seconds) <= MAX_GRANT_TTL_SECONDS:
         raise SessionLinkReissueValidationError("grant TTL is invalid")
     if not database_url.strip():
         raise SessionLinkReissueValidationError("database URL is required")
@@ -151,10 +152,17 @@ def main(argv: list[str] | None = None) -> int:
     args = build_argument_parser().parse_args(argv)
     database_url = os.getenv("HXY_DATABASE_URL", "").strip()
     try:
+        grant_ttl_seconds = int(
+            os.getenv(
+                "HXY_FOUNDER_GRANT_TTL_SECONDS",
+                str(DEFAULT_GRANT_TTL_SECONDS),
+            ).strip()
+        )
         result = reissue_founder_session_grant(
             database_url=database_url,
             username=args.username,
             confirmation=args.confirm,
+            grant_ttl_seconds=grant_ttl_seconds,
         )
         session_grant = str(result.pop("session_grant"))
         result["one_time_link"] = build_session_link(args.app_url, session_grant)

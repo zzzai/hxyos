@@ -122,4 +122,12 @@ python3 scripts/reissue-hxy-session-link.py \
   --confirm REISSUE-HXY-SESSION-LINK
 ```
 
-该命令只解析已有的 active Founder assignment，并新增一个最长 10 分钟有效的单次 grant。它不创建或修改身份，不创建密码，也不清除已登录设备。数据库只保存 grant 的 SHA-256；原始链接仍然只在 stdout 返回一次，不得写入日志、截图、仓库或群聊。
+该命令只解析已有的 active Founder assignment，并新增一个单次 grant。有效期由
+`HXY_FOUNDER_GRANT_TTL_SECONDS` 独立配置，范围为 60 秒至 24 小时；它不复用
+`HXY_AUTH_SESSION_TTL_SECONDS`，也不影响员工邀请有效期。生产环境默认配置为 24 小时，
+链接一旦成功交换仍立即失效。
+
+它不创建或修改身份，不创建密码，也不清除已登录设备。数据库只保存 grant 的
+SHA-256；原始链接仍然只在 stdout 返回一次，不得写入日志、截图、仓库或群聊。
+自动化验收必须使用单独签发的 canary grant 并在验收后退出，禁止消费准备交付给真实
+用户的链接。
