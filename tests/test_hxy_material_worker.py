@@ -259,7 +259,10 @@ def test_material_worker_operations_are_hxy_owned_and_private() -> None:
     assert "HXY_MATERIAL_WORKER_LEASE_SECONDS" in launcher
     assert "HXY_MATERIAL_WORKER_BASE_RETRY_SECONDS" in launcher
     assert "Description=HXY Material Intake Worker" in service
-    assert "ExecStart=/usr/bin/env bash /root/hxy/ops/hxy-material-worker.sh" in service
+    assert "WorkingDirectory=/root/hxy/releases/current" in service
+    assert "/root/hxy/releases/current/.venv/bin/python" in service
+    assert "/root/hxy/releases/current/scripts/run-hxy-material-worker.py" in service
+    assert "PYTHONDONTWRITEBYTECODE=1" in service
     assert "UMask=0077" in service
     assert "ReadWritePaths=/root/hxy/data/product-materials" in service
     assert "Restart=always" in service
