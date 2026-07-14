@@ -21,6 +21,111 @@ except Exception:  # pragma: no cover - allows direct file loading in tests
 
 OVERCLAIM_TERMS = ["治疗", "治愈", "保证", "稳赚", "一定回本", "绝对", "药到病除", "排毒治病"]
 NEGATION_MARKERS = ["不", "不要", "不能", "禁止", "避免", "禁用", "不得", "不要承诺", "不能承诺"]
+AUTHORITY_SOURCES = {
+    "official_internal",
+    "internal_material",
+    "external_reference",
+}
+REFERENCE_STATUSES = {"reference", "ai_structured", "draft", "needs_review", "disputed", "superseded"}
+REFERENCE_STAGES = {"reference", "preparation", "draft", "pilot", "ai_structured", "working_context"}
+
+
+def is_process_memory_evidence(item: dict[str, Any]) -> bool:
+    domain = str(item.get("domain") or "").lower()
+    status = str(item.get("status") or "").lower()
+    source_type = str(item.get("source_type") or "").lower()
+    return (
+        domain == "process_memory"
+        or status == "process"
+        or source_type == "process_memory"
+        or item.get("official_use_allowed") is False
+    )
+
+
+def evidence_authority_source(item: dict[str, Any]) -> str:
+    if is_process_memory_evidence(item):
+        return "none"
+    domain = str(item.get("domain") or "").lower()
+    status = str(item.get("status") or "").lower()
+    stage = str(item.get("stage") or "").lower()
+    if domain == "approved_answer_card" or status == "approved" and stage == "approved_answer_card":
+        return "approved_answer_card"
+    explicit = str(item.get("authority_source") or item.get("source_authority") or "").lower()
+    if explicit in AUTHORITY_SOURCES:
+        return explicit
+    source_type = str(item.get("source_type") or "").lower()
+    if status in REFERENCE_STATUSES or stage in REFERENCE_STAGES or source_type in {
+        "reference_material",
+        "external_reference",
+    }:
+        return "external_reference"
+    return "external_reference"
+
+
+def _evidence_source_identity(item: dict[str, Any]) -> str:
+    for key in ["source_id", "asset_id", "card_id", "document_id", "title"]:
+        value = str(item.get(key) or "").strip()
+        if value:
+            return f"{key}:{value}"
+    return ""
+
+
+def has_corroborated_internal_evidence(evidence: list[dict[str, Any]]) -> bool:
+    source_ids = {
+        source_id
+        for item in evidence
+        if evidence_authority_source(item) in {"official_internal", "internal_material"}
+        if (source_id := _evidence_source_identity(item))
+    }
+    return len(source_ids) >= 2
+
+
+def classify_answer_authority(
+    *,
+    evidence: list[dict[str, Any]],
+    from_answer_card: bool,
+    requires_review: bool,
+) -> dict[str, Any]:
+    citations = [item for item in evidence if not is_process_memory_evidence(item)]
+    process_memory = [
+        {
+            **({"memory_id": item["memory_id"]} if item.get("memory_id") else {}),
+            **({"title": item["title"]} if item.get("title") else {}),
+            "context_hint_only": True,
+        }
+        for item in evidence
+        if is_process_memory_evidence(item)
+    ]
+    evidence_authorities = {evidence_authority_source(item) for item in citations}
+
+    if from_answer_card or "approved_answer_card" in evidence_authorities:
+        answer_mode = "formal"
+        authority_source = "approved_answer_card"
+        usage_boundary = "review_required" if requires_review else "team_standard"
+    elif "official_internal" in evidence_authorities:
+        answer_mode = "working"
+        authority_source = "official_internal"
+        usage_boundary = "review_required" if requires_review else "internal_working"
+    elif "internal_material" in evidence_authorities:
+        answer_mode = "working"
+        authority_source = "internal_material"
+        usage_boundary = "review_required" if requires_review else "internal_working"
+    elif "external_reference" in evidence_authorities:
+        answer_mode = "reference"
+        authority_source = "external_reference"
+        usage_boundary = "reference_only"
+    else:
+        answer_mode = "reference"
+        authority_source = "none"
+        usage_boundary = "review_required"
+
+    return {
+        "answer_mode": answer_mode,
+        "authority_source": authority_source,
+        "usage_boundary": usage_boundary,
+        "citations": citations,
+        "context_metadata": {"process_memory": process_memory},
+    }
 
 
 def _dimension(key: str, name: str, passed: bool, detail: str, weight: float) -> dict[str, Any]:
@@ -45,8 +150,11 @@ def score_answer_quality(
     no_noise = not has_metadata_noise(answer)
     overclaim_hits = _overclaim_hits(answer)
     no_overclaim = not overclaim_hits
-    evidence_ready = from_answer_card or bool(evidence)
-    stable_enough = from_answer_card or (confidence == "high" and not needs_review)
+    usable_evidence = [item for item in evidence if not is_process_memory_evidence(item)]
+    evidence_ready = from_answer_card or bool(usable_evidence)
+    stable_enough = from_answer_card or (
+        has_corroborated_internal_evidence(usable_evidence) and confidence == "high" and not needs_review
+    )
 
     dimensions = [
         _dimension(

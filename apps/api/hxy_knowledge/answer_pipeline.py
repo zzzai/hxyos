@@ -13,7 +13,14 @@ COMMERCIAL_CONDITION_MARKERS = ["必须基于", "假设", "复核", "风险边�
 
 try:
     from hxy_knowledge.compliance_rules import check_brand_risk_text
-    from hxy_knowledge.reliability import OVERCLAIM_TERMS, _overclaim_hits
+    from hxy_knowledge.reliability import (
+        OVERCLAIM_TERMS,
+        _overclaim_hits,
+        classify_answer_authority,
+        evidence_authority_source,
+        has_corroborated_internal_evidence,
+        is_process_memory_evidence as _reliability_is_process_memory_evidence,
+    )
     from hxy_knowledge.workbench import classify_workbench_intake
 except Exception:  # pragma: no cover - supports direct module loading in tests
     try:
@@ -48,6 +55,17 @@ except Exception:  # pragma: no cover - supports direct module loading in tests
                     break
                 start = index + len(term)
         return hits
+
+    reliability_sibling = Path(__file__).with_name("reliability.py")
+    reliability_spec = importlib.util.spec_from_file_location("hxy_reliability_sibling", reliability_sibling)
+    if not reliability_spec or not reliability_spec.loader:
+        raise ImportError("unable to load sibling reliability module")
+    reliability_module = importlib.util.module_from_spec(reliability_spec)
+    reliability_spec.loader.exec_module(reliability_module)
+    classify_answer_authority = reliability_module.classify_answer_authority
+    evidence_authority_source = reliability_module.evidence_authority_source
+    has_corroborated_internal_evidence = reliability_module.has_corroborated_internal_evidence
+    _reliability_is_process_memory_evidence = reliability_module.is_process_memory_evidence
 
     def classify_workbench_intake(
         input_text: str,
@@ -142,28 +160,25 @@ def _is_approved_answer_card_evidence(item: dict[str, Any]) -> bool:
 
 
 def _is_process_memory_evidence(item: dict[str, Any]) -> bool:
-    domain = str(item.get("domain") or "").lower()
-    status = str(item.get("status") or "").lower()
-    source_type = str(item.get("source_type") or "").lower()
-    return (
-        domain == "process_memory"
-        or status in PROCESS_MEMORY_STATUSES
-        or source_type == "process_memory"
-        or item.get("official_use_allowed") is False
-    )
+    return _reliability_is_process_memory_evidence(item)
 
 
 def _has_reference_only_evidence(evidence: list[dict[str, Any]], from_answer_card: bool) -> bool:
     if from_answer_card:
         return False
-    if not evidence:
+    authority_sources = {
+        evidence_authority_source(item) for item in evidence if not _is_process_memory_evidence(item)
+    }
+    if not authority_sources:
         return False
-    return not any(_is_approved_answer_card_evidence(item) for item in evidence)
+    return not authority_sources & {"approved_answer_card", "official_internal", "internal_material"}
 
 
 def _has_unapproved_reference_evidence(evidence: list[dict[str, Any]]) -> bool:
     for item in evidence:
         if _is_process_memory_evidence(item):
+            continue
+        if evidence_authority_source(item) in {"approved_answer_card", "official_internal", "internal_material"}:
             continue
         status = str(item.get("status") or "").lower()
         stage = str(item.get("stage") or "").lower()
@@ -212,11 +227,19 @@ def _policy_action(
         return "needs_review"
     if from_answer_card and not needs_review:
         return "answer"
-    if _has_reference_only_evidence(evidence, from_answer_card) or _has_unapproved_reference_evidence(evidence):
+    if _has_reference_only_evidence(evidence, from_answer_card):
         return "needs_review"
     if _has_conflicting_evidence(evidence):
         return "needs_review"
-    if not evidence or needs_review or confidence == "low":
+    internal_evidence = [
+        item
+        for item in evidence
+        if evidence_authority_source(item) in {"official_internal", "internal_material"}
+    ]
+    if internal_evidence and not has_corroborated_internal_evidence(internal_evidence):
+        return "needs_review"
+    usable_evidence = [item for item in evidence if not _is_process_memory_evidence(item)]
+    if not usable_evidence or needs_review or confidence == "low":
         return "needs_review"
     return "answer"
 
@@ -292,7 +315,7 @@ def build_answer_pipeline(
     frontdoor = classify_workbench_intake(question, scenario=scenario, role=role)
     risk_flags = _risk_flags(question, answer, scenario)
     evidence_has_conflict = _has_conflicting_evidence(evidence)
-    reference_only = _has_reference_only_evidence(evidence, from_answer_card) or _has_unapproved_reference_evidence(evidence)
+    reference_only = _has_reference_only_evidence(evidence, from_answer_card)
     process_memory_only = bool(evidence) and all(_is_process_memory_evidence(item) for item in evidence)
     if evidence_has_conflict and "证据冲突" not in risk_flags:
         risk_flags.append("证据冲突")
@@ -310,6 +333,11 @@ def build_answer_pipeline(
         risk_flags=risk_flags,
         from_answer_card=from_answer_card,
         evidence_has_conflict=evidence_has_conflict,
+    )
+    authority_contract = classify_answer_authority(
+        evidence=evidence,
+        from_answer_card=from_answer_card,
+        requires_review=policy_action != "answer",
     )
     answer_type = (
         "authority_answer"
@@ -331,7 +359,8 @@ def build_answer_pipeline(
             "measurable_target": "output a usable answer or a review task",
         },
         "context_budget": {
-            "evidence_items": len(evidence),
+            "evidence_items": len(authority_contract["citations"]),
+            "process_memory_items": len(authority_contract["context_metadata"]["process_memory"]),
             "intent": intent,
             "scenario": scenario,
             "role": role,
@@ -355,6 +384,7 @@ def build_answer_pipeline(
     }
     return {
         "version": "hxy-answer-pipeline.v1",
+        **authority_contract,
         "loop_contract": loop_contract,
         "frontdoor": {
             "input_type": frontdoor.get("input_type"),
@@ -377,8 +407,8 @@ def build_answer_pipeline(
         },
         "evidence_plan": {
             "sources": evidence_sources,
-            "evidence_count": len(evidence),
-            "needs_more_evidence": not evidence or policy_action != "answer",
+            "evidence_count": len(authority_contract["citations"]),
+            "needs_more_evidence": not authority_contract["citations"] or policy_action != "answer",
             "preferred_order": ["权威答案卡", "人工核定", "HXY 参考资料", "图片理解", "经营数据"],
         },
         "answer_builder": {

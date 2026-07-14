@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from .answer_engine import build_result_card, classify_intent, synthesize_answer
-from .reliability import insufficient_answer, score_answer_quality
+from .reliability import insufficient_answer, is_process_memory_evidence, score_answer_quality
 from .thinking_lenses import apply_thinking_lenses
 from .understanding_engine import understand_text
 
@@ -20,6 +20,20 @@ class AnswerServiceHooks:
     attach_answer_pipeline: Callable[..., dict[str, Any]]
     apply_frontdoor_to_answer: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]
     maybe_apply_model_answer: Callable[..., None]
+
+
+def _apply_authority_contract(answer: dict[str, Any]) -> dict[str, Any]:
+    pipeline = answer.get("answer_pipeline")
+    if not isinstance(pipeline, dict):
+        return answer
+    for field in ["answer_mode", "authority_source", "usage_boundary", "citations", "context_metadata"]:
+        if field in pipeline:
+            answer[field] = pipeline[field]
+    for field in ["evidence", "sources"]:
+        items = answer.get(field)
+        if isinstance(items, list):
+            answer[field] = [item for item in items if not is_process_memory_evidence(item)]
+    return answer
 
 
 def generate_answer(
@@ -102,6 +116,7 @@ def generate_answer(
         )
         hooks.attach_model_route(answer, model_router.route("authority_answer"))
         hooks.attach_answer_pipeline(answer, role=pipeline_role)
+        _apply_authority_contract(answer)
         answer_id = repository.save_answer_run(answer)
         answer["answer_id"] = answer_id
         return answer
@@ -139,6 +154,7 @@ def generate_answer(
             needs_review=True,
         )
     hooks.attach_answer_pipeline(answer, role=pipeline_role)
+    _apply_authority_contract(answer)
     answer_id = repository.save_answer_run(answer)
     answer["answer_id"] = answer_id
     return answer
