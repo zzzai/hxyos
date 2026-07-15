@@ -10,6 +10,7 @@ from .answer_engine import (
     classify_task_intent,
     synthesize_answer,
 )
+from .brand_constitution import BrandConstitutionAdapter
 from .reliability import insufficient_answer, is_process_memory_evidence, score_answer_quality
 from .thinking_lenses import apply_thinking_lenses
 from .understanding_engine import understand_text
@@ -47,6 +48,43 @@ def _apply_authority_contract(answer: dict[str, Any]) -> dict[str, Any]:
     return answer
 
 
+def _apply_brand_constitution_boundary(
+    answer: dict[str, Any],
+    boundary: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not boundary or boundary.get("answer_mode") != "working":
+        return answer
+    answer.update(
+        {
+            "answer_mode": "working",
+            "authority_source": "none",
+            "usage_boundary": "review_required",
+            "answer_status": "待复核",
+            "needs_review": True,
+            "from_brand_constitution": False,
+            "constitution_status": boundary.get("constitution_status") or "unavailable",
+        }
+    )
+    pipeline = answer.get("answer_pipeline")
+    if isinstance(pipeline, dict):
+        pipeline.update(
+            {
+                "answer_mode": "working",
+                "authority_source": "none",
+                "usage_boundary": "review_required",
+            }
+        )
+        policy = pipeline.get("policy_decision")
+        if isinstance(policy, dict):
+            policy["action"] = "needs_review"
+            policy["reason"] = "品牌宪法缺失、失效或完整性校验失败。"
+    result_card = answer.get("result_card")
+    if isinstance(result_card, dict):
+        result_card["stability_level"] = "review_required"
+        result_card["risk_boundary"] = "当前品牌口径未由有效品牌宪法授权，只能内部参考。"
+    return answer
+
+
 def generate_answer(
     *,
     question: str,
@@ -59,6 +97,7 @@ def generate_answer(
     hooks: AnswerServiceHooks,
     role: str = "founder",
     pipeline_role: str = "team",
+    brand_constitution: BrandConstitutionAdapter | None = None,
 ) -> dict[str, Any]:
     """Generate and persist one governed answer without binding to an HTTP framework."""
     rule_task_intent = classify_task_intent(question)
@@ -79,6 +118,24 @@ def generate_answer(
         "issue_reporting",
     }:
         return build_task_intent_answer(resolved_task_intent, role=role)
+
+    constitution_boundary: dict[str, Any] | None = None
+    if brand_constitution is not None and brand_constitution.covers_question(question):
+        constitution_answer = brand_constitution.answer_for_brand_identity(role=role)
+        if constitution_answer.get("answer_mode") == "formal":
+            constitution_answer.update(
+                {
+                    "question": question,
+                    "query": question,
+                    "scenario": scenario,
+                    "usage": "可作为组织内部统一品牌口径使用。",
+                    "applicable_scenarios": [scenario],
+                }
+            )
+            answer_id = repository.save_answer_run(constitution_answer)
+            constitution_answer["answer_id"] = answer_id
+            return constitution_answer
+        constitution_boundary = constitution_answer
 
     understanding = understand_text(question, scenario=scenario, role=role)
     understanding["thinking_lenses"] = apply_thinking_lenses(question, stage="zero_to_one")
@@ -143,6 +200,7 @@ def generate_answer(
         hooks.attach_model_route(answer, model_router.route("authority_answer"))
         hooks.attach_answer_pipeline(answer, role=pipeline_role)
         _apply_authority_contract(answer)
+        _apply_brand_constitution_boundary(answer, constitution_boundary)
         answer_id = repository.save_answer_run(answer)
         answer["answer_id"] = answer_id
         return answer
@@ -181,6 +239,7 @@ def generate_answer(
         )
     hooks.attach_answer_pipeline(answer, role=pipeline_role)
     _apply_authority_contract(answer)
+    _apply_brand_constitution_boundary(answer, constitution_boundary)
     answer_id = repository.save_answer_run(answer)
     answer["answer_id"] = answer_id
     return answer

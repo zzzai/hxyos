@@ -3618,6 +3618,15 @@ used_by:
         self.assertEqual(self.repo.last_search["domain"], "product")
         self.assertEqual(self.repo.last_search["stage"], "preparation")
 
+    def test_chat_requires_bearer_token_when_configured(self):
+        response = self.client.post(
+            "/api/knowledge/chat",
+            headers={"Authorization": ""},
+            json={"question": "荷小悦是什么？"},
+        )
+
+        self.assertEqual(response.status_code, 401)
+
     def test_chat_returns_enterprise_answer_contract_and_persists_run(self):
         response = self.client.post(
             "/api/knowledge/chat",
@@ -4503,7 +4512,8 @@ used_by:
         body = response.json()
         self.assertTrue(body["from_answer_card"])
         self.assertIn("result_card", body)
-        self.assertEqual(body["result_card"]["stability_level"], "stable")
+        self.assertEqual(body["result_card"]["stability_level"], "review_required")
+        self.assertEqual(body["answer_mode"], "working")
         self.assertIn("招商话术", body["result_card"]["business_result"])
 
     def test_compliance_preflight_rejects_risky_approved_answer_card(self):

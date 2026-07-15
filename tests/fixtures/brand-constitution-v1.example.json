@@ -1,0 +1,40 @@
+{
+  "schema_version": "hxy-brand-constitution.v1",
+  "version": "1.0.0-example",
+  "status": "approved",
+  "owner": "example-brand-owner",
+  "owner_approved": true,
+  "approved_by": "example-approver",
+  "approved_at": "2026-01-01T00:00:00Z",
+  "effective_at": "2026-01-01T00:00:00Z",
+  "expires_at": null,
+  "core_statements": {
+    "brand_identity": "示例品牌是面向社区的日常生活服务品牌。",
+    "service_facts": [
+      "提供示例到店服务",
+      "强调清晰、克制和可持续的服务体验"
+    ]
+  },
+  "forbidden_interpretations": [
+    {
+      "statement": "不得将示例品牌描述为医疗机构",
+      "blocked_terms": ["医疗机构"]
+    },
+    {
+      "statement": "不得承诺确定性效果",
+      "blocked_terms": ["确定性效果"]
+    }
+  ],
+  "role_variants": {
+    "founder": "示例品牌以社区日常服务为起点，验证可复制的门店能力。",
+    "headquarters": "示例品牌通过统一标准支持社区门店稳定交付。",
+    "store_manager": "示例品牌为社区顾客提供清晰、稳定的日常到店服务。",
+    "store_staff": "示例品牌是一家服务社区顾客的日常生活服务门店。"
+  },
+  "source_references": [
+    {
+      "source_id": "example-official-source",
+      "authority": "official_internal"
+    }
+  ]
+}

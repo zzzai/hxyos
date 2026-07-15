@@ -695,6 +695,7 @@ def test_generate_answer_module_has_framework_independent_service_boundary() -> 
 
 def test_legacy_chat_delegates_to_generate_answer_without_changing_payload(tmp_path: Path, monkeypatch) -> None:
     api_module = importlib.import_module("apps.api.hxy_knowledge_api")
+    monkeypatch.setenv("HXY_API_TOKEN", "test-token")
     expected = {
         "answer": "保持旧接口完整载荷",
         "answer_id": "answer-test-id",
@@ -711,6 +712,7 @@ def test_legacy_chat_delegates_to_generate_answer_without_changing_payload(tmp_p
     response = ASGIClient(app).request(
         "POST",
         "/api/knowledge/chat",
+        headers={"Authorization": "Bearer test-token"},
         json={"question": "  旧接口问题  ", "scenario": "创始人内部决策", "limit": 3},
     )
 

@@ -22,6 +22,7 @@ from hxy_knowledge.answer_service import AnswerServiceHooks
 from hxy_knowledge.answer_pipeline import build_answer_pipeline
 from hxy_knowledge.brand_decision import review_brand_artifact, write_brand_review_record
 from hxy_knowledge.brand_assets import brand_authority_cards, build_brand_asset_center
+from hxy_knowledge.brand_constitution import BrandConstitutionAdapter
 from hxy_knowledge.answer_engine import (
     answer_status_for,
     applicable_scenarios_for,
@@ -3685,6 +3686,7 @@ def create_app(
     )
     resolved_product_auth_settings = product_auth_settings or ProductAuthSettings.from_environment()
     model_router = model_router or ModelRouter()
+    brand_constitution = BrandConstitutionAdapter(resolved_root)
     require_api_token = _require_api_token(settings.api_token)
     allowed_upload_extensions = {extension.lower() for extension in settings.allowed_upload_extensions}
 
@@ -3775,6 +3777,7 @@ def create_app(
             hooks=answer_hooks,
             role=answer_role,
             pipeline_role=answer_role,
+            brand_constitution=brand_constitution,
         )
         retrieval_trace = context_repository.retrieval_trace()
         private_evidence = [
@@ -5035,8 +5038,10 @@ def create_app(
             "status": "submitted",
         }
 
-    @app.post("/api/knowledge/chat")
+    @app.post("/api/knowledge/chat", dependencies=[Depends(require_api_token)])
     async def knowledge_chat(request: ChatRequest) -> dict[str, Any]:
+        if not settings.api_token:
+            raise HTTPException(status_code=503, detail="Knowledge chat authentication is not configured")
         question = request.question.strip()
         scenario = request.scenario.strip() or "创始人内部决策"
         if not question:
@@ -5052,6 +5057,7 @@ def create_app(
             hooks=answer_hooks,
             role="founder",
             pipeline_role="team",
+            brand_constitution=brand_constitution,
         )
 
     @app.post("/api/knowledge/feedback", dependencies=[Depends(require_api_token)])
