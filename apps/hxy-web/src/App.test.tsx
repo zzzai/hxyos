@@ -847,8 +847,10 @@ describe("HXYOS product shell", () => {
     });
     render(<App initialSession={TEST_SESSION} journeyClient={journeys} />);
 
-    await waitFor(() => expect(journeys.loadSuggestions).toHaveBeenCalled());
-    expect(screen.queryByTestId("suggestions")).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(journeys.loadSuggestions).toHaveBeenCalled();
+      expect(screen.queryByTestId("suggestions")).not.toBeInTheDocument();
+    });
   });
 
   it("does not show a fallback action outside the assignment capabilities", async () => {
@@ -1535,6 +1537,81 @@ describe("HXYOS product shell", () => {
     render(<App initialSession={session} materialClient={materialGateway()} />);
 
     expect(screen.getByRole("button", { name: "添加资料" })).toBeDisabled();
+  });
+
+  it("opens the existing file picker from an assistant material action", async () => {
+    const user = userEvent.setup();
+    const defaultResponse = await conversationGateway().sendMessage(
+      "conversation-new",
+      { content: "我要上传资料", client_message_id: "message-client" },
+    );
+    const conversations = conversationGateway({
+      sendMessage: vi.fn().mockResolvedValue({
+        ...defaultResponse,
+        assistant_message: {
+          ...defaultResponse.assistant_message,
+          content: "可以，选择资料后我会继续理解。",
+          result_type: "material_ingestion",
+          actions: [{ type: "material_upload", label: "选择资料" }],
+        },
+      }),
+    });
+    const { container } = render(
+      <App initialSession={TEST_SESSION} conversationClient={conversations} />,
+    );
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(input).not.toBeNull();
+    const picker = vi.spyOn(input!, "click").mockImplementation(() => undefined);
+
+    await user.type(
+      screen.getByRole("textbox", { name: "告诉 HXYOS 你要做什么" }),
+      "我要上传资料",
+    );
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    await user.click(await screen.findByRole("button", { name: "选择资料" }));
+
+    expect(picker).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens existing tasks instead of creating one from a capability action", async () => {
+    const user = userEvent.setup();
+    const defaultResponse = await conversationGateway().sendMessage(
+      "conversation-new",
+      { content: "你会什么", client_message_id: "message-client" },
+    );
+    const conversations = conversationGateway({
+      sendMessage: vi.fn().mockResolvedValue({
+        ...defaultResponse,
+        assistant_message: {
+          ...defaultResponse.assistant_message,
+          content: "我可以帮你处理门店问题和跟进任务。",
+          result_type: "system_capability",
+          actions: [{ type: "tasks", label: "查看门店待办" }],
+        },
+      }),
+    });
+    const tasks = taskGateway({
+      listTasks: vi.fn().mockResolvedValue({ items: [], count: 0 }),
+    });
+    render(
+      <App
+        initialSession={MANAGER_SESSION}
+        conversationClient={conversations}
+        taskClient={tasks}
+      />,
+    );
+
+    await user.type(
+      screen.getByRole("textbox", { name: "告诉 HXYOS 你要做什么" }),
+      "你会什么",
+    );
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    await user.click(
+      await screen.findByRole("button", { name: "查看门店待办" }),
+    );
+
+    expect(screen.getByRole("heading", { name: "今天的待办" })).toBeVisible();
+    expect(tasks.createTask).not.toHaveBeenCalled();
   });
 
   it("restores the latest material receipt for the authenticated assignment", async () => {

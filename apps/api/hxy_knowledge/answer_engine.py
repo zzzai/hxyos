@@ -186,6 +186,160 @@ def classify_intent(question: str, items: list[dict[str, Any]] | None = None) ->
     return "knowledge_lookup", "general"
 
 
+_CAPABILITY_QUESTIONS = {
+    "你会什么",
+    "你能做什么",
+    "你可以做什么",
+    "能帮我做什么",
+    "可以帮我做什么",
+    "有哪些功能",
+    "有什么功能",
+    "你有什么功能",
+    "你能干什么",
+    "可以做些什么",
+    "怎么用",
+}
+
+
+def _compact_task_command(question: str) -> str:
+    return re.sub(r"[\s，。！？、；：,.!?;:]+", "", question or "").lower()
+
+
+def classify_task_intent(question: str) -> str | None:
+    """Classify explicit product commands without consulting business knowledge."""
+    compact = _compact_task_command(question)
+    if compact in _CAPABILITY_QUESTIONS or re.fullmatch(
+        r"(?:你)?(?:都)?(?:会|能|可以)(?:做|干)?(?:什么|些什么|哪些)",
+        compact,
+    ):
+        return "system_capability"
+    if compact in {
+        "我要练接待",
+        "练接待",
+        "开始练接待",
+        "陪我练接待",
+        "我要练话术",
+        "开始接待训练",
+    } or re.fullmatch(
+        r"(?:(?:我(?:想|要|需要)|帮我|请帮我|陪我|请陪我))?"
+        r"(?:练|练习|训练|演练)(?:一下|一次|一遍)?(?:接待|话术|接待话术)",
+        compact,
+    ):
+        return "training"
+    if compact in {
+        "我要上传资料",
+        "上传资料",
+        "我要传资料",
+        "传资料",
+        "添加资料",
+        "我要上传文件",
+    } or re.fullmatch(
+        r"(?:(?:我(?:想|要|需要)|帮我|请帮我|麻烦帮我))?"
+        r"(?:上传|传|添加)(?:一份|一个|一些|一下|下)?(?:资料|文件|文档|图片|截图)",
+        compact,
+    ):
+        return "material_ingestion"
+    if compact in {
+        "我要反馈门店问题",
+        "反馈门店问题",
+        "我要上报门店问题",
+        "上报门店问题",
+        "门店有个问题要反馈",
+    } or re.fullmatch(
+        r"(?:(?:我(?:想|要|需要)|帮我|请帮我))?"
+        r"(?:反馈|上报|记录)(?:一个|一下|一条)?(?:门店|现场)?问题",
+        compact,
+    ):
+        return "issue_reporting"
+    return None
+
+
+def model_task_intent_supported(question: str, task_intent: str) -> bool:
+    """Require an action signal before a model may activate a product workflow."""
+    compact = _compact_task_command(question)
+    if classify_task_intent(question) == task_intent:
+        return True
+    if task_intent == "system_capability":
+        return bool(re.search(r"(?:你|系统).*(?:会|能|功能|怎么用)", compact))
+    request_signal = any(
+        term in compact
+        for term in ("我想", "我要", "我需要", "帮我", "请帮", "陪我", "开始", "准备", "打算")
+    )
+    if not request_signal:
+        return False
+    if task_intent == "training":
+        return any(term in compact for term in ("练", "训练", "演练"))
+    if task_intent == "material_ingestion":
+        return any(term in compact for term in ("上传", "传资料", "传文件", "添加资料", "给你看"))
+    if task_intent == "issue_reporting":
+        return any(term in compact for term in ("反馈", "上报", "记录问题", "问题要说"))
+    return False
+
+
+def build_task_intent_answer(task_intent: str, *, role: str) -> dict[str, Any]:
+    role_key = role or "team"
+    if task_intent == "system_capability":
+        if role_key == "store_staff":
+            answer = "我可以帮你问工作问题、练接待、上传资料、反馈门店问题。直接说现在遇到的事。"
+            actions = [
+                {"type": "training", "label": "开始练接待"},
+                {"type": "material_upload", "label": "选择资料"},
+                {"type": "issue", "label": "反馈门店问题"},
+            ]
+        elif role_key == "store_manager":
+            answer = "我可以帮你处理门店问题、上传资料、形成待办和反馈现场问题。直接说现场发生了什么。"
+            actions = [
+                {"type": "material_upload", "label": "选择资料"},
+                {"type": "issue", "label": "反馈门店问题"},
+                {"type": "tasks", "label": "查看门店待办"},
+            ]
+        elif role_key in {"founder", "headquarters", "team"}:
+            answer = "我可以帮你判断经营问题、理解资料、形成任务并持续跟进。直接说现在要推进的事。"
+            actions = [
+                {"type": "material_upload", "label": "选择资料"},
+                {"type": "tasks", "label": "查看待办"},
+            ]
+        else:
+            answer = "我可以帮你处理当前权限内的系统问题。直接说现在要做什么。"
+            actions = []
+    elif task_intent == "training":
+        if role_key == "store_staff":
+            answer = "现在开始。我会扮演顾客追问，你按真实接待方式回答。"
+            actions = [{"type": "training", "label": "开始练接待"}]
+        else:
+            answer = "当前角色没有接待训练入口，可以直接询问具体接待场景。"
+            actions = []
+    elif task_intent == "material_ingestion":
+        if role_key != "system_admin":
+            answer = "可以。选择资料后，我会继续识别、理解并按来源边界使用。"
+            actions = [{"type": "material_upload", "label": "选择资料"}]
+        else:
+            answer = "当前角色没有资料上传权限，请切换到具备资料权限的组织身份。"
+            actions = []
+    elif task_intent == "issue_reporting":
+        if role_key in {"store_staff", "store_manager"}:
+            answer = "可以。把现场问题和已经发生的情况记下来，我会生成一条可跟进的问题记录。"
+            actions = [{"type": "issue", "label": "反馈门店问题"}]
+        else:
+            answer = "当前角色没有门店问题上报入口，请由对应门店的店长或员工提交。"
+            actions = []
+    else:
+        raise ValueError(f"unsupported task intent: {task_intent}")
+    return {
+        "version": "hxy-system-intent-answer.v1",
+        "task_intent": task_intent,
+        "result_type": task_intent,
+        "answer": answer,
+        "answer_status": "AI 草稿",
+        "confidence": "high",
+        "needs_review": False,
+        "evidence": [],
+        "sources": [],
+        "next_actions": [],
+        "actions": actions,
+    }
+
+
 def sort_items_for_intent(items: list[dict[str, Any]], intent: str) -> list[dict[str, Any]]:
     priority = INTENT_DOMAIN_PRIORITY.get(intent, [])
 

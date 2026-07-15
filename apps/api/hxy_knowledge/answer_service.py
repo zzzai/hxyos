@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from .answer_engine import build_result_card, classify_intent, synthesize_answer
+from .answer_engine import (
+    build_result_card,
+    build_task_intent_answer,
+    classify_intent,
+    classify_task_intent,
+    synthesize_answer,
+)
 from .reliability import insufficient_answer, is_process_memory_evidence, score_answer_quality
 from .thinking_lenses import apply_thinking_lenses
 from .understanding_engine import understand_text
@@ -55,8 +61,7 @@ def generate_answer(
     pipeline_role: str = "team",
 ) -> dict[str, Any]:
     """Generate and persist one governed answer without binding to an HTTP framework."""
-    understanding = understand_text(question, scenario=scenario, role=role)
-    understanding["thinking_lenses"] = apply_thinking_lenses(question, stage="zero_to_one")
+    rule_task_intent = classify_task_intent(question)
     rule_domain_hint, rule_hint_audience = classify_intent(question)
     frontdoor = hooks.classify_frontdoor(
         model_router=model_router,
@@ -64,7 +69,19 @@ def generate_answer(
         scenario=scenario,
         rule_intent=rule_domain_hint,
         rule_audience=rule_hint_audience,
+        rule_task_intent=rule_task_intent,
     )
+    resolved_task_intent = str(frontdoor.get("intent") or "")
+    if resolved_task_intent in {
+        "system_capability",
+        "training",
+        "material_ingestion",
+        "issue_reporting",
+    }:
+        return build_task_intent_answer(resolved_task_intent, role=role)
+
+    understanding = understand_text(question, scenario=scenario, role=role)
+    understanding["thinking_lenses"] = apply_thinking_lenses(question, stage="zero_to_one")
     understanding["frontdoor_classification"] = frontdoor
     domain_hint = str(frontdoor.get("intent") or rule_domain_hint)
     allowed_frontdoor_intents = {

@@ -208,6 +208,7 @@ function ProductShell({
     if (action.type === "tasks") return canReadTasks;
     if (action.type === "training") return canPracticeTraining;
     if (action.type === "issue") return canCreateIssues;
+    if (action.type === "material_upload") return canCreateMaterials;
     return assignment?.capabilities.includes("conversation:use") ?? false;
   };
   const suggestions = assignment
@@ -605,6 +606,15 @@ function ProductShell({
     }
   };
 
+  const handleAnswerTaskAction = (message: ConversationMessage) => {
+    const action = (message.actions || []).find((item) => item.type === "tasks");
+    if (message.result_type === "system_capability" && action) {
+      openJourneyAction({ type: "tasks", label: action.label });
+      return;
+    }
+    void createTaskFromAnswer(message);
+  };
+
   const openJourneyAction = (
     action: JourneySuggestion,
     contextQuestion?: string,
@@ -619,6 +629,10 @@ function ProductShell({
       return;
     }
     setActiveView("conversation");
+    if (action.type === "material_upload") {
+      materialInputRef.current?.click();
+      return;
+    }
     if (action.type === "ask") {
       setJourneyMode(null);
       setDraft(action.prompt || action.label);
@@ -1180,14 +1194,16 @@ function ProductShell({
                     key={message.id}
                   >
                     <p>{message.content}</p>
-                    {canManageTasks &&
+                    {(message.result_type === "system_capability"
+                      ? canReadTasks
+                      : canManageTasks) &&
                     (message.next_actions.length > 0 ||
                       (message.actions || []).some((action) => action.type === "tasks")) ? (
                       <button
                         className="answer-task-button"
                         type="button"
                         disabled={taskActionPending}
-                        onClick={() => void createTaskFromAnswer(message)}
+                        onClick={() => handleAnswerTaskAction(message)}
                       >
                         {(message.actions || []).find((action) => action.type === "tasks")
                           ?.label || "转为待办"}
@@ -1196,7 +1212,11 @@ function ProductShell({
                     {(message.actions || [])
                       .filter(
                         (action) => {
-                          if (action.type !== "training" && action.type !== "issue") {
+                          if (
+                            action.type !== "training" &&
+                            action.type !== "issue" &&
+                            action.type !== "material_upload"
+                          ) {
                             return false;
                           }
                           return isJourneyActionAllowed({
@@ -1212,7 +1232,7 @@ function ProductShell({
                           key={`${message.id}-${action.type}`}
                           onClick={() =>
                             openJourneyAction({
-                              type: action.type as "training" | "issue",
+                              type: action.type as "training" | "issue" | "material_upload",
                               label: action.label,
                             },
                             action.type === "training"

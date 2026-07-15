@@ -28,6 +28,7 @@ from hxy_knowledge.answer_engine import (
     build_result_card,
     compact_content,
     has_metadata_noise,
+    model_task_intent_supported,
     PRIMARY_CLAIM_DOMAINS,
     usage_for,
 )
@@ -634,6 +635,18 @@ _FRONTDOOR_INTENTS = {
     "store_model",
     "knowledge_lookup",
 }
+_FRONTDOOR_TASK_INTENTS = {
+    "system_capability",
+    "training",
+    "material_ingestion",
+    "issue_reporting",
+}
+_FRONTDOOR_TASK_WORKFLOWS = {
+    "system_capability": "ask",
+    "training": "train",
+    "material_ingestion": "ingest",
+    "issue_reporting": "correct",
+}
 _FRONTDOOR_WORKFLOWS = {"ask", "train", "ingest", "correct", "decide", "review"}
 _WORKBENCH_INPUT_TYPES = {
     "question",
@@ -651,7 +664,8 @@ def _frontdoor_messages(question: str, scenario: str, rule_intent: str) -> list[
         "你是荷小悦经营大脑的前门意图判断器。你的任务不是回答问题，而是判断这次输入应该走哪条业务路径。"
         "必须基于语义和场景判断，不要只按关键词匹配。只返回 JSON，不要 Markdown。"
         "JSON 字段：intent, audience, primary_workflow, confidence, reason。"
-        "intent 只能是 brand_positioning/product_system/operations/finance/franchise/store_model/knowledge_lookup。"
+        "intent 只能是 brand_positioning/product_system/operations/finance/franchise/store_model/knowledge_lookup/"
+        "system_capability/training/material_ingestion/issue_reporting。"
         "primary_workflow 只能是 ask/train/ingest/correct/decide/review。"
         "如果问题模糊但场景明确，要结合场景判断；如果仍不确定，intent 用 knowledge_lookup。"
     )
@@ -666,7 +680,11 @@ def _frontdoor_messages(question: str, scenario: str, rule_intent: str) -> list[
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
-def _frontdoor_classification_from_generation(generation: dict[str, Any]) -> dict[str, Any] | None:
+def _frontdoor_classification_from_generation(
+    generation: dict[str, Any],
+    *,
+    question: str,
+) -> dict[str, Any] | None:
     if not generation.get("used_model"):
         return None
     payload = _extract_json_object(str(generation.get("output") or ""))
@@ -674,7 +692,7 @@ def _frontdoor_classification_from_generation(generation: dict[str, Any]) -> dic
         return None
     intent = str(payload.get("intent") or "").strip()
     workflow = str(payload.get("primary_workflow") or "").strip()
-    if intent not in _FRONTDOOR_INTENTS:
+    if intent not in (_FRONTDOOR_INTENTS | _FRONTDOOR_TASK_INTENTS):
         return None
     if workflow not in _FRONTDOOR_WORKFLOWS:
         workflow = "ask"
@@ -685,7 +703,10 @@ def _frontdoor_classification_from_generation(generation: dict[str, Any]) -> dic
         confidence = 0.0
     if confidence > 1:
         confidence = confidence / 100
-    if confidence < 0.65:
+    if intent in _FRONTDOOR_TASK_INTENTS:
+        if confidence < 0.85 or not model_task_intent_supported(question, intent):
+            return None
+    elif confidence < 0.65:
         return None
     return {
         "version": "hxy-frontdoor-classification.v1",
@@ -706,8 +727,21 @@ def _classify_frontdoor(
     scenario: str,
     rule_intent: str,
     rule_audience: str,
+    rule_task_intent: str | None = None,
 ) -> dict[str, Any]:
     route = model_router.route("frontdoor_classification")
+    if rule_task_intent in _FRONTDOOR_TASK_INTENTS:
+        return {
+            "version": "hxy-frontdoor-classification.v1",
+            "mode": "deterministic",
+            "intent": rule_task_intent,
+            "audience": rule_audience,
+            "primary_workflow": _FRONTDOOR_TASK_WORKFLOWS[rule_task_intent],
+            "confidence": 0.98,
+            "reason": "明确的产品任务指令。",
+            "model_reason": "not_used",
+            "route": route,
+        }
     fallback = {
         "version": "hxy-frontdoor-classification.v1",
         "mode": "rule_fallback",
@@ -735,7 +769,10 @@ def _classify_frontdoor(
         fallback["model_reason"] = f"model_error:{type(exc).__name__}"
         fallback["route"] = route
         return fallback
-    classification = _frontdoor_classification_from_generation(generation)
+    classification = _frontdoor_classification_from_generation(
+        generation,
+        question=question,
+    )
     if not classification:
         fallback["model_reason"] = generation.get("reason") or "invalid_model_output"
         fallback["route"] = route
@@ -3718,7 +3755,7 @@ def create_app(
             "hq_operations": "headquarters",
             "store_manager": "store_manager",
             "store_employee": "store_staff",
-            "system_admin": "headquarters",
+            "system_admin": "system_admin",
         }
         answer_role = answer_role_by_role.get(assignment.role, "team")
         context_repository = AssignmentKnowledgeRepository(

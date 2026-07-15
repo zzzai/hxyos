@@ -105,7 +105,30 @@ def product_answer_payload(answer: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _role_result_envelope(role: str) -> dict[str, Any]:
+_ACTION_CAPABILITIES = {
+    "material_upload": "materials:create",
+    "tasks": "tasks:read",
+    "issue": "issues:create",
+    "training": "training:practice",
+}
+
+
+def _role_result_envelope(role: str, answer: dict[str, Any] | None = None) -> dict[str, Any]:
+    answer = answer or {}
+    task_intent = str(answer.get("task_intent") or "")
+    if task_intent:
+        role_capabilities = set(ROLE_CAPABILITIES.get(role, ()))
+        actions = [
+            {
+                "type": str(item.get("type") or "")[:40],
+                "label": redact_internal_paths(str(item.get("label") or ""))[:120],
+            }
+            for item in (answer.get("actions") or [])
+            if isinstance(item, dict)
+            and _ACTION_CAPABILITIES.get(str(item.get("type") or "")) in role_capabilities
+            and str(item.get("label") or "").strip()
+        ][:3]
+        return {"result_type": task_intent, "actions": actions}
     if role == "store_employee":
         return {
             "result_type": "frontdesk_answer",
@@ -293,7 +316,7 @@ def create_conversation_router(
             try:
                 answer = answer_generator(question=request.content, assignment=assignment)
                 safe_payload = product_answer_payload(answer)
-                safe_payload.update(_role_result_envelope(assignment.role))
+                safe_payload.update(_role_result_envelope(assignment.role, answer))
                 assistant_message = repository.complete_assistant_message(
                     assignment.assignment_id,
                     conversation_key,

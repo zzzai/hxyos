@@ -1,6 +1,11 @@
 import type { HxyTask } from "./tasks";
 
-export type JourneyActionType = "ask" | "tasks" | "training" | "issue";
+export type JourneyActionType =
+  | "ask"
+  | "tasks"
+  | "training"
+  | "issue"
+  | "material_upload";
 
 export interface JourneySuggestion {
   type: JourneyActionType;
