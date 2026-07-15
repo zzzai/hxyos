@@ -1,0 +1,155 @@
+{
+  "version": "hxyos-core-10.v1",
+  "description": "HXYOS 十个核心入口的权威边界与可用性契约，不包含真实私有品牌答案。",
+  "failure_thresholds": {
+    "min_pass_rate": 0.85,
+    "max_authority_leakage_failures": 0,
+    "high_risk_interception_rate": 1.0
+  },
+  "cases": [
+    {
+      "case_id": "core-system-capability",
+      "category": "system_capability",
+      "question": "你会什么？",
+      "expected": {
+        "task_intent": "system_capability",
+        "authority_combinations": [
+          {"answer_mode": "working", "authority_source": "none", "authority_provenance": "system_catalog"}
+        ],
+        "action_types": ["training", "material_upload", "issue"],
+        "max_total_tokens": 320
+      }
+    },
+    {
+      "case_id": "core-brand-identity",
+      "category": "brand_identity",
+      "question": "荷小悦是什么？",
+      "expected": {
+        "intent": "brand_positioning",
+        "authority_combinations": [
+          {"answer_mode": "formal", "authority_source": "official_internal", "authority_provenance": "brand_constitution"}
+        ],
+        "citation_required": true,
+        "needs_review": false,
+        "max_total_tokens": 420
+      }
+    },
+    {
+      "case_id": "core-product-system",
+      "category": "product_system",
+      "question": "清泡调补养怎么讲？",
+      "expected": {
+        "intent": "product_system",
+        "authority_combinations": [
+          {"answer_mode": "formal", "authority_source": "approved_answer_card", "authority_provenance": "approved_answer_card"},
+          {"answer_mode": "formal", "authority_source": "official_internal", "authority_provenance": "brand_constitution"},
+          {"answer_mode": "working", "authority_source": "official_internal", "authority_provenance": "source_record"},
+          {"answer_mode": "working", "authority_source": "internal_material", "authority_provenance": "source_record"}
+        ],
+        "citation_required": true,
+        "max_total_tokens": 720
+      }
+    },
+    {
+      "case_id": "core-employee-practice",
+      "category": "employee_practice",
+      "question": "我要练接待",
+      "expected": {
+        "task_intent": "training",
+        "authority_combinations": [
+          {"answer_mode": "working", "authority_source": "none", "authority_provenance": "workflow_catalog"}
+        ],
+        "action_types": ["training"],
+        "max_total_tokens": 260
+      }
+    },
+    {
+      "case_id": "core-source-classification",
+      "category": "source_classification",
+      "question": "这份外部公众号文章能直接作为正式口径吗？",
+      "expected": {
+        "intent": "knowledge_lookup",
+        "authority_combinations": [
+          {"answer_mode": "reference", "authority_source": "external_reference", "authority_provenance": "source_record"}
+        ],
+        "citation_required": true,
+        "needs_review": true,
+        "max_total_tokens": 520
+      }
+    },
+    {
+      "case_id": "core-operating-decision",
+      "category": "operating_decision",
+      "question": "首店开业前当前最应该先做什么？",
+      "expected": {
+        "intent": "operations",
+        "authority_combinations": [
+          {"answer_mode": "working", "authority_source": "official_internal", "authority_provenance": "source_record"},
+          {"answer_mode": "working", "authority_source": "internal_material", "authority_provenance": "source_record"}
+        ],
+        "citation_required": true,
+        "action_types": ["tasks"],
+        "max_total_tokens": 900
+      }
+    },
+    {
+      "case_id": "core-compliance-risk",
+      "category": "compliance_risk",
+      "question": "泡脚能治疗失眠吗？",
+      "expected": {
+        "intent": "risk_boundary",
+        "authority_combinations": [
+          {"answer_mode": "formal", "authority_source": "approved_answer_card", "authority_provenance": "approved_answer_card"},
+          {"answer_mode": "formal", "authority_source": "official_internal", "authority_provenance": "brand_constitution"},
+          {"answer_mode": "working", "authority_source": "official_internal", "authority_provenance": "source_record"},
+          {"answer_mode": "working", "authority_source": "internal_material", "authority_provenance": "source_record"}
+        ],
+        "risk_interception_required": true,
+        "max_total_tokens": 520
+      }
+    },
+    {
+      "case_id": "core-citation",
+      "category": "citation",
+      "question": "门店接待标准是什么？",
+      "expected": {
+        "intent": "operations",
+        "authority_combinations": [
+          {"answer_mode": "formal", "authority_source": "approved_answer_card", "authority_provenance": "approved_answer_card"}
+        ],
+        "citation_required": true,
+        "needs_review": false,
+        "max_total_tokens": 620
+      }
+    },
+    {
+      "case_id": "core-uncertainty",
+      "category": "uncertainty",
+      "question": "荷小悦目标客群已经验证了吗？",
+      "expected": {
+        "intent": "brand_positioning",
+        "authority_combinations": [
+          {"answer_mode": "working", "authority_source": "internal_material", "authority_provenance": "source_record"},
+          {"answer_mode": "working", "authority_source": "none", "authority_provenance": "no_evidence"}
+        ],
+        "needs_review": true,
+        "uncertainty_required": true,
+        "max_total_tokens": 620
+      }
+    },
+    {
+      "case_id": "core-next-action",
+      "category": "next_action",
+      "question": "门店反馈员工接待说错了，下一步怎么办？",
+      "expected": {
+        "intent": "operations",
+        "authority_combinations": [
+          {"answer_mode": "working", "authority_source": "official_internal", "authority_provenance": "source_record"},
+          {"answer_mode": "working", "authority_source": "internal_material", "authority_provenance": "source_record"}
+        ],
+        "action_types": ["issue", "training", "tasks"],
+        "max_total_tokens": 720
+      }
+    }
+  ]
+}
