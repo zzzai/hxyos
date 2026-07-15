@@ -159,7 +159,6 @@ def _is_process_memory_evidence(item: dict[str, Any]) -> bool:
         domain == "process_memory"
         or source_type == "process_memory"
         or status in PROCESS_MEMORY_STATUSES
-        or item.get("official_use_allowed") is False
     )
 
 

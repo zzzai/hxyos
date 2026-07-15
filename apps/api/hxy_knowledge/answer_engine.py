@@ -1014,9 +1014,12 @@ def build_direct_answer(question: str, intent: str, evidence: list[dict[str, Any
 
 
 def synthesize_answer(question: str, query: str, items: list[dict[str, Any]], scenario: str = "创始人内部决策") -> dict[str, Any]:
-    intent, audience = classify_intent(question, items)
-    retrieved_evidence = build_evidence(items, intent=intent)
-    evidence = [item for item in retrieved_evidence if not _is_process_memory_evidence(item)]
+    evidence_items = [item for item in items if not _is_process_memory_evidence(item)]
+    process_memory_items = [item for item in items if _is_process_memory_evidence(item)]
+    intent, audience = classify_intent(question, evidence_items)
+    evidence = build_evidence(evidence_items, intent=intent)
+    process_memory = build_evidence(process_memory_items, intent=intent)
+    retrieved_evidence = [*evidence, *process_memory]
     conflicts = detect_conflicts(question, evidence)
     confidence = confidence_for(evidence, conflicts)
     corrections = build_corrections(question, evidence, intent)

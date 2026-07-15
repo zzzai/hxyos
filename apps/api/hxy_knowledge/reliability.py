@@ -26,7 +26,17 @@ AUTHORITY_SOURCES = {
     "internal_material",
     "external_reference",
 }
-REFERENCE_STATUSES = {"external", "reference", "ai_structured", "draft", "needs_review", "disputed", "superseded"}
+REFERENCE_STATUSES = {
+    "external",
+    "raw",
+    "reference",
+    "ai_structured",
+    "current_candidate",
+    "draft",
+    "needs_review",
+    "disputed",
+    "superseded",
+}
 REFERENCE_STAGES = {"reference", "preparation", "draft", "pilot", "ai_structured", "working_context"}
 
 
@@ -51,7 +61,7 @@ def evidence_authority_source(item: dict[str, Any]) -> str:
     origin = str(item.get("origin") or "").lower()
     if (
         domain in {"external", "reference"}
-        or source_type in {"external", "reference", "reference_material", "external_reference"}
+        or source_type in {"external", "external_article", "reference", "reference_material", "external_reference"}
         or origin in {"external", "reference"}
         or status in REFERENCE_STATUSES
         or stage in REFERENCE_STAGES

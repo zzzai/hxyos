@@ -4,9 +4,10 @@ from typing import Any
 
 import pytest
 
-from apps.api.hxy_knowledge.answer_engine import build_evidence
+from apps.api.hxy_knowledge.answer_engine import build_evidence, synthesize_answer
 from apps.api.hxy_knowledge.answer_pipeline import build_answer_pipeline
 from apps.api.hxy_knowledge.answer_service import AnswerServiceHooks, generate_answer
+from apps.api.hxy_knowledge_api import _model_answer_messages
 
 
 class _AnswerCardRepository:
@@ -219,11 +220,22 @@ def test_corroborated_internal_evidence_returns_working_contract_with_citations(
     "external_marker",
     [
         {"source_type": "external_reference"},
+        {"source_type": "external_article"},
         {"origin": "external"},
+        {"status": "raw"},
+        {"status": "current_candidate"},
         {"status": "reference"},
         {"status": "external"},
     ],
-    ids=["source-type", "origin", "reference-status", "external-status"],
+    ids=[
+        "source-type",
+        "external-article",
+        "origin",
+        "raw-status",
+        "candidate-status",
+        "reference-status",
+        "external-status",
+    ],
 )
 def test_external_evidence_is_reference_only_and_suppresses_forged_authority(
     external_marker: dict[str, str],
@@ -406,6 +418,82 @@ def test_generate_answer_keeps_process_memory_out_of_synthesis_and_conflict_gate
     assert result["conflicts"] == []
     assert len(result["citations"]) == 3
     assert result["context_metadata"]["process_memory"][0]["title"] == "历史讨论记录"
+
+
+def test_process_memory_cannot_select_intent_or_enter_model_evidence_prompt() -> None:
+    result = synthesize_answer(
+        "这件事怎么处理？",
+        "这件事怎么处理？",
+        [
+            {
+                "chunk_id": f"memory-{index}",
+                "title": f"过程记忆 {index}",
+                "domain": "process_memory",
+                "source_type": "process_memory",
+                "status": "process",
+                "content": "历史讨论偏向产品方向，不是正式依据。",
+                "score": 100 - index,
+            }
+            for index in range(3)
+        ]
+        + [
+            {
+                "chunk_id": "operations-001",
+                "source_id": "source-operations-001",
+                "title": "门店运营记录",
+                "domain": "operations",
+                "authority_source": "internal_material",
+                "source_type": "internal_document",
+                "status": "active",
+                "content": "先记录问题，再由店长安排责任人处理。",
+                "score": 30,
+            }
+        ],
+        scenario="门店经营",
+    )
+
+    assert result["intent"] == "operations"
+    messages = _model_answer_messages("这件事怎么处理？", result)
+    prompt = messages[1]["content"]
+    assert "先记录问题" in prompt
+    assert "历史讨论偏向产品方向" not in prompt
+
+
+def test_risk_policy_is_propagated_to_top_level_and_persisted_state() -> None:
+    repository = _EvidenceRepository(
+        [
+            {
+                "chunk_id": f"price-{index}",
+                "source_id": f"price-source-{index}",
+                "title": f"价格内部材料 {index}",
+                "domain": "operations",
+                "authority_source": "official_internal" if index == 1 else "internal_material",
+                "source_type": "internal_document",
+                "origin": "internal",
+                "status": "active",
+                "content": "价格执行需要遵循当前门店记录。",
+                "score": 40 - index,
+            }
+            for index in range(1, 3)
+        ]
+    )
+
+    result = generate_answer(
+        question="门店价格政策怎么执行？",
+        scenario="门店经营",
+        domain=None,
+        stage=None,
+        limit=5,
+        repository=repository,
+        model_router=_RagRouter(),
+        hooks=_evidence_hooks(),
+    )
+
+    assert result["answer_pipeline"]["policy_decision"]["action"] == "needs_review"
+    assert result["needs_review"] is True
+    assert result["answer_status"] == "待复核"
+    assert repository.saved_answer is not None
+    assert repository.saved_answer["needs_review"] is True
 
 
 def test_process_memory_is_context_metadata_not_authority_or_citation() -> None:

@@ -33,6 +33,11 @@ def _apply_authority_contract(answer: dict[str, Any]) -> dict[str, Any]:
         items = answer.get(field)
         if isinstance(items, list):
             answer[field] = [item for item in items if not is_process_memory_evidence(item)]
+    policy_decision = pipeline.get("policy_decision")
+    if isinstance(policy_decision, dict) and policy_decision.get("action") != "answer":
+        answer["needs_review"] = True
+        if answer.get("answer_status") != "资料不足":
+            answer["answer_status"] = "待复核"
     return answer
 
 
@@ -83,7 +88,8 @@ def generate_answer(
         domain_hint=domain_hint,
     )
     used_query = question
-    if hooks.items_need_better_retrieval(items, domain_hint):
+    usable_items = [item for item in items if not is_process_memory_evidence(item)]
+    if hooks.items_need_better_retrieval(usable_items, domain_hint):
         for fallback_query in hooks.fallback_queries(question):
             fallback_items = hooks.repository_search(
                 repository,
@@ -93,16 +99,19 @@ def generate_answer(
                 limit=limit,
                 domain_hint=domain_hint,
             )
-            if fallback_items and not hooks.items_need_better_retrieval(fallback_items, domain_hint):
+            usable_fallback_items = [item for item in fallback_items if not is_process_memory_evidence(item)]
+            if usable_fallback_items and not hooks.items_need_better_retrieval(usable_fallback_items, domain_hint):
                 items = fallback_items
+                usable_items = usable_fallback_items
                 used_query = fallback_query
                 break
-            if not items and fallback_items:
+            if not usable_items and usable_fallback_items:
                 items = fallback_items
+                usable_items = usable_fallback_items
                 used_query = fallback_query
                 break
 
-    intent, _audience = classify_intent(question, items)
+    intent, _audience = classify_intent(question, usable_items)
     if frontdoor.get("mode") == "ai" and domain_hint != "knowledge_lookup":
         intent = domain_hint
     card = repository.find_answer_card(question, intent)

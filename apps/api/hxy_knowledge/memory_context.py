@@ -47,7 +47,6 @@ def _is_process_memory(item: dict[str, Any]) -> bool:
         str(item.get("layer") or "").lower() == "process_memory"
         or _status(item) in PROCESS_MEMORY_STATUSES
         or _source_type(item) in PROCESS_MEMORY_SOURCE_TYPES
-        or item.get("official_use_allowed") is False
     )
 
 

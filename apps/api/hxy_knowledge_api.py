@@ -61,7 +61,7 @@ from hxy_knowledge.okf import load_okf_documents, summarize_okf_lifecycle
 from hxy_knowledge.operating_brain import operating_brain_capabilities
 from hxy_knowledge.operating_issues import build_operating_issues, issue_from_intake
 from hxy_knowledge.process_memory import build_memory_promotion_draft, build_process_memory_record
-from hxy_knowledge.reliability import score_answer_quality
+from hxy_knowledge.reliability import is_process_memory_evidence, score_answer_quality
 from hxy_knowledge.repository import KnowledgeRepository
 from hxy_knowledge.source_brief import build_source_brief
 from hxy_knowledge.startup_advancer import build_startup_advance
@@ -1270,7 +1270,8 @@ def _apply_frontdoor_to_answer(answer: dict[str, Any], frontdoor: dict[str, Any]
 
 def _model_answer_messages(question: str, answer: dict[str, Any]) -> list[dict[str, str]]:
     evidence_lines = []
-    for index, item in enumerate(answer.get("evidence") or [], start=1):
+    evidence = [item for item in answer.get("evidence") or [] if not is_process_memory_evidence(item)]
+    for index, item in enumerate(evidence, start=1):
         title = item.get("title") or "未命名资料"
         domain = item.get("domain") or "unknown"
         excerpt = item.get("excerpt") or ""
@@ -1296,7 +1297,8 @@ def _model_answer_messages(question: str, answer: dict[str, Any]) -> list[dict[s
 
 def _policy_review_messages(question: str, answer: dict[str, Any], candidate_answer: str) -> list[dict[str, str]]:
     evidence_lines = []
-    for index, item in enumerate(answer.get("evidence") or [], start=1):
+    evidence = [item for item in answer.get("evidence") or [] if not is_process_memory_evidence(item)]
+    for index, item in enumerate(evidence, start=1):
         title = item.get("title") or "未命名资料"
         domain = item.get("domain") or "unknown"
         excerpt = item.get("excerpt") or ""

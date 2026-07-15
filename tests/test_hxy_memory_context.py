@@ -17,6 +17,34 @@ def load_module(name: str, relative_path: str):
 
 
 class HxyMemoryContextTest(unittest.TestCase):
+    def test_private_non_official_material_is_evidence_not_process_memory(self):
+        memory_context = load_module(
+            "hxy_memory_context_private_reference",
+            "apps/api/hxy_knowledge/memory_context.py",
+        )
+
+        result = memory_context.build_memory_context(
+            working_memory={"goal": "分析内部参考", "role": "founder", "scenario": "经营问答"},
+            short_term_messages=[],
+            retrieved_memories=[
+                {
+                    "memory_id": "private-reference-1",
+                    "content": "内部工作资料，尚未核定。",
+                    "status": "reference",
+                    "source_type": "reference_material",
+                    "official_use_allowed": False,
+                    "semantic_relevance": 0.9,
+                    "importance": 0.7,
+                }
+            ],
+        )
+
+        self.assertEqual(result["process_memory_hints"], [])
+        self.assertEqual(
+            [item["memory_id"] for item in result["retrieval_evidence"]],
+            ["private-reference-1"],
+        )
+
     def test_build_memory_context_prioritizes_formal_knowledge_over_process_memory(self):
         memory_context = load_module("hxy_memory_context", "apps/api/hxy_knowledge/memory_context.py")
 

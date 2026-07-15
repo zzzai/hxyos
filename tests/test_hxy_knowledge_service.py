@@ -1605,6 +1605,23 @@ class HxyKnowledgeServiceTest(unittest.TestCase):
         self.assertIn("stage = %s", sql)
         self.assertEqual(params[-3:], ["product", "preparation", 5])
 
+    def test_repository_search_sql_returns_source_authority_metadata(self):
+        repo = load_module(
+            "hxy_knowledge_repository_authority_metadata",
+            "apps/api/hxy_knowledge/repository.py",
+        )
+
+        sql, _params = repo.build_search_query("门店接待", limit=5)
+
+        self.assertIn("JOIN hxy_knowledge_assets", sql)
+        self.assertIn("AS source_id", sql)
+        self.assertIn("AS authority_source", sql)
+        self.assertIn("AS source_authority", sql)
+        self.assertIn("AS origin", sql)
+        self.assertIn("AS source_type", sql)
+        self.assertIn("AS status", sql)
+
+
     def test_repository_builds_token_fallback_search_sql(self):
         repo = load_module("hxy_knowledge_repository_token", "apps/api/hxy_knowledge/repository.py")
 
@@ -1629,7 +1646,7 @@ class HxyKnowledgeServiceTest(unittest.TestCase):
 
         sql, params = repo.build_search_query("荷小悦门店模型的关键参数是什么？", domain_hint="store_model", limit=5)
 
-        self.assertIn("CASE WHEN domain = %s THEN 40 ELSE 0 END", sql)
+        self.assertIn("CASE WHEN c.domain = %s THEN 40 ELSE 0 END", sql)
         self.assertIn("store_model", params)
 
     def test_repository_normalizes_review_task_question(self):
@@ -2344,6 +2361,22 @@ replaced_by: franchise-model-v2
         self.assertEqual(layers["counts"]["L4_action_asset"], 1)
         self.assertEqual(layers["policy"]["direct_answer_allowed"], ["L3_approved_knowledge", "L4_action_asset"])
         self.assertIn("L1_structured_extract", layers["policy"]["requires_review"])
+
+    def test_enterprise_governance_does_not_treat_all_private_material_as_process_memory(self):
+        governance = load_module(
+            "hxy_enterprise_governance_private_reference",
+            "apps/api/hxy_knowledge/enterprise_governance.py",
+        )
+
+        self.assertFalse(
+            governance._is_process_memory_evidence(
+                {
+                    "status": "reference",
+                    "source_type": "reference_material",
+                    "official_use_allowed": False,
+                }
+            )
+        )
 
     def test_build_file_manifest_hashes_raw_materials_with_stable_ids(self):
         governance = load_module("hxy_enterprise_governance_manifest", "apps/api/hxy_knowledge/enterprise_governance.py")

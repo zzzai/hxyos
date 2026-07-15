@@ -103,38 +103,51 @@ def build_search_query(
     tokens = _search_tokens(query)
     full_pattern = f"%{query}%"
     token_patterns = [f"%{token}%" for token in tokens]
-    score_parts = ["CASE WHEN content ILIKE %s THEN 100 ELSE 0 END"]
+    score_parts = ["CASE WHEN c.content ILIKE %s THEN 100 ELSE 0 END"]
     score_params: list[Any] = [full_pattern]
     if domain_hint:
-        score_parts.append("CASE WHEN domain = %s THEN 40 ELSE 0 END")
+        score_parts.append("CASE WHEN c.domain = %s THEN 40 ELSE 0 END")
         score_params.append(domain_hint)
     for _token in tokens:
-        score_parts.append("CASE WHEN content ILIKE %s THEN 10 ELSE 0 END")
+        score_parts.append("CASE WHEN c.content ILIKE %s THEN 10 ELSE 0 END")
     score_params.extend(token_patterns)
 
     if tokens:
-        token_clauses = " OR ".join("content ILIKE %s" for _token in tokens)
-        search_clause = f"(content ILIKE %s OR ({token_clauses}))"
+        token_clauses = " OR ".join("c.content ILIKE %s" for _token in tokens)
+        search_clause = f"(c.content ILIKE %s OR ({token_clauses}))"
         search_params: list[Any] = [full_pattern, *token_patterns]
     else:
-        search_clause = "content ILIKE %s"
+        search_clause = "c.content ILIKE %s"
         search_params = [full_pattern]
 
     clauses = [search_clause]
     filter_params: list[Any] = []
     if domain:
-        clauses.append("domain = %s")
+        clauses.append("c.domain = %s")
         filter_params.append(domain)
     if stage:
-        clauses.append("stage = %s")
+        clauses.append("c.stage = %s")
         filter_params.append(stage)
     params = [*score_params, *search_params, *filter_params, limit]
     sql = f"""
-        SELECT chunk_id, asset_id, title, source_path, normalized_path, domain, stage, content,
+        SELECT c.chunk_id, c.asset_id, c.title, c.source_path, c.normalized_path,
+               c.domain, c.stage, c.content,
+               COALESCE(NULLIF(c.metadata_json->>'source_id', ''), NULLIF(a.metadata_json->>'source_id', ''), a.asset_id) AS source_id,
+               COALESCE(NULLIF(c.metadata_json->>'authority_source', ''), NULLIF(a.metadata_json->>'authority_source', ''),
+                        NULLIF(c.metadata_json->>'source_authority', ''), NULLIF(a.metadata_json->>'source_authority', '')) AS authority_source,
+               COALESCE(NULLIF(c.metadata_json->>'source_authority', ''), NULLIF(a.metadata_json->>'source_authority', ''),
+                        NULLIF(c.metadata_json->>'authority_source', ''), NULLIF(a.metadata_json->>'authority_source', '')) AS source_authority,
+               COALESCE(NULLIF(c.metadata_json->>'origin', ''), NULLIF(c.metadata_json->>'source_origin', ''),
+                        NULLIF(a.metadata_json->>'origin', ''), NULLIF(a.metadata_json->>'source_origin', '')) AS origin,
+               COALESCE(NULLIF(c.metadata_json->>'source_type', ''), NULLIF(a.metadata_json->>'source_type', '')) AS source_type,
+               COALESCE(NULLIF(c.metadata_json->>'status', ''), NULLIF(a.metadata_json->>'status', ''), a.status) AS status,
+               COALESCE((c.metadata_json->>'official_use_allowed')::boolean,
+                        (a.metadata_json->>'official_use_allowed')::boolean, FALSE) AS official_use_allowed,
                {' + '.join(score_parts)} AS score
-        FROM hxy_knowledge_chunks
+        FROM hxy_knowledge_chunks c
+        JOIN hxy_knowledge_assets a ON a.asset_id = c.asset_id
         WHERE {' AND '.join(clauses)}
-        ORDER BY score DESC, updated_at DESC
+        ORDER BY score DESC, c.updated_at DESC
         LIMIT %s
     """
     return sql, params
