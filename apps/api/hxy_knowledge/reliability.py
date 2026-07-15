@@ -26,7 +26,7 @@ AUTHORITY_SOURCES = {
     "internal_material",
     "external_reference",
 }
-REFERENCE_STATUSES = {"reference", "ai_structured", "draft", "needs_review", "disputed", "superseded"}
+REFERENCE_STATUSES = {"external", "reference", "ai_structured", "draft", "needs_review", "disputed", "superseded"}
 REFERENCE_STAGES = {"reference", "preparation", "draft", "pilot", "ai_structured", "working_context"}
 
 
@@ -38,7 +38,6 @@ def is_process_memory_evidence(item: dict[str, Any]) -> bool:
         domain == "process_memory"
         or status == "process"
         or source_type == "process_memory"
-        or item.get("official_use_allowed") is False
     )
 
 
@@ -48,17 +47,21 @@ def evidence_authority_source(item: dict[str, Any]) -> str:
     domain = str(item.get("domain") or "").lower()
     status = str(item.get("status") or "").lower()
     stage = str(item.get("stage") or "").lower()
+    source_type = str(item.get("source_type") or "").lower()
+    origin = str(item.get("origin") or "").lower()
+    if (
+        domain in {"external", "reference"}
+        or source_type in {"external", "reference", "reference_material", "external_reference"}
+        or origin in {"external", "reference"}
+        or status in REFERENCE_STATUSES
+        or stage in REFERENCE_STAGES
+    ):
+        return "external_reference"
     if domain == "approved_answer_card" or status == "approved" and stage == "approved_answer_card":
         return "approved_answer_card"
     explicit = str(item.get("authority_source") or item.get("source_authority") or "").lower()
     if explicit in AUTHORITY_SOURCES:
         return explicit
-    source_type = str(item.get("source_type") or "").lower()
-    if status in REFERENCE_STATUSES or stage in REFERENCE_STAGES or source_type in {
-        "reference_material",
-        "external_reference",
-    }:
-        return "external_reference"
     return "external_reference"
 
 
@@ -98,7 +101,7 @@ def classify_answer_authority(
     ]
     evidence_authorities = {evidence_authority_source(item) for item in citations}
 
-    if from_answer_card or "approved_answer_card" in evidence_authorities:
+    if from_answer_card:
         answer_mode = "formal"
         authority_source = "approved_answer_card"
         usage_boundary = "review_required" if requires_review else "team_standard"
@@ -110,7 +113,7 @@ def classify_answer_authority(
         answer_mode = "working"
         authority_source = "internal_material"
         usage_boundary = "review_required" if requires_review else "internal_working"
-    elif "external_reference" in evidence_authorities:
+    elif "external_reference" in evidence_authorities or "approved_answer_card" in evidence_authorities:
         answer_mode = "reference"
         authority_source = "external_reference"
         usage_boundary = "reference_only"

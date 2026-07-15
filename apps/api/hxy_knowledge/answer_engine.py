@@ -210,14 +210,19 @@ def build_evidence(items: list[dict[str, Any]], intent: str = "knowledge_lookup"
         evidence.append(
             {
                 "chunk_id": item.get("chunk_id"),
+                "source_id": item.get("source_id"),
                 "asset_id": item.get("asset_id"),
                 "title": item.get("title"),
                 "source_path": item.get("source_path"),
                 "normalized_path": item.get("normalized_path"),
                 "domain": item.get("domain"),
+                "authority_source": item.get("authority_source"),
+                "source_authority": item.get("source_authority"),
+                "official_use_allowed": item.get("official_use_allowed"),
                 "stage": item.get("stage"),
                 "status": item.get("status"),
                 "source_type": item.get("source_type"),
+                "origin": item.get("origin"),
                 "source_url": item.get("source_url"),
                 "score": score,
                 "strength": "high" if score >= 30 else "medium" if score >= 10 else "low",
@@ -225,6 +230,14 @@ def build_evidence(items: list[dict[str, Any]], intent: str = "knowledge_lookup"
             }
         )
     return evidence
+
+
+def _is_process_memory_evidence(item: dict[str, Any]) -> bool:
+    return (
+        str(item.get("domain") or "").lower() == "process_memory"
+        or str(item.get("source_type") or "").lower() == "process_memory"
+        or str(item.get("status") or "").lower() == "process"
+    )
 
 
 def confidence_for(evidence: list[dict[str, Any]], conflicts: list[str]) -> str:
@@ -1002,7 +1015,8 @@ def build_direct_answer(question: str, intent: str, evidence: list[dict[str, Any
 
 def synthesize_answer(question: str, query: str, items: list[dict[str, Any]], scenario: str = "创始人内部决策") -> dict[str, Any]:
     intent, audience = classify_intent(question, items)
-    evidence = build_evidence(items, intent=intent)
+    retrieved_evidence = build_evidence(items, intent=intent)
+    evidence = [item for item in retrieved_evidence if not _is_process_memory_evidence(item)]
     conflicts = detect_conflicts(question, evidence)
     confidence = confidence_for(evidence, conflicts)
     corrections = build_corrections(question, evidence, intent)
@@ -1045,8 +1059,8 @@ def synthesize_answer(question: str, query: str, items: list[dict[str, Any]], sc
         "answer_status": answer_status_for(confidence, needs_review),
         "result_card": result_card,
         "reasoning": reasoning,
-        "evidence": evidence,
-        "sources": evidence,
+        "evidence": retrieved_evidence,
+        "sources": retrieved_evidence,
         "conflicts": conflicts,
         "corrections": corrections,
         "confidence": confidence,

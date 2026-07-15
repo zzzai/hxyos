@@ -4,7 +4,7 @@ import importlib.util
 from pathlib import Path
 from typing import Any
 
-REFERENCE_STATUSES = {"reference", "ai_structured", "draft", "needs_review", "disputed", "superseded"}
+REFERENCE_STATUSES = {"external", "reference", "ai_structured", "draft", "needs_review", "disputed", "superseded"}
 REFERENCE_STAGES = {"reference", "preparation", "draft", "pilot", "ai_structured"}
 PROCESS_MEMORY_STATUSES = {"process"}
 COMMERCIAL_PROMISE_TERMS = ["稳赚", "躺赚", "零风险", "一定盈利", "一定回本", "保证回本", "收益保证"]
@@ -171,7 +171,7 @@ def _has_reference_only_evidence(evidence: list[dict[str, Any]], from_answer_car
     }
     if not authority_sources:
         return False
-    return not authority_sources & {"approved_answer_card", "official_internal", "internal_material"}
+    return not authority_sources & {"official_internal", "internal_material"}
 
 
 def _has_unapproved_reference_evidence(evidence: list[dict[str, Any]]) -> bool:
@@ -190,6 +190,8 @@ def _has_unapproved_reference_evidence(evidence: list[dict[str, Any]]) -> bool:
 
 def _has_conflicting_evidence(evidence: list[dict[str, Any]]) -> bool:
     for item in evidence:
+        if _is_process_memory_evidence(item):
+            continue
         status = str(item.get("status") or "").lower()
         if status == "disputed" or bool(item.get("conflict")) or bool(item.get("contradicts")):
             return True
@@ -201,8 +203,6 @@ def _evidence_sources(evidence: list[dict[str, Any]], from_answer_card: bool) ->
     if from_answer_card:
         sources.append("权威答案卡")
     domains = {str(item.get("domain") or "") for item in evidence if item.get("domain")}
-    if "approved_answer_card" in domains and "权威答案卡" not in sources:
-        sources.append("权威答案卡")
     if any(_is_process_memory_evidence(item) for item in evidence):
         sources.append("过程记忆")
     if _has_unapproved_reference_evidence(evidence) or _has_reference_only_evidence(evidence, from_answer_card):
@@ -223,7 +223,7 @@ def _policy_action(
     from_answer_card: bool,
     risk_flags: list[str],
 ) -> str:
-    if risk_flags and any(flag in risk_flags for flag in ["收益承诺", "医疗功效", "夸大表达"]):
+    if risk_flags:
         return "needs_review"
     if from_answer_card and not needs_review:
         return "answer"
