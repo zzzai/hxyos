@@ -37,7 +37,7 @@ REFERENCE_STATUSES = {
     "disputed",
     "superseded",
 }
-REFERENCE_STAGES = {"reference", "preparation", "draft", "pilot", "ai_structured", "working_context"}
+REFERENCE_STAGES = {"reference", "preparation", "draft", "pilot", "ai_structured"}
 
 
 def is_process_memory_evidence(item: dict[str, Any]) -> bool:

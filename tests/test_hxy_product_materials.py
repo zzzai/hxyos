@@ -71,6 +71,7 @@ class FakeMaterialRepository:
     def __init__(self) -> None:
         self.records: dict[tuple[str, str], dict[str, Any]] = {}
         self.calls: list[tuple[str, str]] = []
+        self.authority_events: list[dict[str, Any]] = []
 
     def create_material(self, payload: dict[str, Any]) -> dict[str, Any]:
         existing = self.get_by_client_upload_id(
@@ -147,6 +148,32 @@ class FakeMaterialRepository:
         self.calls.append(("requeue", assignment_id))
         return dict(record)
 
+    def update_source_authority(
+        self,
+        assignment_id: str,
+        material_id: str,
+        *,
+        source_origin: str,
+        source_authority: str,
+        reason: str,
+    ) -> dict[str, Any] | None:
+        record = self.records.get((assignment_id, material_id))
+        if record is None:
+            return None
+        event = {
+            "material_id": material_id,
+            "previous_authority": record.get("source_authority"),
+            "new_authority": source_authority,
+            "reason": reason,
+        }
+        self.authority_events.append(event)
+        record["source_origin"] = source_origin
+        record["source_authority"] = source_authority
+        record["authority_version"] = int(record.get("authority_version") or 1) + 1
+        record["updated_at"] = NOW
+        self.calls.append(("classify", assignment_id))
+        return dict(record)
+
 
 class ASGIClient:
     def __init__(self, app) -> None:
@@ -165,8 +192,12 @@ def bearer() -> dict[str, str]:
     return {"Authorization": "Bearer valid-session"}
 
 
-def upload_form(note: str = "") -> dict[str, str]:
-    return {"client_upload_id": str(uuid4()), "note": note}
+def upload_form(note: str = "", source_origin: str = "unknown") -> dict[str, str]:
+    return {
+        "client_upload_id": str(uuid4()),
+        "note": note,
+        "source_origin": source_origin,
+    }
 
 
 @pytest.fixture
@@ -240,6 +271,9 @@ def test_upload_returns_receipt_original_link_and_preliminary_understanding(mate
     assert material["understanding"]["authority_level"] == "working_material"
     assert material["understanding"]["official_use_allowed"] is False
     assert material["understanding"]["use_boundary"] == "可用于整理候选流程，不能直接作为正式 SOP。"
+    assert material["source_origin"] == "unknown"
+    assert material["source_authority"] == "external_reference"
+    assert material["authority_version"] == 1
     serialized = response.text
     for forbidden in ("storage_key", "assignment_id", "sha256", str(root), "/root/hxy"):
         assert forbidden not in serialized
@@ -250,6 +284,120 @@ def test_upload_returns_receipt_original_link_and_preliminary_understanding(mate
     saved_files = [path for path in (root / "data" / "product-materials").rglob("*") if path.is_file()]
     assert len(saved_files) == 1
     assert saved_files[0].read_text(encoding="utf-8") == "先问顾客状态，再介绍服务。"
+
+
+def test_headquarters_upload_uses_declared_origin_instead_of_ai_detected_origin(
+    material_context,
+) -> None:
+    client, _, identity_repository, _, _ = material_context
+    identity_repository.assignment = FakeAssignment(
+        assignment_id=ASSIGNMENT_ID,
+        organization_id=ORGANIZATION_ID,
+        organization_name="荷小悦",
+        store_id=None,
+        store_name=None,
+        role="hq_operations",
+    )
+
+    response = client.request(
+        "POST",
+        "/api/v1/materials",
+        headers=bearer(),
+        data=upload_form("公司内部流程", source_origin="internal"),
+        files={"file": ("内部流程.md", "门店内部工作资料。", "text/markdown")},
+    )
+
+    assert response.status_code == 201
+    material = response.json()["material"]
+    assert material["understanding"]["source_origin"] == "internal"
+    assert material["source_origin"] == "internal"
+    assert material["source_authority"] == "internal_material"
+
+
+def test_store_upload_cannot_self_declare_internal_authority(material_context) -> None:
+    client, _, _, _, _ = material_context
+
+    response = client.request(
+        "POST",
+        "/api/v1/materials",
+        headers=bearer(),
+        data=upload_form("门店提交的内部草稿", source_origin="internal"),
+        files={"file": ("门店草稿.md", "门店自行整理的工作资料。", "text/markdown")},
+    )
+
+    assert response.status_code == 201
+    material = response.json()["material"]
+    assert material["source_origin"] == "unknown"
+    assert material["source_authority"] == "external_reference"
+
+
+def test_founder_can_version_source_authority_without_creating_an_answer_card(material_context) -> None:
+    client, _, identity_repository, repository, _ = material_context
+    identity_repository.assignment = FakeAssignment(
+        assignment_id=ASSIGNMENT_ID,
+        organization_id=ORGANIZATION_ID,
+        organization_name="荷小悦",
+        store_id=None,
+        store_name=None,
+        role="founder",
+    )
+    uploaded = client.request(
+        "POST",
+        "/api/v1/materials",
+        headers=bearer(),
+        data=upload_form("创始人确认的首店内部流程", source_origin="internal"),
+        files={"file": ("首店流程.md", "先确认顾客状态。", "text/markdown")},
+    ).json()["material"]
+
+    response = client.request(
+        "PATCH",
+        f"/api/v1/materials/{uploaded['id']}/authority",
+        headers=bearer(),
+        json={
+            "source_origin": "internal",
+            "source_authority": "official_internal",
+            "reason": "创始人确认这是当前内部标准",
+        },
+    )
+
+    assert response.status_code == 200
+    material = response.json()["material"]
+    assert material["source_authority"] == "official_internal"
+    assert material["authority_version"] == 2
+    assert material["understanding"]["official_use_allowed"] is False
+    assert repository.authority_events == [
+        {
+            "material_id": uploaded["id"],
+            "previous_authority": "internal_material",
+            "new_authority": "official_internal",
+            "reason": "创始人确认这是当前内部标准",
+        }
+    ]
+
+
+def test_store_manager_cannot_change_source_authority(material_context) -> None:
+    client, _, _, repository, _ = material_context
+    uploaded = client.request(
+        "POST",
+        "/api/v1/materials",
+        headers=bearer(),
+        data=upload_form(),
+        files={"file": ("门店草稿.md", "待总部确认。", "text/markdown")},
+    ).json()["material"]
+
+    response = client.request(
+        "PATCH",
+        f"/api/v1/materials/{uploaded['id']}/authority",
+        headers=bearer(),
+        json={
+            "source_origin": "internal",
+            "source_authority": "official_internal",
+            "reason": "门店自行声明正式",
+        },
+    )
+
+    assert response.status_code == 403
+    assert repository.authority_events == []
 
 
 def test_understanding_failure_keeps_original_and_returns_retriable_receipt(

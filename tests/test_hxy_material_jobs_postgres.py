@@ -18,6 +18,128 @@ DATABASE_URL = os.getenv("HXY_TEST_DATABASE_URL", "").strip()
 
 
 @pytest.mark.skipif(not DATABASE_URL, reason="HXY_TEST_DATABASE_URL is not configured")
+def test_postgres_source_authority_rejects_unauthorized_or_cross_org_events() -> None:
+    organization_id = str(uuid4())
+    foreign_organization_id = str(uuid4())
+    owner_account_id = str(uuid4())
+    unauthorized_account_id = str(uuid4())
+    foreign_account_id = str(uuid4())
+    owner_assignment_id = str(uuid4())
+    unauthorized_assignment_id = str(uuid4())
+    foreign_assignment_id = str(uuid4())
+    material_id = str(uuid4())
+
+    with psycopg.connect(DATABASE_URL) as connection:
+        authority_events_table = connection.execute(
+            "SELECT to_regclass('hxy_material_authority_events')"
+        ).fetchone()[0]
+        assert authority_events_table is not None, "source authority migration is not applied"
+        connection.execute(
+            "INSERT INTO hxy_organizations (organization_id, slug, name) VALUES (%s, %s, %s)",
+            (organization_id, f"authority-{uuid4().hex}", "权威边界测试组织"),
+        )
+        connection.execute(
+            "INSERT INTO hxy_organizations (organization_id, slug, name) VALUES (%s, %s, %s)",
+            (foreign_organization_id, f"authority-foreign-{uuid4().hex}", "外部测试组织"),
+        )
+        for account_id, username in (
+            (owner_account_id, f"authority-owner-{uuid4().hex}"),
+            (unauthorized_account_id, f"authority-admin-{uuid4().hex}"),
+            (foreign_account_id, f"authority-foreign-{uuid4().hex}"),
+        ):
+            connection.execute(
+                """
+                INSERT INTO staff_accounts (id, username, password_hash, role)
+                VALUES (%s, %s, 'not-a-login-credential', 'hq_admin')
+                """,
+                (account_id, username),
+            )
+        connection.execute(
+            """
+            INSERT INTO hxy_role_assignments (
+              assignment_id, account_id, organization_id, role
+            ) VALUES
+              (%s, %s, %s, 'founder'),
+              (%s, %s, %s, 'system_admin'),
+              (%s, %s, %s, 'founder')
+            """,
+            (
+                owner_assignment_id,
+                owner_account_id,
+                organization_id,
+                unauthorized_assignment_id,
+                unauthorized_account_id,
+                organization_id,
+                foreign_assignment_id,
+                foreign_account_id,
+                foreign_organization_id,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO hxy_product_materials (
+              material_id, assignment_id, client_upload_id, original_file_name,
+              extension, media_type, size_bytes, sha256, storage_key, status,
+              source_origin, source_authority
+            ) VALUES (
+              %s, %s, %s, '权威边界.md', '.md', 'text/markdown', 64,
+              %s, %s, 'understood', 'internal', 'internal_material'
+            )
+            """,
+            (material_id, owner_assignment_id, str(uuid4()), "a" * 64, f"authority/{material_id}.md"),
+        )
+
+        def insert_change_event(actor_assignment_id: str) -> None:
+            connection.execute(
+                """
+                INSERT INTO hxy_material_authority_events (
+                  material_id, owner_assignment_id, actor_assignment_id,
+                  previous_origin, new_origin, previous_authority, new_authority,
+                  version_no, reason
+                ) VALUES (
+                  %s, %s, %s, 'internal', 'internal',
+                  'internal_material', 'official_internal', 2, '测试权威变更授权边界'
+                )
+                """,
+                (material_id, owner_assignment_id, actor_assignment_id),
+            )
+
+        with pytest.raises(psycopg.Error), connection.transaction():
+            connection.execute(
+                """
+                UPDATE hxy_product_materials
+                SET source_authority = 'official_internal', authority_version = 2
+                WHERE material_id = %s
+                """,
+                (material_id,),
+            )
+        with pytest.raises(psycopg.Error), connection.transaction():
+            insert_change_event(unauthorized_assignment_id)
+        with pytest.raises(psycopg.Error), connection.transaction():
+            insert_change_event(foreign_assignment_id)
+
+        insert_change_event(owner_assignment_id)
+        connection.execute(
+            """
+            UPDATE hxy_product_materials
+            SET source_authority = 'official_internal', authority_version = 2
+            WHERE material_id = %s
+            """,
+            (material_id,),
+        )
+        authority = connection.execute(
+            """
+            SELECT source_authority, authority_version
+            FROM hxy_product_materials
+            WHERE material_id = %s
+            """,
+            (material_id,),
+        ).fetchone()
+        assert authority == ("official_internal", 2)
+        connection.rollback()
+
+
+@pytest.mark.skipif(not DATABASE_URL, reason="HXY_TEST_DATABASE_URL is not configured")
 def test_postgres_material_queue_lease_reclaim_and_completion() -> None:
     repository = MaterialRepository(DATABASE_URL)
     organization_id = str(uuid4())

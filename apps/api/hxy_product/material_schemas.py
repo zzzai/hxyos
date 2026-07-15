@@ -11,6 +11,16 @@ class StrictMaterialModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SourceAuthorityUpdate(StrictMaterialModel):
+    source_origin: Literal["internal", "external", "unknown"]
+    source_authority: Literal[
+        "official_internal",
+        "internal_material",
+        "external_reference",
+    ]
+    reason: str = Field(min_length=4, max_length=500)
+
+
 class MaterialReceipt(StrictMaterialModel):
     status: Literal["已收到"]
     message: str
@@ -65,6 +75,13 @@ class ProductMaterial(StrictMaterialModel):
     receipt: MaterialReceipt
     original: MaterialOriginal
     understanding: MaterialUnderstanding
+    source_origin: Literal["internal", "external", "unknown"]
+    source_authority: Literal[
+        "official_internal",
+        "internal_material",
+        "external_reference",
+    ]
+    authority_version: int = Field(ge=1)
     created_at: datetime
     updated_at: datetime
 

@@ -57,6 +57,31 @@ _DEICTIC_MATERIAL_TERMS = (
 )
 
 
+def derive_source_authority(source_origin: str) -> str:
+    return "internal_material" if source_origin == "internal" else "external_reference"
+
+
+def _normalized_source_origin(value: Any) -> str:
+    origin = str(value or "").strip().lower()
+    return origin if origin in {"internal", "external", "unknown"} else "unknown"
+
+
+def _validated_source_authority(source_origin: str, source_authority: str) -> str:
+    authority = str(source_authority or "").strip().lower()
+    if authority not in {"official_internal", "internal_material", "external_reference"}:
+        raise ValueError("unsupported source authority")
+    if source_origin != "internal" and authority != "external_reference":
+        raise ValueError("external or unknown sources must remain reference-only")
+    return authority
+
+
+def _safe_source_authority(source_origin: str, source_authority: Any) -> str:
+    try:
+        return _validated_source_authority(source_origin, str(source_authority or ""))
+    except ValueError:
+        return derive_source_authority(source_origin)
+
+
 def _json_object(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
@@ -70,6 +95,8 @@ def _json_object(value: Any) -> dict[str, Any]:
 
 
 def _material_from_row(row: dict[str, Any]) -> dict[str, Any]:
+    understanding = _json_object(row.get("understanding_json"))
+    source_origin = _normalized_source_origin(row.get("source_origin"))
     return {
         "id": str(row.get("material_id") or row.get("id")),
         "assignment_id": str(row["assignment_id"]),
@@ -82,7 +109,10 @@ def _material_from_row(row: dict[str, Any]) -> dict[str, Any]:
         "storage_key": str(row["storage_key"]),
         "note": str(row.get("note") or ""),
         "status": str(row["status"]),
-        "understanding": _json_object(row.get("understanding_json")),
+        "understanding": understanding,
+        "source_origin": source_origin,
+        "source_authority": _safe_source_authority(source_origin, row.get("source_authority")),
+        "authority_version": int(row.get("authority_version") or 1),
         "official_use_allowed": False,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
@@ -99,8 +129,20 @@ def _material_query_terms(query: str) -> list[str]:
 
 def _material_chunk_from_row(row: dict[str, Any]) -> dict[str, Any]:
     material_id = str(row["material_id"])
+    source_origin = _normalized_source_origin(row.get("source_origin"))
+    source_authority = _safe_source_authority(source_origin, row.get("source_authority"))
+    if source_authority == "official_internal":
+        stage = "official"
+        status = "active"
+    elif source_authority == "internal_material":
+        stage = "working_context"
+        status = "active"
+    else:
+        stage = "reference"
+        status = "reference"
     return {
         "chunk_id": str(row["chunk_id"]),
+        "source_id": material_id,
         "asset_id": material_id,
         "material_id": material_id,
         "title": str(row.get("original_file_name") or "资料来源")[:180],
@@ -108,8 +150,13 @@ def _material_chunk_from_row(row: dict[str, Any]) -> dict[str, Any]:
         "normalized_path": None,
         "source_url": f"/api/v1/materials/{material_id}/content",
         "domain": str(row.get("domain") or "general"),
-        "stage": "working_context",
-        "status": "reference",
+        "source_origin": source_origin,
+        "origin": source_origin,
+        "source_authority": source_authority,
+        "authority_source": source_authority,
+        "authority_version": int(row.get("authority_version") or 1),
+        "stage": stage,
+        "status": status,
         "source_type": "private_material",
         "score": int(row.get("score") or 0),
         "heading": str(row.get("heading") or "")[:300],
@@ -131,6 +178,9 @@ _MATERIAL_SELECT = """
            note,
            status,
            understanding_json,
+           source_origin,
+           source_authority,
+           authority_version,
            official_use_allowed,
            created_at,
            updated_at
@@ -208,6 +258,8 @@ class MaterialRepository:
                   note,
                   status,
                   understanding_json,
+                  source_origin,
+                  source_authority,
                   official_use_allowed
                 )
                 VALUES (
@@ -223,6 +275,8 @@ class MaterialRepository:
                   %s,
                   %s,
                   %s::jsonb,
+                  %s,
+                  %s,
                   FALSE
                 )
                 RETURNING material_id::text,
@@ -237,6 +291,9 @@ class MaterialRepository:
                           note,
                           status,
                           understanding_json,
+                          source_origin,
+                          source_authority,
+                          authority_version,
                           official_use_allowed,
                           created_at,
                           updated_at
@@ -254,6 +311,14 @@ class MaterialRepository:
                     payload.get("note") or "",
                     payload.get("status") or "understood",
                     json.dumps(payload.get("understanding") or {}, ensure_ascii=False),
+                    _normalized_source_origin(payload.get("source_origin")),
+                    _validated_source_authority(
+                        _normalized_source_origin(payload.get("source_origin")),
+                        payload.get("source_authority")
+                        or derive_source_authority(
+                            _normalized_source_origin(payload.get("source_origin"))
+                        ),
+                    ),
                 ),
             ).fetchone()
             connection.execute(
@@ -538,6 +603,9 @@ class MaterialRepository:
                           note,
                           status,
                           understanding_json,
+                          source_origin,
+                          source_authority,
+                          authority_version,
                           official_use_allowed,
                           created_at,
                           updated_at
@@ -795,6 +863,9 @@ class MaterialRepository:
                           note,
                           status,
                           understanding_json,
+                          source_origin,
+                          source_authority,
+                          authority_version,
                           official_use_allowed,
                           created_at,
                           updated_at
@@ -819,7 +890,10 @@ class MaterialRepository:
                    material.original_file_name,
                    chunk.heading,
                    chunk.content,
-                   COALESCE(material.understanding_json->>'domain', 'general') AS domain
+                   COALESCE(material.understanding_json->>'domain', 'general') AS domain,
+                   material.source_origin,
+                   material.source_authority,
+                   material.authority_version
             FROM hxy_material_chunks AS chunk
             JOIN hxy_product_materials AS material
               ON material.assignment_id = chunk.assignment_id
@@ -928,6 +1002,148 @@ class MaterialRepository:
             ).fetchone()
         return _material_from_row(row) if row else None
 
+    def update_source_authority(
+        self,
+        assignment_id: str,
+        material_id: str,
+        *,
+        source_origin: str,
+        source_authority: str,
+        reason: str,
+    ) -> dict[str, Any] | None:
+        normalized_origin = _normalized_source_origin(source_origin)
+        normalized_authority = _validated_source_authority(
+            normalized_origin,
+            source_authority,
+        )
+        bounded_reason = " ".join(str(reason or "").split())[:500]
+        if len(bounded_reason) < 4:
+            raise ValueError("source authority change reason is required")
+
+        with self.connect() as connection:
+            current = connection.execute(
+                """
+                SELECT material.material_id::text,
+                       material.assignment_id::text,
+                       material.client_upload_id::text,
+                       material.original_file_name,
+                       material.extension,
+                       material.media_type,
+                       material.size_bytes,
+                       material.sha256,
+                       material.storage_key,
+                       material.note,
+                       material.status,
+                       material.understanding_json,
+                       material.source_origin,
+                       material.source_authority,
+                       material.authority_version,
+                       material.official_use_allowed,
+                       material.created_at,
+                       material.updated_at,
+                       actor.role AS actor_role
+                FROM hxy_product_materials AS material
+                JOIN hxy_role_assignments AS owner
+                  ON owner.assignment_id = material.assignment_id
+                 AND owner.status = 'active'
+                JOIN hxy_role_assignments AS actor
+                  ON actor.assignment_id = %s::uuid
+                 AND actor.organization_id = owner.organization_id
+                 AND actor.status = 'active'
+                WHERE material.material_id = %s::uuid
+                  AND material.status <> 'archived'
+                FOR UPDATE OF material
+                """,
+                (assignment_id, material_id),
+            ).fetchone()
+            if current is None:
+                return None
+            if str(current.get("actor_role") or "") not in {"founder", "hq_operations"}:
+                raise PermissionError("role cannot grant official source authority")
+            if (
+                str(current.get("source_origin") or "") == normalized_origin
+                and str(current.get("source_authority") or "") == normalized_authority
+            ):
+                return _material_from_row(current)
+
+            next_version = int(current.get("authority_version") or 1) + 1
+            connection.execute(
+                """
+                INSERT INTO hxy_material_authority_events (
+                  material_id,
+                  owner_assignment_id,
+                  actor_assignment_id,
+                  previous_origin,
+                  new_origin,
+                  previous_authority,
+                  new_authority,
+                  version_no,
+                  reason
+                )
+                VALUES (
+                  %s::uuid,
+                  %s::uuid,
+                  %s::uuid,
+                  %s,
+                  %s,
+                  %s,
+                  %s,
+                  %s,
+                  %s
+                )
+                RETURNING event_id::text
+                """,
+                (
+                    material_id,
+                    str(current["assignment_id"]),
+                    assignment_id,
+                    str(current.get("source_origin") or "unknown"),
+                    normalized_origin,
+                    str(current.get("source_authority") or "external_reference"),
+                    normalized_authority,
+                    next_version,
+                    bounded_reason,
+                ),
+            ).fetchone()
+            row = connection.execute(
+                """
+                UPDATE hxy_product_materials
+                SET source_origin = %s,
+                    source_authority = %s,
+                    authority_version = %s,
+                    updated_at = NOW()
+                WHERE assignment_id = %s::uuid
+                  AND material_id = %s::uuid
+                  AND status <> 'archived'
+                RETURNING material_id::text,
+                          assignment_id::text,
+                          client_upload_id::text,
+                          original_file_name,
+                          extension,
+                          media_type,
+                          size_bytes,
+                          sha256,
+                          storage_key,
+                          note,
+                          status,
+                          understanding_json,
+                          source_origin,
+                          source_authority,
+                          authority_version,
+                          official_use_allowed,
+                          created_at,
+                          updated_at
+                """,
+                (
+                    normalized_origin,
+                    normalized_authority,
+                    next_version,
+                    str(current["assignment_id"]),
+                    material_id,
+                ),
+            ).fetchone()
+        return _material_from_row(row) if row else None
+
     def update_understanding(
         self,
         assignment_id: str,
@@ -958,6 +1174,9 @@ class MaterialRepository:
                           note,
                           status,
                           understanding_json,
+                          source_origin,
+                          source_authority,
+                          authority_version,
                           official_use_allowed,
                           created_at,
                           updated_at

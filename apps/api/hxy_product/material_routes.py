@@ -27,9 +27,10 @@ from .auth import Principal, build_principal_resolver
 from .material_schemas import (
     ListMaterialsResponse,
     MaterialDetailResponse,
+    SourceAuthorityUpdate,
     UploadMaterialResponse,
 )
-from .material_repository import MaterialStorageQuotaExceeded
+from .material_repository import MaterialStorageQuotaExceeded, derive_source_authority
 from .routes import ROLE_CAPABILITIES, assignment_for_principal
 
 
@@ -141,6 +142,21 @@ def _safe_understanding(payload: Any) -> dict[str, Any]:
 def _public_material(record: dict[str, Any]) -> dict[str, Any]:
     material_id = str(record.get("id") or record.get("material_id"))
     extension = str(record.get("extension") or Path(str(record.get("file_name") or "")).suffix).lower()
+    understanding = _safe_understanding(record.get("understanding"))
+    source_origin = str(record.get("source_origin") or "unknown")
+    if source_origin not in {"internal", "external", "unknown"}:
+        source_origin = "unknown"
+    source_authority = str(
+        record.get("source_authority") or derive_source_authority(source_origin)
+    )
+    if source_authority not in {
+        "official_internal",
+        "internal_material",
+        "external_reference",
+    }:
+        source_authority = derive_source_authority(source_origin)
+    if source_origin != "internal":
+        source_authority = "external_reference"
     return {
         "id": material_id,
         "file_name": str(record.get("file_name") or "未命名资料")[:180],
@@ -160,7 +176,10 @@ def _public_material(record: dict[str, Any]) -> dict[str, Any]:
             "url": f"/api/v1/materials/{material_id}/content",
             "can_preview": extension in PREVIEW_EXTENSIONS,
         },
-        "understanding": _safe_understanding(record.get("understanding")),
+        "understanding": understanding,
+        "source_origin": source_origin,
+        "source_authority": source_authority,
+        "authority_version": max(1, int(record.get("authority_version") or 1)),
         "created_at": record["created_at"],
         "updated_at": record["updated_at"],
     }
@@ -202,6 +221,7 @@ def create_material_router(
 
     resolve_material_creator = assignment_with("materials:create")
     resolve_material_reader = assignment_with("materials:read")
+    resolve_material_classifier = assignment_with("materials:classify")
 
     @router.post(
         "/api/v1/materials",
@@ -211,6 +231,7 @@ def create_material_router(
     async def upload_material(
         file: UploadFile = File(...),
         note: str = Form(default="", max_length=1000),
+        source_origin: str = Form(default="unknown"),
         client_upload_id: UUID = Form(...),
         content_length: int | None = Header(default=None, alias="Content-Length"),
         assignment: Any = Depends(resolve_material_creator),
@@ -221,6 +242,14 @@ def create_material_router(
         file_name, extension = _validate_file_name(file.filename or "")
         if extension not in allowed_extensions:
             raise HTTPException(status_code=415, detail="Unsupported file type")
+        declared_source_origin = source_origin.strip().lower()
+        if declared_source_origin not in {"internal", "external", "unknown"}:
+            raise HTTPException(status_code=400, detail="Invalid source origin")
+        if declared_source_origin == "internal" and assignment.role not in {
+            "founder",
+            "hq_operations",
+        }:
+            declared_source_origin = "unknown"
 
         existing = repository.get_by_client_upload_id(
             assignment.assignment_id,
@@ -309,6 +338,8 @@ def create_material_router(
                     "note": note.strip(),
                     "status": material_status,
                     "understanding": understanding,
+                    "source_origin": declared_source_origin,
+                    "source_authority": derive_source_authority(declared_source_origin),
                     "official_use_allowed": False,
                     "max_assignment_storage_bytes": max_assignment_storage_bytes,
                 }
@@ -339,6 +370,32 @@ def create_material_router(
                 pass
 
         return {"material": _public_material(record)}
+
+    @router.patch(
+        "/api/v1/materials/{material_id}/authority",
+        response_model=MaterialDetailResponse,
+    )
+    def update_material_authority(
+        material_id: UUID,
+        request: SourceAuthorityUpdate,
+        assignment: Any = Depends(resolve_material_classifier),
+        repository: Any = Depends(get_material_repository),
+    ) -> dict[str, Any]:
+        try:
+            updated = repository.update_source_authority(
+                assignment.assignment_id,
+                str(material_id),
+                source_origin=request.source_origin,
+                source_authority=request.source_authority,
+                reason=request.reason,
+            )
+        except PermissionError:
+            raise HTTPException(status_code=403, detail="Forbidden") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        if updated is None:
+            raise _not_found()
+        return {"material": _public_material(updated)}
 
     @router.post(
         "/api/v1/materials/{material_id}/understanding",

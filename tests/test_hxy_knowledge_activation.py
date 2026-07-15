@@ -65,6 +65,9 @@ def _chunk_row() -> dict[str, Any]:
         "heading": "顾客接待",
         "content": "接待时先询问顾客当下状态，再介绍适合的服务。",
         "domain": "operations",
+        "source_origin": "internal",
+        "source_authority": "internal_material",
+        "authority_version": 1,
         "score": 115,
     }
 
@@ -100,7 +103,7 @@ def test_material_search_is_assignment_scoped_and_returns_public_safe_sources() 
     assert item["source_path"] == f"material:{MATERIAL_ID}"
     assert item["source_url"] == f"/api/v1/materials/{MATERIAL_ID}/content"
     assert item["stage"] == "working_context"
-    assert item["status"] == "reference"
+    assert item["status"] == "active"
     assert item["official_use_allowed"] is False
     assert "storage_key" not in item
     sql, params = calls[0]

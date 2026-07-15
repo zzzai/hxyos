@@ -43,6 +43,7 @@ ROLE_CAPABILITIES = MappingProxyType(
         "founder": (
             "conversation:use",
             "materials:create",
+            "materials:classify",
             "materials:read",
             "organization:read",
             "stores:read",
@@ -52,6 +53,7 @@ ROLE_CAPABILITIES = MappingProxyType(
         "hq_operations": (
             "conversation:use",
             "materials:create",
+            "materials:classify",
             "materials:read",
             "operations:manage",
             "organization:read",
