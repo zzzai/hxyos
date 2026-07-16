@@ -69,6 +69,45 @@ _BUSINESS_TOKEN_LEXICON = [
     "卖点",
 ]
 
+_SOURCE_ORIGINS = {"internal", "external", "unknown"}
+_SOURCE_AUTHORITIES = {"official_internal", "internal_material", "external_reference"}
+_MAX_SOURCE_AUTHORITY_BATCH = 100
+
+
+def _normalized_source_classification(item: dict[str, Any]) -> dict[str, Any]:
+    asset_id = str(item.get("asset_id") or "").strip()
+    if not asset_id:
+        raise ValueError("asset_id is required")
+
+    origin = str(item.get("source_origin") or "").strip().lower()
+    if origin not in _SOURCE_ORIGINS:
+        raise ValueError("unsupported source origin")
+
+    authority = str(item.get("source_authority") or "").strip().lower()
+    if authority not in _SOURCE_AUTHORITIES:
+        raise ValueError("unsupported source authority")
+    if origin != "internal" and authority != "external_reference":
+        raise ValueError("external or unknown sources must remain reference-only")
+
+    try:
+        previous_version = int(item.get("previous_version"))
+    except (TypeError, ValueError):
+        previous_version = 0
+    if previous_version < 1:
+        raise ValueError("previous_version must be a positive integer")
+
+    reason = " ".join(str(item.get("reason") or "").split())[:500]
+    if len(reason) < 4:
+        raise ValueError("source authority classification reason is required")
+
+    return {
+        "asset_id": asset_id,
+        "previous_version": previous_version,
+        "source_origin": origin,
+        "source_authority": authority,
+        "reason": reason,
+    }
+
 
 def _dedupe_tokens(tokens: list[str]) -> list[str]:
     seen: set[str] = set()
@@ -132,17 +171,16 @@ def build_search_query(
     sql = f"""
         SELECT c.chunk_id, c.asset_id, c.title, c.source_path, c.normalized_path,
                c.domain, c.stage, c.content,
-               COALESCE(NULLIF(c.metadata_json->>'source_id', ''), NULLIF(a.metadata_json->>'source_id', ''), a.asset_id) AS source_id,
-               COALESCE(NULLIF(c.metadata_json->>'authority_source', ''), NULLIF(a.metadata_json->>'authority_source', ''),
-                        NULLIF(c.metadata_json->>'source_authority', ''), NULLIF(a.metadata_json->>'source_authority', '')) AS authority_source,
-               COALESCE(NULLIF(c.metadata_json->>'source_authority', ''), NULLIF(a.metadata_json->>'source_authority', ''),
-                        NULLIF(c.metadata_json->>'authority_source', ''), NULLIF(a.metadata_json->>'authority_source', '')) AS source_authority,
-               COALESCE(NULLIF(c.metadata_json->>'origin', ''), NULLIF(c.metadata_json->>'source_origin', ''),
-                        NULLIF(a.metadata_json->>'origin', ''), NULLIF(a.metadata_json->>'source_origin', '')) AS origin,
+               a.asset_id AS source_id,
+               a.source_origin AS source_origin,
+               a.source_origin AS origin,
+               a.source_authority AS source_authority,
+               a.source_authority AS authority_source,
+               a.authority_version AS authority_version,
+               TRUE AS authority_recorded,
                COALESCE(NULLIF(c.metadata_json->>'source_type', ''), NULLIF(a.metadata_json->>'source_type', '')) AS source_type,
                COALESCE(NULLIF(c.metadata_json->>'status', ''), NULLIF(a.metadata_json->>'status', ''), a.status) AS status,
-               COALESCE((c.metadata_json->>'official_use_allowed')::boolean,
-                        (a.metadata_json->>'official_use_allowed')::boolean, FALSE) AS official_use_allowed,
+               FALSE AS official_use_allowed,
                {' + '.join(score_parts)} AS score
         FROM hxy_knowledge_chunks c
         JOIN hxy_knowledge_assets a ON a.asset_id = c.asset_id
@@ -543,6 +581,174 @@ class KnowledgeRepository:
         sql, params = build_search_query(query, domain=domain, stage=stage, limit=limit, domain_hint=domain_hint)
         with self.connect() as conn:
             return conn.execute(sql, params).fetchall()
+
+    def classify_source_authority(
+        self,
+        *,
+        actor_assignment_id: str,
+        organization_id: str,
+        asset_id: str,
+        previous_version: int,
+        source_origin: str,
+        source_authority: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        return self.classify_source_authority_batch(
+            actor_assignment_id=actor_assignment_id,
+            organization_id=organization_id,
+            classifications=[
+                {
+                    "asset_id": asset_id,
+                    "previous_version": previous_version,
+                    "source_origin": source_origin,
+                    "source_authority": source_authority,
+                    "reason": reason,
+                }
+            ],
+        )[0]
+
+    def classify_source_authority_batch(
+        self,
+        *,
+        actor_assignment_id: str,
+        organization_id: str,
+        classifications: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        actor_id = str(actor_assignment_id or "").strip()
+        org_id = str(organization_id or "").strip()
+        if not actor_id:
+            raise ValueError("actor_assignment_id is required")
+        if not org_id:
+            raise ValueError("organization_id is required")
+        if not 1 <= len(classifications) <= _MAX_SOURCE_AUTHORITY_BATCH:
+            raise ValueError("source classification batch size must be between 1 and 100")
+
+        normalized = [_normalized_source_classification(item) for item in classifications]
+        asset_ids = [item["asset_id"] for item in normalized]
+        if len(set(asset_ids)) != len(asset_ids):
+            raise ValueError("source classification batch contains duplicate asset_id")
+
+        with self.connect() as connection:
+            actor = connection.execute(
+                """
+                SELECT assignment_id::text, organization_id::text, role, status
+                FROM hxy_role_assignments
+                WHERE assignment_id = %s::uuid
+                """,
+                (actor_id,),
+            ).fetchone()
+            if (
+                actor is None
+                or str(actor.get("status") or "") != "active"
+                or str(actor.get("role") or "") not in {"founder", "hq_operations"}
+            ):
+                raise PermissionError("source classification requires an active founder or hq_operations assignment")
+            if str(actor.get("organization_id") or "") != org_id:
+                raise PermissionError("source classification actor must belong to the requested organization")
+
+            results: list[dict[str, Any]] = []
+            for classification in normalized:
+                current = connection.execute(
+                    """
+                    SELECT asset.asset_id,
+                           asset.source_origin,
+                           asset.source_authority,
+                           asset.authority_version,
+                           asset.authority_organization_id::text
+                    FROM hxy_knowledge_assets AS asset
+                    WHERE asset.asset_id = %s
+                    FOR UPDATE OF asset
+                    """,
+                    (classification["asset_id"],),
+                ).fetchone()
+                if current is None:
+                    raise LookupError(f"knowledge asset not found: {classification['asset_id']}")
+
+                bound_organization = str(current.get("authority_organization_id") or "")
+                if bound_organization and bound_organization != org_id:
+                    raise PermissionError("source classification cannot cross organization boundaries")
+
+                current_version = int(current.get("authority_version") or 0)
+                if current_version != classification["previous_version"]:
+                    raise ValueError(f"stale source authority version: {classification['asset_id']}")
+                if (
+                    str(current.get("source_origin") or "") == classification["source_origin"]
+                    and str(current.get("source_authority") or "") == classification["source_authority"]
+                ):
+                    raise ValueError(f"duplicate source authority classification: {classification['asset_id']}")
+
+                next_version = current_version + 1
+                connection.execute(
+                    """
+                    INSERT INTO hxy_knowledge_asset_authority_events (
+                      asset_id,
+                      event_type,
+                      organization_id,
+                      actor_assignment_id,
+                      previous_origin,
+                      new_origin,
+                      previous_authority,
+                      new_authority,
+                      previous_version,
+                      version_no,
+                      reason
+                    )
+                    VALUES (
+                      %s,
+                      'classification',
+                      %s::uuid,
+                      %s::uuid,
+                      %s,
+                      %s,
+                      %s,
+                      %s,
+                      %s,
+                      %s,
+                      %s
+                    )
+                    RETURNING event_id::text
+                    """,
+                    (
+                        classification["asset_id"],
+                        org_id,
+                        actor_id,
+                        str(current.get("source_origin") or "unknown"),
+                        classification["source_origin"],
+                        str(current.get("source_authority") or "external_reference"),
+                        classification["source_authority"],
+                        current_version,
+                        next_version,
+                        classification["reason"],
+                    ),
+                ).fetchone()
+                updated = connection.execute(
+                    """
+                    UPDATE hxy_knowledge_assets
+                    SET source_origin = %s,
+                        source_authority = %s,
+                        authority_version = %s,
+                        authority_organization_id = %s::uuid
+                    WHERE asset_id = %s
+                      AND authority_version = %s
+                    RETURNING asset_id,
+                              source_origin,
+                              source_authority,
+                              authority_version,
+                              authority_organization_id::text
+                    """,
+                    (
+                        classification["source_origin"],
+                        classification["source_authority"],
+                        next_version,
+                        org_id,
+                        classification["asset_id"],
+                        current_version,
+                    ),
+                ).fetchone()
+                if updated is None:
+                    raise RuntimeError(f"source authority update failed: {classification['asset_id']}")
+                results.append(dict(updated))
+        return results
 
     def save_answer_run(self, payload: dict[str, Any]) -> str:
         with self.connect() as conn:

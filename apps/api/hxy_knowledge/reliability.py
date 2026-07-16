@@ -57,6 +57,17 @@ def evidence_authority_source(item: dict[str, Any]) -> str:
     domain = str(item.get("domain") or "").lower()
     status = str(item.get("status") or "").lower()
     stage = str(item.get("stage") or "").lower()
+    if domain == "approved_answer_card" or status == "approved" and stage == "approved_answer_card":
+        return "approved_answer_card"
+
+    explicit = str(item.get("authority_source") or item.get("source_authority") or "").lower()
+    try:
+        authority_version = int(item.get("authority_version") or 0)
+    except (TypeError, ValueError):
+        authority_version = 0
+    if item.get("authority_recorded") is True and authority_version > 0 and explicit in AUTHORITY_SOURCES:
+        return explicit
+
     source_type = str(item.get("source_type") or "").lower()
     origin = str(item.get("origin") or "").lower()
     if (
@@ -67,11 +78,6 @@ def evidence_authority_source(item: dict[str, Any]) -> str:
         or stage in REFERENCE_STAGES
     ):
         return "external_reference"
-    if domain == "approved_answer_card" or status == "approved" and stage == "approved_answer_card":
-        return "approved_answer_card"
-    explicit = str(item.get("authority_source") or item.get("source_authority") or "").lower()
-    if explicit in AUTHORITY_SOURCES:
-        return explicit
     return "external_reference"
 
 

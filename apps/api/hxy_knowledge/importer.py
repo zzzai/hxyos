@@ -7,6 +7,29 @@ from collections import Counter
 from typing import Any
 
 
+_GOVERNANCE_METADATA_KEYS = {
+    "source_origin",
+    "origin",
+    "source_authority",
+    "authority_source",
+    "authority_version",
+    "authority_organization_id",
+    "authority_recorded",
+    "official_use_allowed",
+    "source_type",
+}
+
+
+def _content_metadata(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        key: metadata_value
+        for key, metadata_value in value.items()
+        if key not in _GOVERNANCE_METADATA_KEYS
+    }
+
+
 def load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -58,7 +81,7 @@ def prepare_asset_records(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                 "quality_score": float(asset.get("quality_score") or (asset.get("quality_scores") or {}).get("overall") or 0),
                 "quality_grade": asset.get("quality_grade") or (asset.get("quality_scores") or {}).get("grade") or "unknown",
                 "quality_scores": asset.get("quality_scores") or {},
-                "metadata": asset.get("metadata") or {},
+                "metadata": _content_metadata(asset.get("metadata")),
             }
         )
     return records
@@ -124,6 +147,7 @@ def prepare_chunk_records(search_index: dict[str, Any], run_name: str | None = N
                         "knowledge_domain",
                         "project_stage",
                         "text",
+                        *_GOVERNANCE_METADATA_KEYS,
                     }
                 },
             }

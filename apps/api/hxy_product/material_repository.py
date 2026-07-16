@@ -155,6 +155,7 @@ def _material_chunk_from_row(row: dict[str, Any]) -> dict[str, Any]:
         "source_authority": source_authority,
         "authority_source": source_authority,
         "authority_version": int(row.get("authority_version") or 1),
+        "authority_recorded": True,
         "stage": stage,
         "status": status,
         "source_type": "private_material",
