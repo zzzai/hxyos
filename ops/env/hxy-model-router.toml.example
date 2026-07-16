@@ -1,0 +1,20 @@
+model = "qwen-plus-latest"
+review_model = "qwen3.7-max"
+vision_model = "qwen3-vl-flash"
+model_provider = "dashscope"
+
+[model_providers.dashscope]
+name = "DashScope OpenAI Compatible"
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+wire_api = "chat_completions"
+
+[model_routes]
+classification = { model = "qwen-flash", wire_api = "chat_completions" }
+frontdoor_classification = { model = "qwen-flash", wire_api = "chat_completions" }
+workbench_intake = { model = "qwen-flash", wire_api = "chat_completions" }
+answer_synthesis = { model = "qwen-plus-latest", wire_api = "chat_completions" }
+rag_answer = { model = "qwen-plus-latest", wire_api = "chat_completions" }
+training_evaluation = { model = "qwen-plus-latest", wire_api = "chat_completions" }
+policy_review = { model = "qwen3.7-max", wire_api = "chat_completions" }
+offline_eval = { model = "qwen3.7-max", wire_api = "chat_completions" }
+vision_understanding = { model = "qwen3-vl-flash", wire_api = "chat_completions" }
