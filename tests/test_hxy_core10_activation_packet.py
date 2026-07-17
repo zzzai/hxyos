@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 
 FAILED_CASES = (
     "core-brand-identity",
@@ -378,3 +380,140 @@ def test_invalid_source_governance_record_fails_closed() -> None:
 
     assert "invalid_source_record" in operations_item["blockers"]
     assert operations_item["exact_write_intents"] == []
+
+
+@pytest.mark.parametrize(
+    "unsafe_answer",
+    [
+        "本服务保证效果。",
+        "本服务100%有效。",
+        "可诊断失眠。",
+        "This service offers guaranteed results.",
+        "This service is 100% effective.",
+    ],
+)
+def test_high_risk_reception_wording_fails_closed(unsafe_answer: str) -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+    )
+
+    inputs = _packet_inputs()
+    inputs["reception_draft"] = {
+        "question": "Fixture reception question?",
+        "answer": unsafe_answer,
+        "source_ids": ["asset-operations-001"],
+    }
+
+    packet = build_core10_activation_packet(**inputs)
+    reception_item = next(
+        item
+        for item in packet["items"]
+        if item["group_id"] == "reception_standard_answer_card"
+    )
+
+    assert "unsafe_answer_wording" in reception_item["blockers"]
+    assert reception_item["exact_write_intents"] == []
+
+
+@pytest.mark.parametrize(
+    "bounded_answer",
+    [
+        "不能保证效果，实际体验因人而异。",
+        "本服务不用于诊断，身体不适请及时就医。",
+    ],
+)
+def test_explicit_negative_boundary_is_not_misclassified(
+    bounded_answer: str,
+) -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+    )
+
+    inputs = _packet_inputs()
+    inputs["reception_draft"] = {
+        "question": "Fixture reception question?",
+        "answer": bounded_answer,
+        "source_ids": ["asset-operations-001"],
+    }
+
+    packet = build_core10_activation_packet(**inputs)
+    reception_item = next(
+        item
+        for item in packet["items"]
+        if item["group_id"] == "reception_standard_answer_card"
+    )
+
+    assert "unsafe_answer_wording" not in reception_item["blockers"]
+
+
+@pytest.mark.parametrize(
+    "unsafe_asset_id",
+    [
+        "/root/private/credentials.sql",
+        "postgresql://example.invalid/hxy",
+        "select-from-knowledge",
+        "rm-rf-private",
+        "credentials-secret",
+        "api-token",
+        "private-key",
+        "asset/path",
+        r"asset\path",
+        "a" * 129,
+    ],
+)
+def test_unsafe_source_asset_id_fails_closed(unsafe_asset_id: str) -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+    )
+
+    inputs = _packet_inputs()
+    inputs["product_sources"] = [
+        {
+            "asset_id": unsafe_asset_id,
+            "title": "Fixture unsafe identifier",
+            "source_origin": "unknown",
+            "source_authority": "external_reference",
+            "authority_version": 1,
+        }
+    ]
+
+    packet = build_core10_activation_packet(**inputs)
+    product_item = next(
+        item
+        for item in packet["items"]
+        if item["group_id"] == "product_system_sources"
+    )
+
+    assert "invalid_source_record" in product_item["blockers"]
+    assert product_item["exact_write_intents"] == []
+
+
+@pytest.mark.parametrize(
+    "safe_asset_id",
+    ["asset-001", "Asset_02:v1.3", "a" * 128],
+)
+def test_public_source_asset_id_style_remains_eligible(safe_asset_id: str) -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+    )
+
+    inputs = _packet_inputs()
+    inputs["product_sources"] = [
+        {
+            "asset_id": safe_asset_id,
+            "title": "Fixture safe identifier",
+            "source_origin": "unknown",
+            "source_authority": "external_reference",
+            "authority_version": 1,
+        }
+    ]
+
+    packet = build_core10_activation_packet(**inputs)
+    product_item = next(
+        item
+        for item in packet["items"]
+        if item["group_id"] == "product_system_sources"
+    )
+
+    assert product_item["blockers"] == []
+    assert len(product_item["exact_write_intents"]) == 1

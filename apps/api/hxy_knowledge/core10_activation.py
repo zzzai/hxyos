@@ -18,17 +18,48 @@ GROUP_CASES = {
     "reception_standard_answer_card": ("core-citation",),
 }
 _FORBIDDEN_KEYS = {"claim_id", "chunk_id"}
-_UNSAFE_ANSWER_TERMS = (
-    "治疗",
-    "治愈",
-    "治好",
-    "根治",
-    "保证有效",
-    "保证疗效",
-    "一次见效",
-    "立刻见效",
-    "包好",
-    "guarantees efficacy",
+_PUBLIC_ASSET_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$")
+_SENSITIVE_ASSET_ID_HINTS = (
+    "credential",
+    "password",
+    "passwd",
+    "secret",
+    "api_key",
+    "apikey",
+)
+_UNSAFE_ASSET_ID_TOKENS = {
+    "alter",
+    "bash",
+    "cmd",
+    "command",
+    "curl",
+    "delete",
+    "drop",
+    "exec",
+    "execute",
+    "insert",
+    "key",
+    "powershell",
+    "rm",
+    "select",
+    "sql",
+    "truncate",
+    "token",
+    "update",
+    "wget",
+}
+
+# This is a conservative activation preflight, not the complete compliance engine.
+_HIGH_RISK_ANSWER_PATTERNS = (
+    re.compile(r"治疗|治愈|治好|根治|诊断|包好"),
+    re.compile(r"保证(?:效果|有效|疗效|结果)"),
+    re.compile(r"(?:一次|立刻)见效"),
+    re.compile(r"(?:100\s*%|百分之百)\s*(?:有效|见效)"),
+    re.compile(
+        r"\bguarantee(?:d|s)?\s+(?:results?|efficacy|effects?|effectiveness)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\b100\s*%\s*effective\b", re.IGNORECASE),
 )
 _BOUNDARY_MARKERS = (
     "不能",
@@ -39,6 +70,7 @@ _BOUNDARY_MARKERS = (
     "无法保证",
     "不能保证",
     "不保证",
+    "不用于",
     "not ",
     "cannot ",
     "does not ",
@@ -131,7 +163,7 @@ def _source_blockers(sources: list[dict[str, Any]]) -> list[str]:
         blockers.append("external_source_not_eligible")
     if any(
         not isinstance(source, dict)
-        or not str(source.get("asset_id") or "").strip()
+        or not _is_safe_public_asset_id(source.get("asset_id"))
         or not isinstance(source.get("authority_version"), int)
         or source.get("authority_version", 0) < 1
         or str(source.get("source_origin") or "").strip().lower()
@@ -148,6 +180,16 @@ def _source_blockers(sources: list[dict[str, Any]]) -> list[str]:
     ):
         blockers.append("invalid_source_record")
     return blockers
+
+
+def _is_safe_public_asset_id(value: Any) -> bool:
+    if not isinstance(value, str) or not _PUBLIC_ASSET_ID_PATTERN.fullmatch(value):
+        return False
+    normalized = value.lower()
+    if any(hint in normalized for hint in _SENSITIVE_ASSET_ID_HINTS):
+        return False
+    tokens = set(re.split(r"[:._-]+", normalized))
+    return not tokens.intersection(_UNSAFE_ASSET_ID_TOKENS)
 
 
 def _classification_intents(
@@ -176,18 +218,15 @@ def _classification_intents(
 
 
 def _answer_has_unsafe_wording(answer: str) -> bool:
-    normalized = " ".join(answer.split()).lower()
-    for term in _UNSAFE_ANSWER_TERMS:
-        term_lower = term.lower()
-        start = 0
-        while True:
-            index = normalized.find(term_lower, start)
-            if index < 0:
-                break
-            prefix = normalized[max(0, index - 12) : index]
-            if not any(marker in prefix for marker in _BOUNDARY_MARKERS):
+    normalized = " ".join(answer.split())
+    for pattern in _HIGH_RISK_ANSWER_PATTERNS:
+        for match in pattern.finditer(normalized):
+            prefix = normalized[max(0, match.start() - 16) : match.start()].lower()
+            if not any(
+                prefix.rstrip().endswith(marker.rstrip())
+                for marker in _BOUNDARY_MARKERS
+            ):
                 return True
-            start = index + len(term_lower)
     return False
 
 
