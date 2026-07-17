@@ -26,14 +26,23 @@ class _SnapshotConnection:
         self.assets = assets or _asset_rows()
         self.chunks = chunks or []
         self.answer_cards = answer_cards or []
+        self.connect_calls = 0
+        self.context_entries = 0
+        self.context_exits = 0
+        self._inside_context = False
 
     def __enter__(self) -> "_SnapshotConnection":
+        self.context_entries += 1
+        self._inside_context = True
         return self
 
     def __exit__(self, *_args: Any) -> None:
+        self.context_exits += 1
+        self._inside_context = False
         return None
 
     def execute(self, sql: str, params: tuple[Any, ...]) -> _Result:
+        assert self._inside_context, "snapshot SQL must execute inside one connection context"
         normalized = " ".join(sql.split())
         self.statements.append((normalized, params))
         if normalized == "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ":
@@ -51,13 +60,16 @@ class _SnapshotConnection:
             selected = set(params[0])
             excerpt_chars = int(params[1])
             evidence_limit = int(params[2])
+            rows = [row for row in self.chunks if row.get("asset_id") in selected]
+            if "ORDER BY chunk_index ASC, updated_at DESC, chunk_id ASC" in normalized:
+                rows = sorted(rows, key=lambda row: str(row.get("chunk_id") or ""))
             rows = sorted(
-                (row for row in self.chunks if row.get("asset_id") in selected),
-                key=lambda row: (
-                    str(row.get("asset_id") or ""),
-                    int(row.get("chunk_index") or 0),
-                ),
+                rows,
+                key=lambda row: str(row.get("updated_at") or ""),
+                reverse=True,
             )
+            rows = sorted(rows, key=lambda row: int(row.get("chunk_index") or 0))
+            rows = sorted(rows, key=lambda row: str(row.get("asset_id") or ""))
             bounded: list[dict[str, Any]] = []
             counts: dict[str, int] = {}
             for row in rows:
@@ -150,7 +162,12 @@ def _repository(connection: _SnapshotConnection):
     from apps.api.hxy_knowledge.repository import KnowledgeRepository
 
     repository = KnowledgeRepository("postgresql://snapshot.test/hxy")
-    repository.connect = lambda: connection
+
+    def connect() -> _SnapshotConnection:
+        connection.connect_calls += 1
+        return connection
+
+    repository.connect = connect
     return repository
 
 
@@ -192,6 +209,9 @@ def test_activation_snapshot_resolves_only_explicit_asset_ids_in_caller_order() 
         if re.match(r"^(?:SELECT|WITH)\b", sql, re.IGNORECASE)
     ]
     assert len(data_reads) == 3
+    assert connection.connect_calls == 1
+    assert connection.context_entries == 1
+    assert connection.context_exits == 1
     assert not any(
         re.search(r"\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\b", sql, re.IGNORECASE)
         for sql, _params in connection.statements
@@ -357,6 +377,42 @@ def test_evidence_count_and_content_are_bounded_per_asset() -> None:
     assert "WHERE evidence_rank <= %s" in chunk_sql
     assert "ORDER BY asset_id, chunk_index" in chunk_sql
     assert chunk_params == (["asset-product"], 12, 2)
+
+
+def test_evidence_order_uses_chunk_id_as_a_private_unique_tiebreaker() -> None:
+    chunks = [
+        {
+            "chunk_id": chunk_id,
+            "asset_id": "asset-product",
+            "title": title,
+            "source_path": "knowledge/private/产品体系.md",
+            "normalized_path": "knowledge/private/产品体系.md",
+            "domain": "product",
+            "stage": "preparation",
+            "chunk_index": 0,
+            "updated_at": "2026-07-17T12:00:00Z",
+            "content": title,
+        }
+        for chunk_id, title in (("chunk-b", "片段 B"), ("chunk-a", "片段 A"))
+    ]
+    connection = _SnapshotConnection(chunks=chunks)
+
+    snapshot = _repository(connection).core10_activation_snapshot(
+        product_asset_ids=["asset-product"],
+        operations_asset_ids=[],
+    )
+
+    evidence = snapshot["product_sources"][0]["evidence"]
+    assert [item["title"] for item in evidence] == ["片段 A", "片段 B"]
+    assert all("chunk_id" not in item for item in evidence)
+    chunk_sql = next(
+        sql for sql, _params in connection.statements if "hxy_knowledge_chunks" in sql
+    )
+    assert "ORDER BY chunk_index ASC, updated_at DESC, chunk_id ASC" in chunk_sql
+    assert (
+        "ORDER BY asset_id, chunk_index, updated_at DESC, chunk_id ASC"
+        in chunk_sql
+    )
 
 
 def test_snapshot_returns_every_approved_answer_card_without_truncation() -> None:

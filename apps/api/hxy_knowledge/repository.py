@@ -696,17 +696,18 @@ class KnowledgeRepository:
                 chunk_rows = conn.execute(
                     """
                     WITH selected_chunks AS (
-                        SELECT c.asset_id, c.title, c.source_path, c.normalized_path,
-                               c.domain, c.stage, c.chunk_index, c.content, c.updated_at
+                        SELECT c.chunk_id, c.asset_id, c.title, c.source_path,
+                               c.normalized_path, c.domain, c.stage, c.chunk_index,
+                               c.content, c.updated_at
                         FROM hxy_knowledge_chunks AS c
                         WHERE c.asset_id = ANY(%s)
                     ), ranked_chunks AS (
-                        SELECT asset_id, title, source_path, normalized_path,
-                               domain, stage, chunk_index,
+                        SELECT chunk_id, asset_id, title, source_path, normalized_path,
+                               domain, stage, chunk_index, updated_at,
                                LEFT(content, %s) AS content,
                                ROW_NUMBER() OVER (
                                    PARTITION BY asset_id
-                                   ORDER BY chunk_index ASC, updated_at DESC
+                                   ORDER BY chunk_index ASC, updated_at DESC, chunk_id ASC
                                ) AS evidence_rank
                         FROM selected_chunks
                     )
@@ -714,7 +715,7 @@ class KnowledgeRepository:
                            domain, stage, chunk_index, content
                     FROM ranked_chunks
                     WHERE evidence_rank <= %s
-                    ORDER BY asset_id, chunk_index
+                    ORDER BY asset_id, chunk_index, updated_at DESC, chunk_id ASC
                     """,
                     (
                         selected_asset_ids,
