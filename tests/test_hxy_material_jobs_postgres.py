@@ -458,6 +458,12 @@ def test_postgres_material_queue_lease_reclaim_and_completion() -> None:
         assert postflight["status"] == "passed"
     finally:
         with psycopg.connect(DATABASE_URL) as connection:
+            connection.execute("SET LOCAL session_replication_role = replica")
+            connection.execute(
+                "DELETE FROM hxy_material_authority_events WHERE material_id = %s",
+                (material_id,),
+            )
+            connection.execute("SET LOCAL session_replication_role = origin")
             connection.execute(
                 "DELETE FROM hxy_product_materials WHERE material_id = %s",
                 (material_id,),
