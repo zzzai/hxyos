@@ -35,6 +35,34 @@ def _source(asset_id: str) -> dict[str, object]:
     }
 
 
+def _constitution_draft() -> dict[str, object]:
+    return {
+        "version": "fixture-constitution.v1",
+        "core_statements": {
+            "brand_identity": "Fixture identity.",
+            "service_facts": ["Fixture service fact."],
+        },
+        "role_variants": {
+            "founder": "Fixture founder wording.",
+            "headquarters": "Fixture headquarters wording.",
+            "store_manager": "Fixture store manager wording.",
+            "store_staff": "Fixture store staff wording.",
+        },
+        "forbidden_interpretations": [
+            {
+                "statement": "Fixture forbidden interpretation.",
+                "blocked_terms": ["fixture-blocked-term"],
+            }
+        ],
+        "source_references": [
+            {
+                "source_id": "asset-brand-001",
+                "authority": "official_internal",
+            }
+        ],
+    }
+
+
 def _packet_inputs() -> dict[str, object]:
     return {
         "report": _report(*FAILED_CASES),
@@ -42,15 +70,11 @@ def _packet_inputs() -> dict[str, object]:
             "status": "missing",
             "active_version": None,
         },
-        "constitution_draft": {
-            "version": "fixture-constitution.v1",
-            "core_statements": {"brand_identity": "Fixture identity."},
-            "source_references": [{"source_id": "asset-brand-001"}],
-        },
+        "constitution_draft": _constitution_draft(),
         "product_sources": [_source("asset-product-001")],
         "operations_sources": [_source("asset-operations-001")],
         "reception_draft": {
-            "question": "Fixture reception question?",
+            "question_pattern": "Fixture reception question?",
             "answer": "Fixture reception answer with a clear service boundary.",
             "source_ids": ["asset-operations-001"],
         },
@@ -113,6 +137,54 @@ def test_builds_read_only_four_group_packet_for_current_core10_failures() -> Non
     encoded = json.dumps(packet, ensure_ascii=True, sort_keys=True)
     assert "claim_id" not in encoded
     assert "chunk_id" not in encoded
+
+
+def test_canonical_reception_draft_drives_proposal_and_write_intent() -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+    )
+
+    packet = build_core10_activation_packet(**_packet_inputs())
+    reception_item = next(
+        item
+        for item in packet["items"]
+        if item["group_id"] == "reception_standard_answer_card"
+    )
+
+    assert "invalid_reception_draft" not in reception_item["blockers"]
+    proposed_draft = reception_item["proposed_authority"]["draft"]
+    assert proposed_draft["question_pattern"] == "Fixture reception question?"
+    assert "question" not in proposed_draft
+    create_intent = next(
+        intent
+        for intent in reception_item["exact_write_intents"]
+        if intent["operation"] == "create_approved_answer_card"
+    )
+    assert create_intent["question_pattern"] == "Fixture reception question?"
+    assert "question" not in create_intent
+
+
+def test_legacy_reception_question_is_normalized_to_question_pattern() -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+    )
+
+    inputs = _packet_inputs()
+    reception_draft = dict(inputs["reception_draft"])
+    reception_draft["question"] = reception_draft.pop("question_pattern")
+    inputs["reception_draft"] = reception_draft
+
+    packet = build_core10_activation_packet(**inputs)
+    reception_item = next(
+        item
+        for item in packet["items"]
+        if item["group_id"] == "reception_standard_answer_card"
+    )
+
+    assert "invalid_reception_draft" not in reception_item["blockers"]
+    proposed_draft = reception_item["proposed_authority"]["draft"]
+    assert proposed_draft["question_pattern"] == "Fixture reception question?"
+    assert "question" not in proposed_draft
 
 
 def test_ignores_mapped_cases_that_are_not_currently_failing() -> None:
@@ -633,39 +705,54 @@ def test_reception_card_requires_at_least_one_source_id() -> None:
 
 
 @pytest.mark.parametrize(
-    "invalid_draft",
+    "invalid_case",
     [
-        {
-            "core_statements": {"brand_identity": "Fixture identity."},
-            "source_references": [{"source_id": "asset-brand-001"}],
-        },
-        {
-            "version": "   ",
-            "core_statements": {"brand_identity": "Fixture identity."},
-            "source_references": [{"source_id": "asset-brand-001"}],
-        },
-        {
-            "version": "fixture-constitution.v1",
-            "source_references": [{"source_id": "asset-brand-001"}],
-        },
-        {
-            "version": "fixture-constitution.v1",
-            "core_statements": {},
-            "source_references": [{"source_id": "asset-brand-001"}],
-        },
-        {
-            "version": "fixture-constitution.v1",
-            "core_statements": ["Fixture identity."],
-            "source_references": [{"source_id": "asset-brand-001"}],
-        },
+        "unsafe_version",
+        "blank_brand_identity",
+        "empty_service_facts",
+        "non_string_service_fact",
+        "missing_role_variant",
+        "blank_role_variant",
+        "empty_forbidden_interpretations",
+        "blank_forbidden_statement",
+        "empty_blocked_terms",
+        "empty_source_references",
+        "unsafe_source_id",
+        "invalid_source_authority",
     ],
 )
 def test_nonempty_invalid_constitution_draft_fails_closed(
-    invalid_draft: dict[str, object],
+    invalid_case: str,
 ) -> None:
     from apps.api.hxy_knowledge.core10_activation import (
         build_core10_activation_packet,
     )
+
+    invalid_draft = _constitution_draft()
+    if invalid_case == "unsafe_version":
+        invalid_draft["version"] = "../fixture"
+    elif invalid_case == "blank_brand_identity":
+        invalid_draft["core_statements"]["brand_identity"] = "   "
+    elif invalid_case == "empty_service_facts":
+        invalid_draft["core_statements"]["service_facts"] = []
+    elif invalid_case == "non_string_service_fact":
+        invalid_draft["core_statements"]["service_facts"] = [7]
+    elif invalid_case == "missing_role_variant":
+        invalid_draft["role_variants"].pop("store_staff")
+    elif invalid_case == "blank_role_variant":
+        invalid_draft["role_variants"]["store_staff"] = "   "
+    elif invalid_case == "empty_forbidden_interpretations":
+        invalid_draft["forbidden_interpretations"] = []
+    elif invalid_case == "blank_forbidden_statement":
+        invalid_draft["forbidden_interpretations"][0]["statement"] = "   "
+    elif invalid_case == "empty_blocked_terms":
+        invalid_draft["forbidden_interpretations"][0]["blocked_terms"] = []
+    elif invalid_case == "empty_source_references":
+        invalid_draft["source_references"] = []
+    elif invalid_case == "unsafe_source_id":
+        invalid_draft["source_references"][0]["source_id"] = "../fixture"
+    elif invalid_case == "invalid_source_authority":
+        invalid_draft["source_references"][0]["authority"] = "external_reference"
 
     inputs = _packet_inputs()
     inputs["constitution_draft"] = invalid_draft
@@ -682,11 +769,37 @@ def test_nonempty_invalid_constitution_draft_fails_closed(
 
 
 @pytest.mark.parametrize(
+    "allowed_authority",
+    ["official_internal", "approved_answer_card"],
+)
+def test_constitution_draft_accepts_only_allowed_source_authorities(
+    allowed_authority: str,
+) -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+    )
+
+    inputs = _packet_inputs()
+    constitution_draft = _constitution_draft()
+    constitution_draft["source_references"][0]["authority"] = allowed_authority
+    inputs["constitution_draft"] = constitution_draft
+
+    packet = build_core10_activation_packet(**inputs)
+    constitution_item = next(
+        item
+        for item in packet["items"]
+        if item["group_id"] == "brand_constitution"
+    )
+
+    assert "invalid_constitution_draft" not in constitution_item["blockers"]
+
+
+@pytest.mark.parametrize(
     ("field", "invalid_value"),
     [
-        ("question", None),
-        ("question", "   "),
-        ("question", 7),
+        ("question_pattern", None),
+        ("question_pattern", "   "),
+        ("question_pattern", 7),
         ("answer", None),
         ("answer", "   "),
         ("answer", ["Fixture answer"]),
@@ -747,7 +860,7 @@ def test_unresolved_reception_source_evidence_fails_closed() -> None:
 
 @pytest.mark.parametrize(
     "resolved_source_id",
-    ["asset-brand-001", "asset-product-001", "asset-operations-001"],
+    ["asset-product-001", "asset-operations-001"],
 )
 def test_reception_evidence_accepts_sources_resolved_by_current_packet(
     resolved_source_id: str,
@@ -774,3 +887,83 @@ def test_reception_evidence_accepts_sources_resolved_by_current_packet(
     assert reception_item["source_evidence"] == [
         {"asset_id": resolved_source_id}
     ]
+
+
+@pytest.mark.parametrize(
+    "source_record",
+    [
+        {
+            "asset_id": "asset-untrusted-snapshot",
+            "source_origin": "external",
+            "source_authority": "external_reference",
+            "authority_version": 1,
+        },
+        {
+            "asset_id": "asset-untrusted-snapshot",
+            "source_origin": "unknown",
+            "source_authority": "external_reference",
+            "authority_version": 1,
+        },
+        {
+            "asset_id": "asset-untrusted-snapshot",
+            "source_origin": "internal",
+            "source_authority": "external_reference",
+            "authority_version": 1,
+        },
+        {
+            "asset_id": "asset-untrusted-snapshot",
+            "source_origin": "internal",
+            "source_authority": "internal_material",
+            "authority_version": 0,
+        },
+    ],
+)
+def test_untrusted_source_snapshot_cannot_resolve_reception_evidence(
+    source_record: dict[str, object],
+) -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+    )
+
+    inputs = _packet_inputs()
+    inputs["product_sources"] = [source_record]
+    inputs["reception_draft"] = {
+        "question_pattern": "Fixture reception question?",
+        "answer": "Fixture reception answer with a clear service boundary.",
+        "source_ids": ["asset-untrusted-snapshot"],
+    }
+
+    packet = build_core10_activation_packet(**inputs)
+    reception_item = next(
+        item
+        for item in packet["items"]
+        if item["group_id"] == "reception_standard_answer_card"
+    )
+
+    assert "unresolved_source_evidence" in reception_item["blockers"]
+    assert reception_item["exact_write_intents"] == []
+    assert reception_item["source_evidence"] == []
+
+
+def test_constitution_draft_self_report_cannot_resolve_reception_evidence() -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+    )
+
+    inputs = _packet_inputs()
+    inputs["reception_draft"] = {
+        "question_pattern": "Fixture reception question?",
+        "answer": "Fixture reception answer with a clear service boundary.",
+        "source_ids": ["asset-brand-001"],
+    }
+
+    packet = build_core10_activation_packet(**inputs)
+    reception_item = next(
+        item
+        for item in packet["items"]
+        if item["group_id"] == "reception_standard_answer_card"
+    )
+
+    assert "unresolved_source_evidence" in reception_item["blockers"]
+    assert reception_item["exact_write_intents"] == []
+    assert reception_item["source_evidence"] == []

@@ -19,6 +19,18 @@ GROUP_CASES = {
 }
 _FORBIDDEN_KEYS = {"claim_id", "chunk_id"}
 _PUBLIC_ASSET_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$")
+_CONSTITUTION_VERSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
+_CONSTITUTION_SOURCE_AUTHORITIES = {
+    "approved_answer_card",
+    "official_internal",
+}
+_REQUIRED_ROLE_VARIANTS = (
+    "founder",
+    "headquarters",
+    "store_manager",
+    "store_staff",
+)
+_RESOLVED_SOURCE_AUTHORITIES = {"internal_material", "official_internal"}
 _SENSITIVE_ASSET_ID_HINTS = (
     "credential",
     "password",
@@ -177,13 +189,31 @@ def _safe_reception_source_ids(reception_draft: dict[str, Any]) -> list[str]:
 def _safe_reception_draft(
     reception_draft: dict[str, Any] | None,
 ) -> Any:
-    safe_draft = _json_safe(reception_draft)
-    if isinstance(safe_draft, dict) and isinstance(reception_draft, dict):
-        if "source_ids" in reception_draft:
+    canonical_draft = _canonical_reception_draft(reception_draft)
+    safe_draft = _json_safe(canonical_draft)
+    if isinstance(safe_draft, dict) and isinstance(canonical_draft, dict):
+        if "source_ids" in canonical_draft:
             safe_draft["source_ids"] = _safe_reception_source_ids(
-                reception_draft
+                canonical_draft
             )
     return safe_draft
+
+
+def _reception_question_pattern(reception_draft: dict[str, Any]) -> Any:
+    if "question_pattern" in reception_draft:
+        return reception_draft.get("question_pattern")
+    return reception_draft.get("question")
+
+
+def _canonical_reception_draft(
+    reception_draft: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(reception_draft, dict):
+        return None
+    canonical = dict(reception_draft)
+    canonical["question_pattern"] = _reception_question_pattern(reception_draft)
+    canonical.pop("question", None)
+    return canonical
 
 
 def _reception_source_blockers(
@@ -205,14 +235,28 @@ def _reception_source_blockers(
 def _resolved_source_ids(
     product_sources: list[dict[str, Any]],
     operations_sources: list[dict[str, Any]],
-    constitution_draft: dict[str, Any] | None,
 ) -> set[str]:
-    evidence = [
-        *_source_evidence(product_sources),
-        *_source_evidence(operations_sources),
-        *_constitution_evidence(constitution_draft),
-    ]
-    return {str(item["asset_id"]) for item in evidence}
+    return {
+        str(source["asset_id"])
+        for sources in (product_sources, operations_sources)
+        for source in sources
+        if _is_valid_resolved_source_snapshot(source)
+    }
+
+
+def _is_valid_resolved_source_snapshot(source: Any) -> bool:
+    if not isinstance(source, dict):
+        return False
+    authority_version = source.get("authority_version")
+    return (
+        _is_safe_public_asset_id(source.get("asset_id"))
+        and str(source.get("source_origin") or "").strip().lower() == "internal"
+        and str(source.get("source_authority") or "").strip().lower()
+        in _RESOLVED_SOURCE_AUTHORITIES
+        and isinstance(authority_version, int)
+        and not isinstance(authority_version, bool)
+        and authority_version >= 1
+    )
 
 
 def _is_nonblank_string(value: Any) -> bool:
@@ -223,16 +267,57 @@ def _is_valid_constitution_draft(
     constitution_draft: dict[str, Any],
 ) -> bool:
     core_statements = constitution_draft.get("core_statements")
-    return (
-        _is_nonblank_string(constitution_draft.get("version"))
+    if not (
+        isinstance(constitution_draft.get("version"), str)
+        and _CONSTITUTION_VERSION_PATTERN.fullmatch(
+            constitution_draft["version"]
+        )
         and isinstance(core_statements, dict)
-        and bool(core_statements)
+        and _is_nonblank_string(core_statements.get("brand_identity"))
+        and _is_nonblank_string_list(core_statements.get("service_facts"))
+    ):
+        return False
+
+    role_variants = constitution_draft.get("role_variants")
+    if not isinstance(role_variants, dict) or any(
+        not _is_nonblank_string(role_variants.get(role))
+        for role in _REQUIRED_ROLE_VARIANTS
+    ):
+        return False
+
+    forbidden = constitution_draft.get("forbidden_interpretations")
+    if not isinstance(forbidden, list) or not forbidden or any(
+        not isinstance(item, dict)
+        or not _is_nonblank_string(item.get("statement"))
+        or not _is_nonblank_string_list(item.get("blocked_terms"))
+        for item in forbidden
+    ):
+        return False
+
+    references = constitution_draft.get("source_references")
+    return (
+        isinstance(references, list)
+        and bool(references)
+        and all(
+            isinstance(reference, dict)
+            and _is_safe_public_asset_id(reference.get("source_id"))
+            and reference.get("authority") in _CONSTITUTION_SOURCE_AUTHORITIES
+            for reference in references
+        )
+    )
+
+
+def _is_nonblank_string_list(value: Any) -> bool:
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(_is_nonblank_string(item) for item in value)
     )
 
 
 def _is_valid_reception_draft(reception_draft: dict[str, Any]) -> bool:
     return _is_nonblank_string(
-        reception_draft.get("question")
+        _reception_question_pattern(reception_draft)
     ) and _is_nonblank_string(reception_draft.get("answer"))
 
 
@@ -323,7 +408,7 @@ def _approved_card_state(
 ) -> dict[str, int]:
     if not isinstance(reception_draft, dict):
         return {"approved_match_count": 0, "approved_conflict_count": 0}
-    question = _normalized_text(reception_draft.get("question"))
+    question = _normalized_text(_reception_question_pattern(reception_draft))
     answer = _normalized_text(reception_draft.get("answer"))
     matching = 0
     conflicting = 0
@@ -363,7 +448,6 @@ def build_core10_activation_packet(
     resolved_source_ids = _resolved_source_ids(
         product_sources,
         operations_sources,
-        constitution_draft,
     )
 
     group_values = {
@@ -487,11 +571,21 @@ def build_core10_activation_packet(
             if not blockers and not approved_card_state["approved_match_count"]:
                 payload = {
                     "operation": "create_approved_answer_card",
-                    "question": reception_draft.get("question"),
+                    "question_pattern": _reception_question_pattern(
+                        reception_draft
+                    ),
                     "source_ids": _safe_reception_source_ids(reception_draft),
                 }
+                canonical_reception_draft = _canonical_reception_draft(
+                    reception_draft
+                )
                 write_intents.append(
-                    {**payload, "payload_sha256": _payload_sha256(reception_draft)}
+                    {
+                        **payload,
+                        "payload_sha256": _payload_sha256(
+                            canonical_reception_draft
+                        ),
+                    }
                 )
         item = {
             "group_id": group_id,
