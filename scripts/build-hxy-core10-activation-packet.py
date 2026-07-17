@@ -123,8 +123,9 @@ def _resolve_output_root(value: Any) -> Path:
     if _path_has_symlink(lexical, project_root):
         raise PrivateInputError("symlink output is not allowed")
     resolved = lexical.resolve(strict=False)
-    if not _is_below(resolved, _private_root()):
-        raise PrivateInputError("output path must remain private")
+    expected = (ROOT / "data" / "private" / "core10-activation").resolve()
+    if resolved != expected:
+        raise PrivateInputError("output path must use the fixed private location")
     return resolved
 
 
@@ -214,8 +215,10 @@ def _print_summary(
 ) -> None:
     print(f"packet_id={packet['packet_id']}")
     print(f"item_count={packet['item_count']}")
+    print("preview_only=true")
     print("write_to_database=false")
     print("publish_allowed=false")
+    print("official_use_allowed=false")
     for item in packet["items"]:
         status = (
             "blocked"

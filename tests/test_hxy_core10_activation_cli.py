@@ -137,6 +137,7 @@ def test_write_artifacts_creates_complete_private_business_packet(
         "decisions.sample.json",
     }
     assert json.loads(paths["packet_json"].read_text(encoding="utf-8")) == packet
+    assert packet["preview_only"] is True
 
 
 def test_markdown_is_founder_readable_and_sanitizes_all_business_fields() -> None:
@@ -230,6 +231,7 @@ def test_decision_sample_binds_exactly_four_items_with_safe_defaults() -> None:
     assert sample["preview_only"] is True
     assert sample["write_to_database"] is False
     assert sample["publish_allowed"] is False
+    assert sample["official_use_allowed"] is False
     assert len(sample["decisions"]) == 4
     assert [decision["item_key"] for decision in sample["decisions"]] == list(
         ITEM_KEYS
@@ -250,13 +252,9 @@ def test_decision_sample_binds_exactly_four_items_with_safe_defaults() -> None:
             "item_fingerprint"
         ]
         assert decision["reason"]
-    assert decisions_by_key["product_system_sources"]["action"] == (
-        "request_correction"
-    )
     assert all(
-        decision["action"] == "approve"
-        for item_key, decision in decisions_by_key.items()
-        if item_key != "product_system_sources"
+        decision["action"] == "request_correction"
+        for decision in decisions_by_key.values()
     )
 
 
@@ -359,6 +357,176 @@ def test_existing_complete_artifact_is_reused_idempotently(
     assert second == first
     assert {key: path.read_bytes() for key, path in second.items()} == before
     assert list(tmp_path.iterdir()) == [first["packet_json"].parent]
+
+
+def test_existing_artifact_with_tampered_packet_is_not_reused(
+    tmp_path: Path,
+) -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        write_core10_activation_artifacts,
+    )
+
+    packet = _packet()
+    paths = write_core10_activation_artifacts(tmp_path, packet)
+    tampered = json.loads(paths["packet_json"].read_text(encoding="utf-8"))
+    tampered["items"][0]["why_needed"] = "tampered content"
+    paths["packet_json"].write_text(
+        json.dumps(tampered, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="conflict"):
+        write_core10_activation_artifacts(tmp_path, packet)
+
+
+@pytest.mark.parametrize(
+    ("artifact_key", "replacement"),
+    [
+        ("packet_markdown", "tampered markdown\n"),
+        ("decision_sample", '{"tampered": true}\n'),
+    ],
+)
+def test_existing_artifact_with_tampered_rendered_file_is_not_reused(
+    tmp_path: Path,
+    artifact_key: str,
+    replacement: str,
+) -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        write_core10_activation_artifacts,
+    )
+
+    packet = _packet()
+    paths = write_core10_activation_artifacts(tmp_path, packet)
+    paths[artifact_key].write_text(replacement, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="conflict"):
+        write_core10_activation_artifacts(tmp_path, packet)
+
+
+def test_existing_artifact_with_overly_broad_permissions_is_not_reused(
+    tmp_path: Path,
+) -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        write_core10_activation_artifacts,
+    )
+
+    packet = _packet()
+    paths = write_core10_activation_artifacts(tmp_path, packet)
+    paths["packet_json"].chmod(0o644)
+
+    with pytest.raises(ValueError, match="conflict"):
+        write_core10_activation_artifacts(tmp_path, packet)
+
+
+def test_existing_artifact_with_tampered_generated_at_is_not_reused(
+    tmp_path: Path,
+) -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        write_core10_activation_artifacts,
+    )
+
+    packet = _packet()
+    paths = write_core10_activation_artifacts(tmp_path, packet)
+    tampered = json.loads(paths["packet_json"].read_text(encoding="utf-8"))
+    tampered["generated_at"] = "9999-12-31T23:59:59Z"
+    paths["packet_json"].write_text(
+        json.dumps(tampered, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="conflict"):
+        write_core10_activation_artifacts(tmp_path, packet)
+
+
+def test_writer_rejects_packet_mutated_after_fingerprinting(tmp_path: Path) -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        write_core10_activation_artifacts,
+    )
+
+    packet = _packet()
+    packet["items"][0]["why_needed"] = "secret postgresql://hidden.invalid/hxy"
+
+    with pytest.raises(ValueError, match="fingerprint"):
+        write_core10_activation_artifacts(tmp_path, packet)
+
+
+@pytest.mark.parametrize(
+    ("field", "unsafe_value"),
+    [
+        ("preview_only", False),
+        ("write_to_database", True),
+        ("publish_allowed", True),
+        ("official_use_allowed", True),
+        ("requires_founder_decision", False),
+    ],
+)
+def test_writer_rejects_refingerprinted_unsafe_governance_contract(
+    tmp_path: Path,
+    field: str,
+    unsafe_value: bool,
+) -> None:
+    from apps.api.hxy_knowledge import core10_activation
+
+    packet = _packet()
+    packet[field] = unsafe_value
+    packet["packet_fingerprint"] = core10_activation._packet_fingerprint_digest(
+        packet
+    )
+    packet["packet_id"] = (
+        f"core10-activation:{packet['packet_fingerprint'][:12]}"
+    )
+
+    with pytest.raises(ValueError, match="governance"):
+        core10_activation.write_core10_activation_artifacts(tmp_path, packet)
+
+
+def test_writer_rejects_numeric_value_for_boolean_governance_flag(
+    tmp_path: Path,
+) -> None:
+    from apps.api.hxy_knowledge import core10_activation
+
+    packet = _packet()
+    packet["preview_only"] = 1
+    packet["packet_fingerprint"] = core10_activation._packet_fingerprint_digest(
+        packet
+    )
+    packet["packet_id"] = (
+        f"core10-activation:{packet['packet_fingerprint'][:12]}"
+    )
+    packet["artifact_fingerprint"] = (
+        core10_activation._artifact_fingerprint_digest(packet)
+    )
+
+    with pytest.raises(ValueError, match="governance"):
+        core10_activation.write_core10_activation_artifacts(tmp_path, packet)
+
+
+def test_writer_rejects_invalid_generated_at_even_with_updated_artifact_digest(
+    tmp_path: Path,
+) -> None:
+    from apps.api.hxy_knowledge import core10_activation
+
+    packet = _packet()
+    packet["generated_at"] = "not-a-utc-timestamp"
+    packet["artifact_fingerprint"] = (
+        core10_activation._artifact_fingerprint_digest(packet)
+    )
+
+    with pytest.raises(ValueError, match="generated_at"):
+        core10_activation.write_core10_activation_artifacts(tmp_path, packet)
+
+
+def test_writer_rejects_missing_generated_at(tmp_path: Path) -> None:
+    from apps.api.hxy_knowledge import core10_activation
+
+    packet = _packet()
+    packet["generated_at"] = None
+    packet["artifact_fingerprint"] = (
+        core10_activation._artifact_fingerprint_digest(packet)
+    )
+
+    with pytest.raises(ValueError, match="generated_at"):
+        core10_activation.write_core10_activation_artifacts(tmp_path, packet)
 
 
 def _load_cli_module() -> Any:
@@ -488,8 +656,10 @@ def test_cli_builds_packet_from_one_read_only_snapshot_without_leaking_content(
     output = capsys.readouterr()
     assert output.err == ""
     assert "item_count=4" in output.out
+    assert "preview_only=true" in output.out
     assert "write_to_database=false" in output.out
     assert "publish_allowed=false" in output.out
+    assert "official_use_allowed=false" in output.out
     assert "status=ready_for_founder_decision" in output.out
     assert "packet.json" in output.out
     assert str(tmp_path) not in output.out
@@ -652,3 +822,27 @@ def test_cli_missing_database_env_fails_without_creating_artifacts_or_leaking_na
         path.is_dir() and path.name.startswith("core10-activation-")
         for path in inputs["private_root"].iterdir()
     )
+
+
+def test_cli_rejects_alternate_private_output_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cli = _load_cli_module()
+    inputs = _write_cli_inputs(tmp_path)
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    monkeypatch.setenv("HXY_DATABASE_URL", "postgresql://snapshot.test/hxy")
+
+    assert cli.main(
+        [
+            "--report",
+            str(inputs["report"]),
+            "--selection",
+            str(inputs["selection"]),
+            "--output-root",
+            "data/private/alternate-core10-output",
+        ]
+    ) == 2
+    captured = capsys.readouterr()
+    assert "invalid private input" in captured.err.lower()

@@ -5,7 +5,9 @@ import json
 import os
 import re
 import shutil
+import stat
 import tempfile
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -48,10 +50,12 @@ _ITEM_UPSTREAM_KEYS = {
     ),
 }
 _PACKET_IDENTITY_EXCLUDED_KEYS = {
+    "artifact_fingerprint",
     "generated_at",
     "packet_id",
     "packet_fingerprint",
 }
+_ARTIFACT_FINGERPRINT_EXCLUDED_KEYS = {"artifact_fingerprint"}
 _FORBIDDEN_KEYS = {"claim_id", "chunk_id"}
 _PUBLIC_ASSET_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$")
 _CONSTITUTION_VERSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
@@ -626,6 +630,15 @@ def _packet_fingerprint_digest(packet: dict[str, Any]) -> str:
     return json_fingerprint(packet_identity)["digest"]
 
 
+def _artifact_fingerprint_digest(packet: dict[str, Any]) -> str:
+    artifact_identity = {
+        key: value
+        for key, value in packet.items()
+        if key not in _ARTIFACT_FINGERPRINT_EXCLUDED_KEYS
+    }
+    return json_fingerprint(artifact_identity)["digest"]
+
+
 def _is_sha256_digest(value: Any) -> bool:
     return isinstance(value, str) and bool(
         re.fullmatch(r"[0-9a-f]{64}", value)
@@ -761,6 +774,97 @@ def _core10_artifact_packet_items(
     return packet_id, packet_fingerprint, items
 
 
+def _verify_core10_activation_packet_fingerprints(
+    packet: dict[str, Any],
+) -> None:
+    packet_id, packet_fingerprint, items = _core10_artifact_packet_items(packet)
+    upstream_fingerprints = packet.get("upstream_fingerprints")
+    if not isinstance(upstream_fingerprints, dict):
+        raise ValueError("core10 activation packet fingerprint inputs are invalid")
+
+    for item in items:
+        try:
+            item_fingerprint = _item_fingerprint(
+                item,
+                upstream_fingerprints=upstream_fingerprints,
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError(
+                "core10 activation packet item fingerprint inputs are invalid"
+            ) from error
+        if item["item_fingerprint"] != item_fingerprint:
+            raise ValueError("core10 activation packet item fingerprint mismatch")
+
+    if _packet_fingerprint_digest(packet) != packet_fingerprint:
+        raise ValueError("core10 activation packet fingerprint mismatch")
+    if packet_id != f"core10-activation:{packet_fingerprint[:12]}":
+        raise ValueError("core10 activation packet id fingerprint mismatch")
+    artifact_fingerprint = packet.get("artifact_fingerprint")
+    if not _is_sha256_digest(artifact_fingerprint):
+        raise ValueError("core10 activation artifact fingerprint is invalid")
+    if _artifact_fingerprint_digest(packet) != artifact_fingerprint:
+        raise ValueError("core10 activation artifact fingerprint mismatch")
+
+
+def _verify_core10_activation_packet_governance(
+    packet: dict[str, Any],
+) -> None:
+    _packet_id, _packet_fingerprint, items = _core10_artifact_packet_items(packet)
+    if (
+        packet.get("version") != PACKET_VERSION
+        or type(packet.get("item_count")) is not int
+        or packet.get("item_count") != len(ITEM_CASES)
+        or packet.get("preview_only") is not True
+        or packet.get("write_to_database") is not False
+        or packet.get("publish_allowed") is not False
+        or packet.get("official_use_allowed") is not False
+        or packet.get("requires_founder_decision") is not True
+        or packet.get("authority_rule") != AUTHORITY_RULE
+    ):
+        raise ValueError("core10 activation packet governance contract is invalid")
+
+    generated_at = packet.get("generated_at")
+    if not isinstance(generated_at, str) or not generated_at.strip():
+        raise ValueError("core10 activation packet generated_at is invalid")
+    try:
+        parsed_generated_at = datetime.fromisoformat(
+            generated_at.replace("Z", "+00:00")
+        )
+    except ValueError as error:
+        raise ValueError(
+            "core10 activation packet generated_at is invalid"
+        ) from error
+    if (
+        parsed_generated_at.tzinfo is None
+        or parsed_generated_at.utcoffset() != timedelta(0)
+    ):
+        raise ValueError("core10 activation packet generated_at must be UTC")
+
+    upstream_fingerprints = packet.get("upstream_fingerprints")
+    if not isinstance(upstream_fingerprints, dict) or set(
+        upstream_fingerprints
+    ) != set(_UPSTREAM_INPUT_KEYS):
+        raise ValueError("core10 activation packet governance inputs are invalid")
+    for fingerprint in upstream_fingerprints.values():
+        if (
+            not isinstance(fingerprint, dict)
+            or set(fingerprint) != {"algorithm", "digest"}
+            or fingerprint.get("algorithm") != "sha256"
+            or not _is_sha256_digest(fingerprint.get("digest"))
+        ):
+            raise ValueError(
+                "core10 activation packet governance fingerprint is invalid"
+            )
+
+    if any(
+        item.get("official_use_allowed") is not False
+        or item.get("write_allowed") is not False
+        or item.get("decision_options") != list(DECISION_OPTIONS)
+        for item in items
+    ):
+        raise ValueError("core10 activation item governance contract is invalid")
+
+
 def _append_artifact_markdown_section(
     lines: list[str],
     title: str,
@@ -828,17 +932,12 @@ def build_core10_activation_decision_sample(
     packet_id, packet_fingerprint, items = _core10_artifact_packet_items(packet)
     decisions = []
     for item in items:
-        blocked = bool(item.get("blockers"))
         decisions.append(
             {
                 "item_key": item["item_key"],
                 "item_fingerprint": item["item_fingerprint"],
-                "action": "request_correction" if blocked else "approve",
-                "reason": (
-                    "Replace this placeholder with the founder's correction reason."
-                    if blocked
-                    else "Replace this placeholder with the founder's approval reason."
-                ),
+                "action": "request_correction",
+                "reason": "Replace this placeholder with the founder's decision reason.",
             }
         )
     return {
@@ -870,6 +969,8 @@ def _existing_core10_artifact_paths(
     try:
         if target.is_symlink() or not target.is_dir():
             raise conflict
+        if stat.S_IMODE(target.stat().st_mode) != 0o700:
+            raise conflict
         paths = _core10_artifact_paths(target)
         entries = list(target.iterdir())
         if {entry.name for entry in entries} != set(_ARTIFACT_FILENAMES.values()):
@@ -877,6 +978,11 @@ def _existing_core10_artifact_paths(
         if any(path.is_symlink() or not path.is_file() for path in paths.values()):
             raise conflict
         if any(path.stat().st_size == 0 for path in paths.values()):
+            raise conflict
+        if any(
+            stat.S_IMODE(path.stat().st_mode) != 0o600
+            for path in paths.values()
+        ):
             raise conflict
 
         packet_payload = json.loads(
@@ -891,13 +997,20 @@ def _existing_core10_artifact_paths(
             dict,
         ):
             raise conflict
+        try:
+            _verify_core10_activation_packet_governance(packet_payload)
+            _verify_core10_activation_packet_fingerprints(packet_payload)
+        except (KeyError, TypeError, ValueError) as error:
+            raise conflict from error
+        if packet_payload.get("packet_id") != packet_id:
+            raise conflict
         if packet_payload.get("packet_fingerprint") != packet_fingerprint:
             raise conflict
-        if decision_payload.get("packet_id") != packet_id:
+        if markdown != render_core10_activation_packet_markdown(packet_payload):
             raise conflict
-        if decision_payload.get("packet_fingerprint") != packet_fingerprint:
-            raise conflict
-        if not markdown.strip():
+        if decision_payload != build_core10_activation_decision_sample(
+            packet_payload
+        ):
             raise conflict
         return paths
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
@@ -925,6 +1038,8 @@ def write_core10_activation_artifacts(
     private_root: Path,
     packet: dict[str, Any],
 ) -> dict[str, Path]:
+    _verify_core10_activation_packet_governance(packet)
+    _verify_core10_activation_packet_fingerprints(packet)
     packet_id, packet_fingerprint, _items = _core10_artifact_packet_items(packet)
     resolved_root = Path(private_root).resolve()
     resolved_root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -944,9 +1059,10 @@ def write_core10_activation_artifacts(
         indent=2,
         sort_keys=True,
     ) + "\n"
-    packet_markdown = render_core10_activation_packet_markdown(packet)
+    stored_packet = json.loads(packet_json)
+    packet_markdown = render_core10_activation_packet_markdown(stored_packet)
     decision_json = json.dumps(
-        build_core10_activation_decision_sample(packet),
+        build_core10_activation_decision_sample(stored_packet),
         allow_nan=False,
         ensure_ascii=False,
         indent=2,
@@ -1174,6 +1290,7 @@ def build_core10_activation_packet(
         "version": PACKET_VERSION,
         "generated_at": timestamp,
         "item_count": len(ITEM_CASES),
+        "preview_only": True,
         "write_to_database": False,
         "publish_allowed": False,
         "official_use_allowed": False,
@@ -1185,6 +1302,7 @@ def build_core10_activation_packet(
     packet_fingerprint = _packet_fingerprint_digest(packet)
     packet["packet_fingerprint"] = packet_fingerprint
     packet["packet_id"] = f"core10-activation:{packet_fingerprint[:12]}"
+    packet["artifact_fingerprint"] = _artifact_fingerprint_digest(packet)
     return _json_safe(packet)
 
 
