@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib
+import json
+from pathlib import Path
 
 import pytest
 
@@ -139,3 +141,100 @@ def test_unknown_source_uses_reference_only_low_confidence_defaults() -> None:
     assert classification["classification_confidence"] == "low"
     assert classification["retrieval_state"] == "eligible_reference"
     assert classification["official_use_allowed"] is False
+
+
+def test_registry_inventories_paths_and_groups_exact_duplicates(tmp_path: Path) -> None:
+    module = importlib.import_module("apps.api.hxy_product.source_registry")
+    inbox = tmp_path / "inbox"
+    internal = inbox / "荷小悦资料" / "02_战略方向" / "品牌核心.md"
+    duplicate = inbox / "荷小悦资料" / "09_知识库与参考资料" / "品牌参考.md"
+    artifact = inbox / "extracted-reference" / "品牌核心.reference.txt"
+    unique = inbox / "未整理" / "raw.bin"
+    internal.parent.mkdir(parents=True)
+    duplicate.parent.mkdir(parents=True)
+    artifact.parent.mkdir(parents=True)
+    unique.parent.mkdir(parents=True)
+    internal.write_text("同一份品牌内容", encoding="utf-8")
+    duplicate.write_text("同一份品牌内容", encoding="utf-8")
+    artifact.write_text("同一份品牌内容", encoding="utf-8")
+    unique.write_bytes(b"\x00\x01\x02")
+
+    registry = module.build_source_registry(inbox)
+
+    records = registry["path_records"]
+    assert [record["source_path"] for record in records] == sorted(
+        record["source_path"] for record in records
+    )
+    assert registry["counts"] == {
+        "path_records": 4,
+        "content_groups": 2,
+        "duplicate_paths": 2,
+        "error_records": 0,
+        "approved_sources": 0,
+    }
+    by_path = {record["source_path"]: record for record in records}
+    canonical_path = "荷小悦资料/02_战略方向/品牌核心.md"
+    duplicate_paths = [
+        "extracted-reference/品牌核心.reference.txt",
+        "荷小悦资料/09_知识库与参考资料/品牌参考.md",
+    ]
+    assert by_path[canonical_path]["derivation"] == "original"
+    assert by_path[canonical_path]["canonical_source_path"] == canonical_path
+    assert by_path[canonical_path]["duplicate_paths"] == duplicate_paths
+    assert by_path[duplicate_paths[0]]["derivation"] == "duplicate_copy"
+    assert by_path[duplicate_paths[1]]["derivation"] == "duplicate_copy"
+    assert all(
+        by_path[path]["content_id"] == by_path[canonical_path]["content_id"]
+        for path in duplicate_paths
+    )
+
+    group = next(
+        item
+        for item in registry["content_groups"]
+        if item["canonical_source_path"] == canonical_path
+    )
+    assert group["path_count"] == 3
+    assert group["effective_sensitivity"] == "internal"
+    assert group["effective_retrieval_state"] == "pending_source_decision"
+    assert "formal_hxy_fact" in group["blocked_use"]
+    assert "retrieval" not in group["blocked_use"]
+
+
+def test_registry_rejects_symlinks_that_escape_the_inbox(tmp_path: Path) -> None:
+    module = importlib.import_module("apps.api.hxy_product.source_registry")
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside", encoding="utf-8")
+    (inbox / "outside-link.txt").symlink_to(outside)
+
+    registry = module.build_source_registry(inbox)
+
+    assert registry["counts"]["path_records"] == 1
+    assert registry["counts"]["content_groups"] == 0
+    assert registry["counts"]["error_records"] == 1
+    record = registry["path_records"][0]
+    assert record["source_path"] == "outside-link.txt"
+    assert record["error"] == {
+        "code": "source_outside_inbox",
+        "message": "source resolves outside inbox",
+    }
+    assert record["content_id"] is None
+    assert record["retrieval_state"] == "excluded"
+
+
+def test_registry_record_payload_is_deterministic(tmp_path: Path) -> None:
+    module = importlib.import_module("apps.api.hxy_product.source_registry")
+    inbox = tmp_path / "inbox"
+    source = inbox / "荷小悦资料" / "03_门店模型" / "首店模型.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("首店验证材料", encoding="utf-8")
+
+    first = module.build_source_registry(inbox)
+    second = module.build_source_registry(inbox)
+
+    assert json.dumps(first, ensure_ascii=False, sort_keys=True) == json.dumps(
+        second,
+        ensure_ascii=False,
+        sort_keys=True,
+    )

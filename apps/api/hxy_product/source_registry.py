@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from pathlib import PurePosixPath
+import hashlib
+from collections import defaultdict
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .source_card import build_source_use_policy
@@ -165,4 +167,207 @@ def classify_source_path(source_path: str) -> dict[str, Any]:
         "classification_confidence": confidence,
         "classification_reasons": reasons,
         **policy,
+    }
+
+
+def _sha256(path: Path) -> tuple[str, int]:
+    before = path.stat()
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    after = path.stat()
+    if before.st_size != after.st_size or before.st_mtime_ns != after.st_mtime_ns:
+        raise OSError("source changed while hashing")
+    return digest.hexdigest(), after.st_size
+
+
+def _source_id(source_path: str) -> str:
+    digest = hashlib.sha256(source_path.encode("utf-8")).hexdigest()
+    return f"path:{digest}"
+
+
+def _error_record(
+    source_path: str,
+    classification: dict[str, Any],
+    *,
+    code: str,
+    message: str,
+    as_of: str | None,
+) -> dict[str, Any]:
+    blocked = list(
+        dict.fromkeys(
+            [
+                *classification["blocked_use"],
+                "retrieval",
+                "generation_context",
+            ]
+        )
+    )
+    return {
+        "version": "hxy-source-card.v2",
+        "source_id": _source_id(source_path),
+        "source_path": source_path,
+        "content_id": None,
+        "source_hash": None,
+        "size_bytes": None,
+        "file_extension": PurePosixPath(source_path).suffix.lower(),
+        **classification,
+        "allowed_use": ["audit_only"],
+        "blocked_use": blocked,
+        "retrieval_state": "excluded",
+        "canonical_source_path": None,
+        "duplicate_paths": [],
+        "error": {"code": code, "message": message},
+        "created_at": as_of,
+    }
+
+
+def _effective_group_policy(records: list[dict[str, Any]]) -> dict[str, Any]:
+    non_artifacts = [
+        record
+        for record in records
+        if record["material_class"] not in {"processing_artifact", "tool_artifact"}
+    ]
+    effective = non_artifacts or records
+    sensitivity_rank = {"public": 0, "internal": 1, "restricted": 2, "founder_only": 3}
+    retrieval_rank = {
+        "eligible_reference": 0,
+        "pending_source_decision": 1,
+        "excluded": 2,
+    }
+    sensitivity = max(
+        (record["sensitivity"] for record in effective),
+        key=sensitivity_rank.__getitem__,
+    )
+    retrieval_state = max(
+        (record["retrieval_state"] for record in effective),
+        key=retrieval_rank.__getitem__,
+    )
+    blocked_use = sorted(
+        {
+            blocked
+            for record in effective
+            for blocked in record["blocked_use"]
+        }
+    )
+    return {
+        "effective_sensitivity": sensitivity,
+        "effective_retrieval_state": retrieval_state,
+        "blocked_use": blocked_use,
+    }
+
+
+def build_source_registry(inbox: Path, *, as_of: str | None = None) -> dict[str, Any]:
+    root = inbox.resolve()
+    if not root.is_dir():
+        raise ValueError("inbox must be an existing directory")
+
+    records: list[dict[str, Any]] = []
+    by_hash: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    paths = sorted(
+        (
+            path
+            for path in root.rglob("*")
+            if path.is_file() or path.is_symlink()
+        ),
+        key=lambda path: path.relative_to(root).as_posix(),
+    )
+
+    for path in paths:
+        source_path = path.relative_to(root).as_posix()
+        classification = classify_source_path(source_path)
+        try:
+            resolved = path.resolve(strict=True)
+            resolved.relative_to(root)
+        except (FileNotFoundError, ValueError):
+            records.append(
+                _error_record(
+                    source_path,
+                    classification,
+                    code="source_outside_inbox",
+                    message="source resolves outside inbox",
+                    as_of=as_of,
+                )
+            )
+            continue
+
+        try:
+            source_hash, size_bytes = _sha256(resolved)
+        except OSError:
+            records.append(
+                _error_record(
+                    source_path,
+                    classification,
+                    code="source_unreadable_or_changed",
+                    message="source could not be read consistently",
+                    as_of=as_of,
+                )
+            )
+            continue
+
+        record = {
+            "version": "hxy-source-card.v2",
+            "source_id": _source_id(source_path),
+            "source_path": source_path,
+            "content_id": f"sha256:{source_hash}",
+            "source_hash": source_hash,
+            "size_bytes": size_bytes,
+            "file_extension": PurePosixPath(source_path).suffix.lower(),
+            **classification,
+            "canonical_source_path": None,
+            "duplicate_paths": [],
+            "error": None,
+            "created_at": as_of,
+        }
+        records.append(record)
+        by_hash[source_hash].append(record)
+
+    content_groups: list[dict[str, Any]] = []
+    for source_hash, group_records in by_hash.items():
+        ordered = sorted(group_records, key=lambda record: record["source_path"])
+        non_artifacts = [
+            record
+            for record in ordered
+            if record["material_class"] not in {"processing_artifact", "tool_artifact"}
+        ]
+        canonical = (non_artifacts or ordered)[0]
+        duplicate_paths = [
+            record["source_path"]
+            for record in ordered
+            if record is not canonical
+        ]
+        for record in ordered:
+            record["canonical_source_path"] = canonical["source_path"]
+            record["duplicate_paths"] = list(duplicate_paths)
+            if record is not canonical:
+                record["derivation"] = "duplicate_copy"
+
+        content_groups.append(
+            {
+                "content_id": f"sha256:{source_hash}",
+                "source_hash": source_hash,
+                "canonical_source_path": canonical["source_path"],
+                "all_source_paths": [record["source_path"] for record in ordered],
+                "path_count": len(ordered),
+                **_effective_group_policy(ordered),
+            }
+        )
+
+    records.sort(key=lambda record: record["source_path"])
+    content_groups.sort(key=lambda group: group["content_id"])
+    return {
+        "version": "hxy-source-registry.v2",
+        "as_of": as_of,
+        "counts": {
+            "path_records": len(records),
+            "content_groups": len(content_groups),
+            "duplicate_paths": sum(max(0, group["path_count"] - 1) for group in content_groups),
+            "error_records": sum(record["error"] is not None for record in records),
+            "approved_sources": sum(
+                record["authority_state"] == "approved" for record in records
+            ),
+        },
+        "path_records": records,
+        "content_groups": content_groups,
     }
