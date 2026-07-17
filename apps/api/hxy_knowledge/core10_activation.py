@@ -51,29 +51,38 @@ _UNSAFE_ASSET_ID_TOKENS = {
 
 # This is a conservative activation preflight, not the complete compliance engine.
 _HIGH_RISK_ANSWER_PATTERNS = (
+    re.compile(
+        r"(?:保证|承诺|确保)[^。！？.!?；;\n]{0,16}"
+        r"(?:效果|有效|疗效|结果|治愈|治疗)"
+    ),
+    re.compile(
+        r"(?:效果|有效|疗效|结果|治愈|治疗)[^。！？.!?；;\n]{0,16}"
+        r"(?:保证|承诺|确保)"
+    ),
     re.compile(r"治疗|治愈|治好|根治|诊断|包好"),
-    re.compile(r"保证(?:效果|有效|疗效|结果)"),
     re.compile(r"(?:一次|立刻)见效"),
     re.compile(r"(?:100\s*%|百分之百)\s*(?:有效|见效)"),
     re.compile(
-        r"\bguarantee(?:d|s)?\s+(?:results?|efficacy|effects?|effectiveness)\b",
+        r"\b(?:guarantee|ensure|promise|commit)(?:s|d)?\b"
+        r"[^.!?;；\n]{0,32}"
+        r"\b(?:cure|treat|diagnos(?:e|is)|effective|efficacy|results?)\b",
         re.IGNORECASE,
     ),
     re.compile(r"\b100\s*%\s*effective\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:diagnos(?:e|is|ed|es|ing)|treat(?:s|ed|ing|ment)?|"
+        r"cure(?:s|d|ing)?)\b",
+        re.IGNORECASE,
+    ),
 )
-_BOUNDARY_MARKERS = (
-    "不能",
-    "不可",
-    "不得",
-    "不要",
-    "不承诺",
-    "无法保证",
-    "不能保证",
-    "不保证",
-    "不用于",
-    "not ",
-    "cannot ",
-    "does not ",
+_NEGATIVE_SCOPE_PATTERNS = (
+    re.compile(r"(?:不会|不能|不可|不得|不要|不承诺|无法|并非|不是|不)"
+               r"(?:\s*用于)?\s*$"),
+    re.compile(
+        r"(?:not|cannot|can't|does not|do not|is not|are not|"
+        r"not intended to|not used to)\s*$",
+        re.IGNORECASE,
+    ),
 )
 
 
@@ -123,6 +132,7 @@ def _source_evidence(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
         {field: _json_safe(source[field]) for field in fields if field in source}
         for source in sources
         if isinstance(source, dict)
+        and _is_safe_public_asset_id(source.get("asset_id"))
     ]
 
 
@@ -135,7 +145,8 @@ def _constitution_evidence(
     return [
         {"asset_id": _json_safe(reference["source_id"])}
         for reference in references
-        if isinstance(reference, dict) and reference.get("source_id")
+        if isinstance(reference, dict)
+        and _is_safe_public_asset_id(reference.get("source_id"))
     ]
 
 
@@ -146,9 +157,42 @@ def _reception_evidence(
         return []
     return [
         {"asset_id": source_id}
-        for source_id in reception_draft.get("source_ids", [])
-        if isinstance(source_id, str) and source_id.strip()
+        for source_id in _safe_reception_source_ids(reception_draft)
     ]
+
+
+def _safe_reception_source_ids(reception_draft: dict[str, Any]) -> list[str]:
+    source_ids = reception_draft.get("source_ids")
+    if not isinstance(source_ids, list):
+        return []
+    return [
+        source_id
+        for source_id in source_ids
+        if _is_safe_public_asset_id(source_id)
+    ]
+
+
+def _safe_reception_draft(
+    reception_draft: dict[str, Any] | None,
+) -> Any:
+    safe_draft = _json_safe(reception_draft)
+    if isinstance(safe_draft, dict) and isinstance(reception_draft, dict):
+        if "source_ids" in reception_draft:
+            safe_draft["source_ids"] = _safe_reception_source_ids(
+                reception_draft
+            )
+    return safe_draft
+
+
+def _reception_source_blockers(
+    reception_draft: dict[str, Any],
+) -> list[str]:
+    source_ids = reception_draft.get("source_ids")
+    if not isinstance(source_ids, list) or not source_ids:
+        return ["missing_source_selection"]
+    if any(not _is_safe_public_asset_id(source_id) for source_id in source_ids):
+        return ["invalid_source_record"]
+    return []
 
 
 def _source_blockers(sources: list[dict[str, Any]]) -> list[str]:
@@ -221,11 +265,9 @@ def _answer_has_unsafe_wording(answer: str) -> bool:
     normalized = " ".join(answer.split())
     for pattern in _HIGH_RISK_ANSWER_PATTERNS:
         for match in pattern.finditer(normalized):
-            prefix = normalized[max(0, match.start() - 16) : match.start()].lower()
-            if not any(
-                prefix.rstrip().endswith(marker.rstrip())
-                for marker in _BOUNDARY_MARKERS
-            ):
+            prefix = normalized[max(0, match.start() - 64) : match.start()]
+            clause = re.split(r"[。！？.!?；;，,\n]", prefix)[-1]
+            if not any(pattern.search(clause) for pattern in _NEGATIVE_SCOPE_PATTERNS):
                 return True
     return False
 
@@ -296,7 +338,8 @@ def build_core10_activation_packet(
                 "asset_ids": [
                     str(source.get("asset_id"))
                     for source in product_sources
-                    if isinstance(source, dict) and source.get("asset_id")
+                    if isinstance(source, dict)
+                    and _is_safe_public_asset_id(source.get("asset_id"))
                 ],
             },
             "source_evidence": _source_evidence(product_sources),
@@ -311,7 +354,8 @@ def build_core10_activation_packet(
                 "asset_ids": [
                     str(source.get("asset_id"))
                     for source in operations_sources
-                    if isinstance(source, dict) and source.get("asset_id")
+                    if isinstance(source, dict)
+                    and _is_safe_public_asset_id(source.get("asset_id"))
                 ],
             },
             "source_evidence": _source_evidence(operations_sources),
@@ -327,7 +371,7 @@ def build_core10_activation_packet(
             },
             "proposed_authority": {
                 "authority": "approved_answer_card",
-                "draft": _json_safe(reception_draft),
+                "draft": _safe_reception_draft(reception_draft),
             },
             "source_evidence": _reception_evidence(reception_draft),
             "why_needed": "The reception case requires one approved standard answer.",
@@ -375,6 +419,7 @@ def build_core10_activation_packet(
             if not isinstance(reception_draft, dict) or not reception_draft:
                 blockers.append("missing_reception_draft")
             else:
+                blockers.extend(_reception_source_blockers(reception_draft))
                 if _answer_has_unsafe_wording(
                     str(reception_draft.get("answer") or "")
                 ):
@@ -385,7 +430,7 @@ def build_core10_activation_packet(
                 payload = {
                     "operation": "create_approved_answer_card",
                     "question": reception_draft.get("question"),
-                    "source_ids": list(reception_draft.get("source_ids") or []),
+                    "source_ids": _safe_reception_source_ids(reception_draft),
                 }
                 write_intents.append(
                     {**payload, "payload_sha256": _payload_sha256(reception_draft)}

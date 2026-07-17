@@ -386,9 +386,15 @@ def test_invalid_source_governance_record_fails_closed() -> None:
     "unsafe_answer",
     [
         "本服务保证效果。",
+        "本服务提供疗效保证。",
+        "本服务承诺疗效。",
+        "本服务确保有效。",
         "本服务100%有效。",
         "可诊断失眠。",
         "This service offers guaranteed results.",
+        "This service can diagnose insomnia.",
+        "This service guarantees a cure.",
+        "This service will cure insomnia.",
         "This service is 100% effective.",
     ],
 )
@@ -419,7 +425,14 @@ def test_high_risk_reception_wording_fails_closed(unsafe_answer: str) -> None:
     "bounded_answer",
     [
         "不能保证效果，实际体验因人而异。",
+        "本服务不会保证效果。",
         "本服务不用于诊断，身体不适请及时就医。",
+        "本服务不能用于诊断。",
+        "本服务不可用于治疗疾病。",
+        "This service does not guarantee results.",
+        "This service cannot diagnose insomnia.",
+        "This service is not intended to treat disease.",
+        "This service is not used to cure disease.",
     ],
 )
 def test_explicit_negative_boundary_is_not_misclassified(
@@ -517,3 +530,60 @@ def test_public_source_asset_id_style_remains_eligible(safe_asset_id: str) -> No
 
     assert product_item["blockers"] == []
     assert len(product_item["exact_write_intents"]) == 1
+
+
+@pytest.mark.parametrize(
+    "unsafe_source_id",
+    [
+        "/root/private/credentials.sql",
+        "postgresql://example.invalid/hxy",
+        "api-token",
+    ],
+)
+def test_reception_source_ids_use_the_same_public_id_gate(
+    unsafe_source_id: str,
+) -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+    )
+
+    inputs = _packet_inputs()
+    inputs["reception_draft"] = {
+        "question": "Fixture reception question?",
+        "answer": "Fixture reception answer with a clear service boundary.",
+        "source_ids": [unsafe_source_id],
+    }
+
+    packet = build_core10_activation_packet(**inputs)
+    reception_item = next(
+        item
+        for item in packet["items"]
+        if item["group_id"] == "reception_standard_answer_card"
+    )
+
+    assert "invalid_source_record" in reception_item["blockers"]
+    assert reception_item["exact_write_intents"] == []
+    assert reception_item["source_evidence"] == []
+
+
+def test_reception_card_requires_at_least_one_source_id() -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+    )
+
+    inputs = _packet_inputs()
+    inputs["reception_draft"] = {
+        "question": "Fixture reception question?",
+        "answer": "Fixture reception answer with a clear service boundary.",
+        "source_ids": [],
+    }
+
+    packet = build_core10_activation_packet(**inputs)
+    reception_item = next(
+        item
+        for item in packet["items"]
+        if item["group_id"] == "reception_standard_answer_card"
+    )
+
+    assert "missing_source_selection" in reception_item["blockers"]
+    assert reception_item["exact_write_intents"] == []
