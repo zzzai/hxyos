@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import shutil
+import tempfile
+from pathlib import Path
 from typing import Any
 
 
@@ -126,6 +130,71 @@ _NEGATIVE_SCOPE_PATTERNS = (
         r"not intended to|not used to)\s*$",
         re.IGNORECASE,
     ),
+)
+
+_ARTIFACT_FILENAMES = {
+    "packet_json": "packet.json",
+    "packet_markdown": "packet.md",
+    "decision_sample": "decisions.sample.json",
+}
+_ARTIFACT_ITEM_TITLES = {
+    "brand_constitution": "品牌宪法",
+    "product_system_sources": "产品体系资料",
+    "first_store_operations_sources": "首店经营资料",
+    "reception_standard_answer_card": "接待标准答案卡",
+}
+_ARTIFACT_REDACTION = "（内容已安全隐藏）"
+_ARTIFACT_UNSAFE_KEY_TOKENS = {
+    "claim_id",
+    "chunk_id",
+    "command",
+    "credential",
+    "database_url",
+    "db_url",
+    "dsn",
+    "password",
+    "passwd",
+    "path",
+    "query",
+    "secret",
+    "shell",
+    "sql",
+    "token",
+}
+_ARTIFACT_SENSITIVE_TEXT_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9])(?:claim[_-]?id|chunk[_-]?id|credential(?:s)?|"
+    r"secret(?:s)?|password|passwd|api[-_ ]?key|access[-_ ]?token|"
+    r"database[-_ ]?url|db[-_ ]?url)(?![A-Za-z0-9])",
+    re.IGNORECASE,
+)
+_ARTIFACT_DATABASE_URL_PATTERN = re.compile(
+    r"\b(?:postgres(?:ql)?|mysql|mariadb|sqlite|mongodb(?:\+srv)?|redis)"
+    r":/{2,3}\S+",
+    re.IGNORECASE,
+)
+_ARTIFACT_CREDENTIAL_URL_PATTERN = re.compile(
+    r"\b[a-z][a-z0-9+.-]*://[^\s/@:]+:[^\s/@]+@\S+",
+    re.IGNORECASE,
+)
+_ARTIFACT_POSIX_PATH_PATTERN = re.compile(
+    r"(?:^|[\s\"'`(=])/(?:[A-Za-z0-9._~-]+/)*[A-Za-z0-9._~-]+"
+)
+_ARTIFACT_WINDOWS_PATH_PATTERN = re.compile(
+    r"\b[A-Za-z]:[\\/](?:[^\s\\/]+[\\/])*[^\s\\/]+"
+)
+_ARTIFACT_SQL_WRITE_PATTERN = re.compile(
+    r"\b(?:insert\s+into|update\s+[A-Za-z0-9_.]+\s+set|delete\s+from|"
+    r"drop\s+(?:table|database|schema)|alter\s+table|"
+    r"truncate(?:\s+table)?|create\s+(?:table|database|schema)|"
+    r"merge\s+into|grant\s+|revoke\s+)\b",
+    re.IGNORECASE,
+)
+_ARTIFACT_SHELL_WRITE_PATTERN = re.compile(
+    r"\b(?:rm|mv|cp|install|mkdir|touch|chmod|chown|tee|dd|truncate|"
+    r"curl|wget)\b(?:\s+\S+)+|"
+    r"\b(?:bash|sh|zsh|powershell|cmd)(?:\.exe)?\s+(?:-c|/c)\b|"
+    r"(?:^|\s)(?:>>?|2>)\s*\S+",
+    re.IGNORECASE,
 )
 
 
@@ -561,6 +630,356 @@ def _is_sha256_digest(value: Any) -> bool:
     return isinstance(value, str) and bool(
         re.fullmatch(r"[0-9a-f]{64}", value)
     )
+
+
+def _artifact_key_is_safe(key: str) -> bool:
+    normalized = key.strip().lower().replace("-", "_")
+    tokens = set(normalized.split("_"))
+    return (
+        normalized not in _ARTIFACT_UNSAFE_KEY_TOKENS
+        and not normalized.endswith("_path")
+        and not tokens.intersection(_ARTIFACT_UNSAFE_KEY_TOKENS)
+    )
+
+
+def _safe_artifact_text(value: str) -> str:
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", " ", value)
+    text = re.sub(r"\s+", " ", text).strip()
+    unsafe_patterns = (
+        _ARTIFACT_SENSITIVE_TEXT_PATTERN,
+        _ARTIFACT_DATABASE_URL_PATTERN,
+        _ARTIFACT_CREDENTIAL_URL_PATTERN,
+        _ARTIFACT_POSIX_PATH_PATTERN,
+        _ARTIFACT_WINDOWS_PATH_PATTERN,
+        _ARTIFACT_SQL_WRITE_PATTERN,
+        _ARTIFACT_SHELL_WRITE_PATTERN,
+    )
+    if any(pattern.search(text) for pattern in unsafe_patterns):
+        return _ARTIFACT_REDACTION
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\\", "\\\\")
+        .replace("`", "\\`")
+        .replace("*", "\\*")
+        .replace("_", "\\_")
+        .replace("[", "\\[")
+        .replace("]", "\\]")
+    )
+
+
+def _safe_artifact_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        safe: dict[str, Any] = {}
+        for key, nested in value.items():
+            key_text = str(key)
+            if not _artifact_key_is_safe(key_text):
+                continue
+            safe_key = _safe_artifact_text(key_text)
+            if safe_key == _ARTIFACT_REDACTION:
+                continue
+            safe[safe_key] = _safe_artifact_value(nested)
+        return safe
+    if isinstance(value, (list, tuple)):
+        return [_safe_artifact_value(nested) for nested in value]
+    if isinstance(value, str):
+        return _safe_artifact_text(value)
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return _safe_artifact_text(str(value))
+
+
+def _artifact_scalar_text(value: Any) -> str:
+    if value is None:
+        return "无"
+    if value is True:
+        return "是"
+    if value is False:
+        return "否"
+    return str(value) if str(value) else "无"
+
+
+def _artifact_markdown_lines(value: Any, *, depth: int = 0) -> list[str]:
+    prefix = "  " * depth
+    if isinstance(value, dict):
+        if not value:
+            return [f"{prefix}- 无"]
+        lines: list[str] = []
+        for key, nested in value.items():
+            if isinstance(nested, (dict, list)):
+                lines.append(f"{prefix}- {key}:")
+                lines.extend(_artifact_markdown_lines(nested, depth=depth + 1))
+            else:
+                lines.append(
+                    f"{prefix}- {key}: {_artifact_scalar_text(nested)}"
+                )
+        return lines
+    if isinstance(value, list):
+        if not value:
+            return [f"{prefix}- 无"]
+        lines = []
+        for index, nested in enumerate(value, start=1):
+            if isinstance(nested, (dict, list)):
+                lines.append(f"{prefix}- 条目 {index}:")
+                lines.extend(_artifact_markdown_lines(nested, depth=depth + 1))
+            else:
+                lines.append(f"{prefix}- {_artifact_scalar_text(nested)}")
+        return lines
+    return [f"{prefix}- {_artifact_scalar_text(value)}"]
+
+
+def _core10_artifact_packet_items(
+    packet: Any,
+) -> tuple[str, str, list[dict[str, Any]]]:
+    if not isinstance(packet, dict):
+        raise TypeError("core10 activation packet must be an object")
+    packet_id = packet.get("packet_id")
+    packet_fingerprint = packet.get("packet_fingerprint")
+    if not _is_nonblank_string(packet_id):
+        raise ValueError("core10 activation packet id is invalid")
+    if not _is_sha256_digest(packet_fingerprint):
+        raise ValueError("core10 activation packet fingerprint is invalid")
+
+    raw_items = packet.get("items")
+    if not isinstance(raw_items, list) or len(raw_items) != len(ITEM_CASES):
+        raise ValueError("core10 activation packet must contain exactly four items")
+    items: list[dict[str, Any]] = []
+    item_keys: list[str] = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            raise ValueError("core10 activation packet item is invalid")
+        item_key = item.get("item_key")
+        if item_key not in ITEM_CASES:
+            raise ValueError("core10 activation packet item key is invalid")
+        if not _is_sha256_digest(item.get("item_fingerprint")):
+            raise ValueError("core10 activation packet item fingerprint is invalid")
+        item_keys.append(item_key)
+        items.append(item)
+    if len(set(item_keys)) != len(ITEM_CASES) or set(item_keys) != set(ITEM_CASES):
+        raise ValueError("core10 activation packet items are incomplete")
+    return packet_id, packet_fingerprint, items
+
+
+def _append_artifact_markdown_section(
+    lines: list[str],
+    title: str,
+    value: Any,
+) -> None:
+    lines.extend(["", f"### {title}", ""])
+    lines.extend(_artifact_markdown_lines(_safe_artifact_value(value)))
+
+
+def render_core10_activation_packet_markdown(
+    packet: dict[str, Any],
+) -> str:
+    packet_id, packet_fingerprint, items = _core10_artifact_packet_items(packet)
+    lines = [
+        "# HXY Core-10 创始人决策包",
+        "",
+        "> 本决策包仅供创始人审阅，不写库、不发布，也不构成正式权威。",
+        "",
+        f"- 决策包编号: `{_safe_artifact_text(packet_id)}`",
+        f"- 完整指纹: `{_safe_artifact_text(packet_fingerprint)}`",
+        "- 状态: 待创始人决策",
+    ]
+    for index, item in enumerate(items, start=1):
+        item_title = _ARTIFACT_ITEM_TITLES[item["item_key"]]
+        lines.extend(["", f"## {index}. {item_title}"])
+        _append_artifact_markdown_section(
+            lines,
+            "当前状态",
+            item.get("current_state"),
+        )
+        _append_artifact_markdown_section(
+            lines,
+            "拟议方案",
+            item.get("proposed_authority"),
+        )
+        _append_artifact_markdown_section(
+            lines,
+            "需要原因",
+            item.get("why_needed"),
+        )
+        _append_artifact_markdown_section(
+            lines,
+            "风险",
+            {
+                "批准风险": item.get("risk_if_approved"),
+                "拒绝风险": item.get("risk_if_rejected"),
+            },
+        )
+        _append_artifact_markdown_section(
+            lines,
+            "证据",
+            item.get("source_evidence"),
+        )
+        _append_artifact_markdown_section(
+            lines,
+            "阻塞项",
+            item.get("blockers"),
+        )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def build_core10_activation_decision_sample(
+    packet: dict[str, Any],
+) -> dict[str, Any]:
+    packet_id, packet_fingerprint, items = _core10_artifact_packet_items(packet)
+    decisions = []
+    for item in items:
+        blocked = bool(item.get("blockers"))
+        decisions.append(
+            {
+                "item_key": item["item_key"],
+                "item_fingerprint": item["item_fingerprint"],
+                "action": "request_correction" if blocked else "approve",
+                "reason": (
+                    "Replace this placeholder with the founder's correction reason."
+                    if blocked
+                    else "Replace this placeholder with the founder's approval reason."
+                ),
+            }
+        )
+    return {
+        "actor": {"id": "founder-placeholder", "role": "founder"},
+        "packet_id": packet_id,
+        "packet_fingerprint": packet_fingerprint,
+        "decisions": decisions,
+        "preview_only": True,
+        "write_to_database": False,
+        "publish_allowed": False,
+        "official_use_allowed": False,
+    }
+
+
+def _core10_artifact_paths(target: Path) -> dict[str, Path]:
+    return {
+        key: target / filename
+        for key, filename in _ARTIFACT_FILENAMES.items()
+    }
+
+
+def _existing_core10_artifact_paths(
+    target: Path,
+    *,
+    packet_id: str,
+    packet_fingerprint: str,
+) -> dict[str, Path]:
+    conflict = ValueError("core10 activation artifact target conflict")
+    try:
+        if target.is_symlink() or not target.is_dir():
+            raise conflict
+        paths = _core10_artifact_paths(target)
+        entries = list(target.iterdir())
+        if {entry.name for entry in entries} != set(_ARTIFACT_FILENAMES.values()):
+            raise conflict
+        if any(path.is_symlink() or not path.is_file() for path in paths.values()):
+            raise conflict
+        if any(path.stat().st_size == 0 for path in paths.values()):
+            raise conflict
+
+        packet_payload = json.loads(
+            paths["packet_json"].read_text(encoding="utf-8")
+        )
+        decision_payload = json.loads(
+            paths["decision_sample"].read_text(encoding="utf-8")
+        )
+        markdown = paths["packet_markdown"].read_text(encoding="utf-8")
+        if not isinstance(packet_payload, dict) or not isinstance(
+            decision_payload,
+            dict,
+        ):
+            raise conflict
+        if packet_payload.get("packet_fingerprint") != packet_fingerprint:
+            raise conflict
+        if decision_payload.get("packet_id") != packet_id:
+            raise conflict
+        if decision_payload.get("packet_fingerprint") != packet_fingerprint:
+            raise conflict
+        if not markdown.strip():
+            raise conflict
+        return paths
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise conflict from error
+
+
+def _write_synced_artifact(path: Path, content: str) -> None:
+    with path.open("x", encoding="utf-8", newline="\n") as handle:
+        os.chmod(path, 0o600)
+        handle.write(content)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _fsync_directory(path: Path) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def write_core10_activation_artifacts(
+    private_root: Path,
+    packet: dict[str, Any],
+) -> dict[str, Path]:
+    packet_id, packet_fingerprint, _items = _core10_artifact_packet_items(packet)
+    resolved_root = Path(private_root).resolve()
+    resolved_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    target = resolved_root / f"core10-activation-{packet_fingerprint[:12]}"
+
+    if os.path.lexists(target):
+        return _existing_core10_artifact_paths(
+            target,
+            packet_id=packet_id,
+            packet_fingerprint=packet_fingerprint,
+        )
+
+    packet_json = json.dumps(
+        packet,
+        allow_nan=False,
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+    ) + "\n"
+    packet_markdown = render_core10_activation_packet_markdown(packet)
+    decision_json = json.dumps(
+        build_core10_activation_decision_sample(packet),
+        allow_nan=False,
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+    ) + "\n"
+    contents = {
+        "packet.json": packet_json,
+        "packet.md": packet_markdown,
+        "decisions.sample.json": decision_json,
+    }
+
+    temporary = Path(
+        tempfile.mkdtemp(
+            prefix=f".{target.name}.tmp-",
+            dir=resolved_root,
+        )
+    )
+    try:
+        for filename, content in contents.items():
+            _write_synced_artifact(temporary / filename, content)
+        _fsync_directory(temporary)
+        if os.path.lexists(target):
+            return _existing_core10_artifact_paths(
+                target,
+                packet_id=packet_id,
+                packet_fingerprint=packet_fingerprint,
+            )
+        os.replace(temporary, target)
+        _fsync_directory(resolved_root)
+        return _core10_artifact_paths(target)
+    finally:
+        if os.path.lexists(temporary):
+            shutil.rmtree(temporary)
 
 
 def build_core10_activation_packet(
