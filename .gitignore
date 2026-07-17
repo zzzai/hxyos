@@ -2,6 +2,7 @@
 ops/env/*.env
 ops/env/*.toml
 !ops/env/*.env.example
+!ops/env/*.toml.example
 
 # HXY local brand knowledge and operating artifacts
 knowledge/raw/

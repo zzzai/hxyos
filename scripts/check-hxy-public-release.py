@@ -52,6 +52,10 @@ def _has_gitignore_rule(gitignore: str, pattern: str) -> bool:
     return any(line.strip() == pattern for line in gitignore.splitlines())
 
 
+def _is_allowed_ops_env_example(path: str) -> bool:
+    return path.endswith((".env.example", ".toml.example"))
+
+
 def _fail(messages: list[str]) -> int:
     print("public_release_preflight_ok=false")
     for message in messages:
@@ -89,7 +93,7 @@ def main() -> int:
     for path in tracked_files:
         if any(path.startswith(prefix) for prefix in forbidden_tracked_prefixes):
             failures.append(f"private path is tracked by Git: {path}")
-        if path.startswith("ops/env/") and not path.endswith(".env.example"):
+        if path.startswith("ops/env/") and not _is_allowed_ops_env_example(path):
             failures.append(f"non-example env material is tracked by Git: {path}")
         if path.endswith((".sensitive.sql", ".bak", ".sqlite", ".db")):
             failures.append(f"private artifact extension is tracked by Git: {path}")

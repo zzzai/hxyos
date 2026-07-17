@@ -39,7 +39,7 @@ Allowed:
 
 - reusable source code under HXY-owned directories;
 - generic tests and fixtures;
-- secret-free `.env.example` files;
+- secret-free `.env.example` and `.toml.example` files;
 - sanitized docs that describe architecture, operations, and governance;
 - generated public scaffold from `scripts/export-hxyos-public.py`.
 

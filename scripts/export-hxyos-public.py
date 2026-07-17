@@ -166,6 +166,7 @@ data/seeds/
 data/product-materials/
 data/backups/
 ops/env/*.env
+ops/env/*.toml
 ```
 
 ## Quick Start
@@ -224,6 +225,7 @@ GITIGNORE = """# Local secrets
 ops/env/*.env
 ops/env/*.toml
 !ops/env/*.env.example
+!ops/env/*.toml.example
 .env
 .env.*
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import runpy
 import subprocess
 from pathlib import Path
 
@@ -63,6 +64,17 @@ def test_release_tools_treat_product_materials_as_private() -> None:
         "scripts/export-hxyos-public.py",
     ]:
         assert '"data/product-materials/"' in read(relative_path)
+
+
+def test_public_release_allows_only_explicit_env_and_toml_examples() -> None:
+    namespace = runpy.run_path(str(ROOT / "scripts" / "check-hxy-public-release.py"))
+    is_allowed_example = namespace.get("_is_allowed_ops_env_example")
+
+    assert callable(is_allowed_example)
+    assert is_allowed_example("ops/env/hxy-postgres.env.example")
+    assert is_allowed_example("ops/env/hxy-model-router.toml.example")
+    assert not is_allowed_example("ops/env/hxy-postgres.env")
+    assert not is_allowed_example("ops/env/hxy-model-router.toml")
 
 
 def test_public_release_preflight_passes_current_repository() -> None:
