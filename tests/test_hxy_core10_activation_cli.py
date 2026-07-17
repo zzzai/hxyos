@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -356,3 +359,296 @@ def test_existing_complete_artifact_is_reused_idempotently(
     assert second == first
     assert {key: path.read_bytes() for key, path in second.items()} == before
     assert list(tmp_path.iterdir()) == [first["packet_json"].parent]
+
+
+def _load_cli_module() -> Any:
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "build-hxy-core10-activation-packet.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "hxy_core10_activation_packet_cli_test",
+        script_path,
+    )
+    if spec is None or spec.loader is None:
+        raise AssertionError("could not load core10 activation CLI")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _write_cli_inputs(
+    root: Path,
+    *,
+    selection_overrides: dict[str, Any] | None = None,
+) -> dict[str, Path]:
+    private_root = root / "data" / "private" / "core10-activation"
+    drafts_root = private_root / "drafts"
+    releases_root = root / "data" / "releases" / "authority-answer"
+    drafts_root.mkdir(parents=True)
+    releases_root.mkdir(parents=True)
+
+    constitution_path = drafts_root / "constitution.json"
+    reception_path = drafts_root / "reception.json"
+    report_path = releases_root / "core-10-report.json"
+    selection_path = private_root / "selection.json"
+    constitution_path.write_text(
+        json.dumps(_constitution_draft(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    reception_path.write_text(
+        json.dumps(_reception_draft(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    report_path.write_text(
+        json.dumps(_report(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    selection: dict[str, Any] = {
+        "constitution_draft_path": constitution_path.relative_to(root).as_posix(),
+        "product_asset_ids": ["asset-product-001"],
+        "operations_asset_ids": ["asset-operations-001"],
+        "reception_draft_path": reception_path.relative_to(root).as_posix(),
+    }
+    selection.update(selection_overrides or {})
+    selection_path.write_text(
+        json.dumps(selection, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return {
+        "private_root": private_root,
+        "report": report_path,
+        "selection": selection_path,
+        "constitution": constitution_path,
+        "reception": reception_path,
+    }
+
+
+class _ReadOnlySnapshotRepository:
+    created_with: list[str] = []
+    snapshot_calls: list[dict[str, Any]] = []
+
+    def __init__(self, database_url: str) -> None:
+        self.created_with.append(database_url)
+
+    def core10_activation_snapshot(self, **selection: Any) -> dict[str, Any]:
+        self.snapshot_calls.append(selection)
+        return {
+            "product_sources": [_source("asset-product-001")],
+            "operations_sources": [_source("asset-operations-001")],
+            "approved_answer_cards": [],
+        }
+
+
+class _MissingConstitutionAdapter:
+    def __init__(self, _root: Path) -> None:
+        pass
+
+    def load_active(self) -> SimpleNamespace:
+        return SimpleNamespace(payload=None, reason="missing_active_version")
+
+
+def test_cli_builds_packet_from_one_read_only_snapshot_without_leaking_content(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cli = _load_cli_module()
+    inputs = _write_cli_inputs(tmp_path)
+    _ReadOnlySnapshotRepository.created_with = []
+    _ReadOnlySnapshotRepository.snapshot_calls = []
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    monkeypatch.setattr(cli, "KnowledgeRepository", _ReadOnlySnapshotRepository)
+    monkeypatch.setattr(cli, "BrandConstitutionAdapter", _MissingConstitutionAdapter)
+    database_url = "postgresql://snapshot.test/hxy"
+    monkeypatch.setenv("HXY_TEST_DATABASE_URL", database_url)
+
+    result = cli.main(
+        [
+            "--report",
+            str(inputs["report"]),
+            "--selection",
+            str(inputs["selection"]),
+            "--output-root",
+            "data/private/core10-activation",
+            "--database-url-env",
+            "HXY_TEST_DATABASE_URL",
+        ]
+    )
+
+    assert result == 0
+    assert _ReadOnlySnapshotRepository.created_with == [database_url]
+    assert _ReadOnlySnapshotRepository.snapshot_calls == [
+        {
+            "product_asset_ids": ["asset-product-001"],
+            "operations_asset_ids": ["asset-operations-001"],
+        }
+    ]
+    output = capsys.readouterr()
+    assert output.err == ""
+    assert "item_count=4" in output.out
+    assert "write_to_database=false" in output.out
+    assert "publish_allowed=false" in output.out
+    assert "status=ready_for_founder_decision" in output.out
+    assert "packet.json" in output.out
+    assert str(tmp_path) not in output.out
+    assert database_url not in output.out
+    assert "Fixture identity" not in output.out
+    artifact_dirs = [
+        path
+        for path in inputs["private_root"].iterdir()
+        if path.name.startswith("core10-activation-") and path.is_dir()
+    ]
+    assert len(artifact_dirs) == 1
+    assert (artifact_dirs[0] / "packet.json").is_file()
+
+
+@pytest.mark.parametrize(
+    "selection_overrides",
+    [
+        {"unknown_key": "not allowed"},
+        {"product_asset_ids": [1]},
+        {"operations_asset_ids": "asset-operations-001"},
+    ],
+)
+def test_cli_rejects_invalid_selection_before_repository_access(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    selection_overrides: dict[str, Any],
+) -> None:
+    cli = _load_cli_module()
+    inputs = _write_cli_inputs(
+        tmp_path,
+        selection_overrides=selection_overrides,
+    )
+
+    class UnexpectedRepository:
+        def __init__(self, _database_url: str) -> None:
+            raise AssertionError("repository must not be opened")
+
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    monkeypatch.setattr(cli, "KnowledgeRepository", UnexpectedRepository)
+    monkeypatch.setenv("HXY_DATABASE_URL", "postgresql://must-not-appear")
+
+    assert cli.main(
+        [
+            "--report",
+            str(inputs["report"]),
+            "--selection",
+            str(inputs["selection"]),
+        ]
+    ) == 2
+    captured = capsys.readouterr()
+    assert "must-not-appear" not in captured.err
+    assert "invalid private input" in captured.err.lower()
+
+
+def test_cli_rejects_draft_path_outside_private_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cli = _load_cli_module()
+    outside = tmp_path / "outside-draft.json"
+    outside.write_text("{}", encoding="utf-8")
+    inputs = _write_cli_inputs(
+        tmp_path,
+        selection_overrides={"constitution_draft_path": str(outside)},
+    )
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    monkeypatch.setenv("HXY_DATABASE_URL", "postgresql://must-not-appear")
+
+    assert cli.main(
+        [
+            "--report",
+            str(inputs["report"]),
+            "--selection",
+            str(inputs["selection"]),
+        ]
+    ) == 2
+    captured = capsys.readouterr()
+    assert "invalid private input" in captured.err.lower()
+    assert str(outside) not in captured.err
+    assert "must-not-appear" not in captured.err
+
+
+def test_cli_rejects_symlinked_selection_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cli = _load_cli_module()
+    inputs = _write_cli_inputs(tmp_path)
+    selection_link = inputs["private_root"] / "selection-link.json"
+    selection_link.symlink_to(inputs["selection"])
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    monkeypatch.setenv("HXY_DATABASE_URL", "postgresql://must-not-appear")
+
+    assert cli.main(
+        [
+            "--report",
+            str(inputs["report"]),
+            "--selection",
+            str(selection_link),
+        ]
+    ) == 2
+    captured = capsys.readouterr()
+    assert "invalid private input" in captured.err.lower()
+    assert "must-not-appear" not in captured.err
+
+
+def test_cli_rejects_report_outside_allowlisted_project_data(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cli = _load_cli_module()
+    inputs = _write_cli_inputs(tmp_path)
+    outside_report = tmp_path / "outside-report.json"
+    outside_report.write_text(json.dumps(_report()), encoding="utf-8")
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    monkeypatch.setenv("HXY_DATABASE_URL", "postgresql://must-not-appear")
+
+    assert cli.main(
+        [
+            "--report",
+            str(outside_report),
+            "--selection",
+            str(inputs["selection"]),
+        ]
+    ) == 2
+    captured = capsys.readouterr()
+    assert "invalid private input" in captured.err.lower()
+    assert str(outside_report) not in captured.err
+    assert "must-not-appear" not in captured.err
+
+
+def test_cli_missing_database_env_fails_without_creating_artifacts_or_leaking_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cli = _load_cli_module()
+    inputs = _write_cli_inputs(tmp_path)
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    monkeypatch.delenv("HXY_MISSING_DATABASE_URL", raising=False)
+
+    assert cli.main(
+        [
+            "--report",
+            str(inputs["report"]),
+            "--selection",
+            str(inputs["selection"]),
+            "--database-url-env",
+            "HXY_MISSING_DATABASE_URL",
+        ]
+    ) == 2
+    captured = capsys.readouterr()
+    assert "database configuration is unavailable" in captured.err.lower()
+    assert "HXY_MISSING_DATABASE_URL" not in captured.err
+    assert not any(
+        path.is_dir() and path.name.startswith("core10-activation-")
+        for path in inputs["private_root"].iterdir()
+    )
