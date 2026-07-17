@@ -27,6 +27,27 @@ _UPSTREAM_INPUT_KEYS = (
     "reception_draft",
     "existing_answer_cards",
 )
+_ITEM_UPSTREAM_KEYS = {
+    "brand_constitution": (
+        "report",
+        "constitution_state",
+        "constitution_draft",
+    ),
+    "product_system_sources": ("report", "product_sources"),
+    "first_store_operations_sources": ("report", "operations_sources"),
+    "reception_standard_answer_card": (
+        "report",
+        "reception_draft",
+        "existing_answer_cards",
+        "product_sources",
+        "operations_sources",
+    ),
+}
+_PACKET_IDENTITY_EXCLUDED_KEYS = {
+    "generated_at",
+    "packet_id",
+    "packet_fingerprint",
+}
 _FORBIDDEN_KEYS = {"claim_id", "chunk_id"}
 _PUBLIC_ASSET_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$")
 _CONSTITUTION_VERSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
@@ -132,22 +153,29 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
-def _canonical_json_value(value: Any) -> Any:
+def _validate_canonical_json(value: Any) -> None:
     if isinstance(value, dict):
-        return {
-            str(key): _canonical_json_value(nested)
-            for key, nested in value.items()
-        }
-    if isinstance(value, (list, tuple)):
-        return [_canonical_json_value(nested) for nested in value]
+        for key, nested in value.items():
+            if not isinstance(key, str):
+                raise TypeError("canonical JSON object keys must be strings")
+            _validate_canonical_json(nested)
+        return
+    if isinstance(value, list):
+        for nested in value:
+            _validate_canonical_json(nested)
+        return
     if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    return str(value)
+        return
+    raise TypeError(
+        f"unsupported canonical JSON value: {type(value).__name__}"
+    )
 
 
 def json_fingerprint(payload: Any) -> dict[str, str]:
+    _validate_canonical_json(payload)
     encoded = json.dumps(
-        _canonical_json_value(payload),
+        payload,
+        allow_nan=False,
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
@@ -497,33 +525,42 @@ def _approved_card_state(
     }
 
 
-def _reception_source_snapshots(
-    reception_draft: dict[str, Any] | None,
-    product_sources: list[dict[str, Any]],
-    operations_sources: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    if not isinstance(reception_draft, dict):
-        return []
-    selected_ids = set(_safe_reception_source_ids(reception_draft))
-    return [
-        source
-        for sources in (product_sources, operations_sources)
-        for source in sources
-        if isinstance(source, dict) and source.get("asset_id") in selected_ids
-    ]
-
-
 def _item_fingerprint(
     item: dict[str, Any],
     *,
-    dependencies: dict[str, Any],
+    upstream_fingerprints: dict[str, Any],
 ) -> str:
+    item_key = item["item_key"]
+    dependencies = {
+        key: upstream_fingerprints[key]
+        for key in _ITEM_UPSTREAM_KEYS[item_key]
+    }
+    item_identity = {
+        key: value
+        for key, value in item.items()
+        if key != "item_fingerprint"
+    }
     return json_fingerprint(
         {
-            "item": item,
+            "item": item_identity,
             "dependencies": dependencies,
         }
     )["digest"]
+
+
+def _packet_fingerprint_digest(packet: dict[str, Any]) -> str:
+    packet_identity = {
+        key: value
+        for key, value in packet.items()
+        if key not in _PACKET_IDENTITY_EXCLUDED_KEYS
+    }
+    return json_fingerprint(packet_identity)["digest"]
+
+
+def _is_sha256_digest(value: Any) -> bool:
+    return isinstance(value, str) and bool(
+        re.fullmatch(r"[0-9a-f]{64}", value)
+    )
 
 
 def build_core10_activation_packet(
@@ -708,49 +745,9 @@ def build_core10_activation_packet(
             "official_use_allowed": False,
             "write_allowed": False,
         }
-        dependency_fingerprints = {
-            "report": upstream_fingerprints["report"],
-        }
-        if item_key == "brand_constitution":
-            dependency_fingerprints.update(
-                {
-                    "constitution_state": upstream_fingerprints[
-                        "constitution_state"
-                    ],
-                    "constitution_draft": upstream_fingerprints[
-                        "constitution_draft"
-                    ],
-                }
-            )
-        elif item_key == "product_system_sources":
-            dependency_fingerprints["product_sources"] = upstream_fingerprints[
-                "product_sources"
-            ]
-        elif item_key == "first_store_operations_sources":
-            dependency_fingerprints["operations_sources"] = (
-                upstream_fingerprints["operations_sources"]
-            )
-        elif item_key == "reception_standard_answer_card":
-            dependency_fingerprints.update(
-                {
-                    "reception_draft": upstream_fingerprints[
-                        "reception_draft"
-                    ],
-                    "existing_answer_cards": upstream_fingerprints[
-                        "existing_answer_cards"
-                    ],
-                    "resolved_source_snapshots": json_fingerprint(
-                        _reception_source_snapshots(
-                            reception_draft,
-                            product_sources,
-                            operations_sources,
-                        )
-                    ),
-                }
-            )
         item["item_fingerprint"] = _item_fingerprint(
             item,
-            dependencies=dependency_fingerprints,
+            upstream_fingerprints=upstream_fingerprints,
         )
         items.append(item)
 
@@ -766,12 +763,7 @@ def build_core10_activation_packet(
         "upstream_fingerprints": upstream_fingerprints,
         "items": items,
     }
-    packet_identity = {
-        key: value
-        for key, value in packet.items()
-        if key != "generated_at"
-    }
-    packet_fingerprint = json_fingerprint(packet_identity)["digest"]
+    packet_fingerprint = _packet_fingerprint_digest(packet)
     packet["packet_fingerprint"] = packet_fingerprint
     packet["packet_id"] = f"core10-activation:{packet_fingerprint[:12]}"
     return _json_safe(packet)
@@ -806,16 +798,38 @@ def validate_core10_activation_decisions(
 
     packet_id = packet_record.get("packet_id")
     packet_fingerprint = packet_record.get("packet_fingerprint")
-    if not _is_nonblank_string(packet_id):
-        add_error("invalid_packet_id", "packet.packet_id")
-    if not (
-        isinstance(packet_fingerprint, str)
-        and re.fullmatch(r"[0-9a-f]{64}", packet_fingerprint)
-    ):
+    packet_fingerprint_is_valid = _is_sha256_digest(packet_fingerprint)
+    if not packet_fingerprint_is_valid:
         add_error("invalid_packet_fingerprint", "packet.packet_fingerprint")
+    try:
+        recomputed_packet_fingerprint = _packet_fingerprint_digest(
+            packet_record
+        )
+    except (KeyError, TypeError, ValueError):
+        recomputed_packet_fingerprint = None
+        add_error("invalid_packet_identity", "packet")
+    if packet_fingerprint != recomputed_packet_fingerprint:
+        add_error(
+            "packet_fingerprint_mismatch",
+            "packet.packet_fingerprint",
+        )
+
+    expected_packet_id = (
+        f"core10-activation:{packet_fingerprint[:12]}"
+        if packet_fingerprint_is_valid
+        else None
+    )
+    if packet_id != expected_packet_id:
+        add_error("invalid_packet_id", "packet.packet_id")
     if request.get("packet_id") != packet_id:
         add_error("packet_id_mismatch", "packet_id")
-    if request.get("packet_fingerprint") != packet_fingerprint:
+    submitted_packet_fingerprint = request.get("packet_fingerprint")
+    if not _is_sha256_digest(submitted_packet_fingerprint):
+        add_error(
+            "invalid_submitted_packet_fingerprint",
+            "packet_fingerprint",
+        )
+    if submitted_packet_fingerprint != packet_fingerprint:
         add_error("packet_fingerprint_mismatch", "packet_fingerprint")
 
     actor = request.get("actor")
@@ -827,13 +841,48 @@ def validate_core10_activation_decisions(
 
     packet_items = packet_record.get("items")
     packet_item_records = packet_items if isinstance(packet_items, list) else []
-    expected_items = {
-        item["item_key"]: item
-        for item in packet_item_records
-        if isinstance(item, dict)
-        and isinstance(item.get("item_key"), str)
-        and item["item_key"] in ITEM_CASES
-    }
+    upstream_fingerprints = packet_record.get("upstream_fingerprints")
+    upstream_fingerprint_records = (
+        upstream_fingerprints
+        if isinstance(upstream_fingerprints, dict)
+        else {}
+    )
+    expected_items: dict[str, dict[str, Any]] = {}
+    for index, item in enumerate(packet_item_records):
+        if not isinstance(item, dict):
+            continue
+        item_key = item.get("item_key")
+        if not isinstance(item_key, str) or item_key not in ITEM_CASES:
+            continue
+        expected_items[item_key] = item
+        item_fingerprint = item.get("item_fingerprint")
+        if not _is_sha256_digest(item_fingerprint):
+            add_error(
+                "invalid_item_fingerprint",
+                f"packet.items[{index}].item_fingerprint",
+                item_key=item_key,
+                index=index,
+            )
+        try:
+            recomputed_item_fingerprint = _item_fingerprint(
+                item,
+                upstream_fingerprints=upstream_fingerprint_records,
+            )
+        except (KeyError, TypeError, ValueError):
+            recomputed_item_fingerprint = None
+            add_error(
+                "invalid_item_identity",
+                f"packet.items[{index}]",
+                item_key=item_key,
+                index=index,
+            )
+        if item_fingerprint != recomputed_item_fingerprint:
+            add_error(
+                "item_fingerprint_mismatch",
+                f"packet.items[{index}].item_fingerprint",
+                item_key=item_key,
+                index=index,
+            )
     if (
         not isinstance(packet_items, list)
         or len(packet_item_records) != len(ITEM_CASES)
@@ -884,9 +933,15 @@ def validate_core10_activation_decisions(
                 index=index,
             )
             continue
-        if decision.get("item_fingerprint") != expected_item.get(
-            "item_fingerprint"
-        ):
+        submitted_item_fingerprint = decision.get("item_fingerprint")
+        if not _is_sha256_digest(submitted_item_fingerprint):
+            add_error(
+                "invalid_submitted_item_fingerprint",
+                f"{field}.item_fingerprint",
+                item_key=item_key,
+                index=index,
+            )
+        if submitted_item_fingerprint != expected_item.get("item_fingerprint"):
             add_error(
                 "item_fingerprint_mismatch",
                 f"{field}.item_fingerprint",

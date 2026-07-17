@@ -1394,3 +1394,125 @@ def test_malformed_packet_and_decisions_return_errors_instead_of_raising() -> No
     assert result["valid"] is False
     assert result["errors"]
     assert result["preview_only"] is True
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {1: "integer key"},
+        {"1": "string key", 1: "colliding integer key"},
+        {"nested": {2: "integer key"}},
+    ],
+)
+def test_json_fingerprint_rejects_non_string_object_keys(
+    payload: dict[object, object],
+) -> None:
+    from apps.api.hxy_knowledge.core10_activation import json_fingerprint
+
+    with pytest.raises(TypeError):
+        json_fingerprint(payload)
+
+
+@pytest.mark.parametrize(
+    "non_finite",
+    [float("nan"), float("inf"), float("-inf")],
+)
+def test_json_fingerprint_rejects_non_finite_numbers(
+    non_finite: float,
+) -> None:
+    from apps.api.hxy_knowledge.core10_activation import json_fingerprint
+
+    with pytest.raises(ValueError):
+        json_fingerprint({"value": non_finite})
+
+
+def test_validator_detects_blocker_removal_with_stale_packet_and_item_hashes() -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+        validate_core10_activation_decisions,
+    )
+
+    inputs = _packet_inputs()
+    inputs["constitution_draft"] = None
+    packet = build_core10_activation_packet(**inputs)
+    constitution_item = _packet_item(packet, "brand_constitution")
+    assert constitution_item["blockers"]
+
+    constitution_item["blockers"] = []
+    result = validate_core10_activation_decisions(
+        packet,
+        _decision_payload(packet),
+    )
+
+    assert result["valid"] is False
+    assert {
+        "packet_fingerprint_mismatch",
+        "item_fingerprint_mismatch",
+    } <= {error["code"] for error in result["errors"]}
+
+
+def test_validator_rejects_self_consistent_but_forged_packet_id() -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+        validate_core10_activation_decisions,
+    )
+
+    packet = build_core10_activation_packet(**_packet_inputs())
+    packet["packet_id"] = "core10-activation:forgedpacket"
+
+    result = validate_core10_activation_decisions(
+        packet,
+        _decision_payload(packet),
+    )
+
+    assert result["valid"] is False
+    assert "invalid_packet_id" in {
+        error["code"] for error in result["errors"]
+    }
+
+
+def test_validator_rejects_packet_fingerprint_missing_on_both_sides() -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+        validate_core10_activation_decisions,
+    )
+
+    packet = build_core10_activation_packet(**_packet_inputs())
+    decisions = _decision_payload(packet)
+    packet.pop("packet_fingerprint")
+    decisions.pop("packet_fingerprint")
+
+    result = validate_core10_activation_decisions(packet, decisions)
+
+    assert result["valid"] is False
+    assert "invalid_packet_fingerprint" in {
+        error["code"] for error in result["errors"]
+    }
+
+
+@pytest.mark.parametrize("invalid_fingerprint", [None, "A" * 64])
+def test_validator_rejects_item_fingerprint_invalid_on_both_sides(
+    invalid_fingerprint: str | None,
+) -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+        validate_core10_activation_decisions,
+    )
+
+    packet = build_core10_activation_packet(**_packet_inputs())
+    decisions = _decision_payload(packet)
+    item = packet["items"][0]
+    decision = decisions["decisions"][0]
+    if invalid_fingerprint is None:
+        item.pop("item_fingerprint")
+        decision.pop("item_fingerprint")
+    else:
+        item["item_fingerprint"] = invalid_fingerprint
+        decision["item_fingerprint"] = invalid_fingerprint
+
+    result = validate_core10_activation_decisions(packet, decisions)
+
+    assert result["valid"] is False
+    assert "invalid_item_fingerprint" in {
+        error["code"] for error in result["errors"]
+    }
