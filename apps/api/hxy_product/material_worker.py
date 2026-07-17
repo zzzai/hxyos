@@ -7,12 +7,14 @@ from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
 
+from hxy_knowledge.image_adapter import IMAGE_SUFFIXES
+
 from .material_chunker import chunk_markdown
 from .material_parser import (
     MaterialParseError,
     MaterialParseResult,
     build_artifact_storage_keys,
-    parse_with_markitdown,
+    parse_material,
 )
 from .material_repository import MaterialJobLeaseLost
 from .source_card import build_source_card
@@ -32,9 +34,13 @@ def _error_summary(code: str) -> str:
         "source_missing": "saved source material is unavailable",
         "invalid_storage_path": "saved source material path is invalid",
         "empty_parse_output": "parser produced no usable text",
-        "parser_dependency_missing": "document parser is temporarily unavailable",
+        "parser_dependency_missing": "material parser dependency is temporarily unavailable",
         "parser_io_error": "document parser could not read the source",
         "parser_error": "document parser could not understand the source",
+        "invalid_image": "image parser could not decode the source",
+        "image_too_large": "image exceeds the parser safety budget",
+        "image_encode_failed": "image could not be prepared for visual understanding",
+        "image_quality_gate_failed": "image understanding did not produce a usable reference",
     }.get(code, "material processing did not complete")
 
 
@@ -43,12 +49,22 @@ def _deep_understanding(
     parsed: MaterialParseResult,
 ) -> dict[str, Any]:
     compact = " ".join(parsed.text_content.replace("\x00", " ").split())
+    quality = dict(parsed.quality or {})
+    quality_status = str(quality.get("status") or "")
+    if quality_status == "review":
+        confidence = "medium"
+    elif quality_status == "usable":
+        confidence = "high" if len(parsed.text_content) >= 500 else "medium"
+    else:
+        confidence = "high" if len(parsed.text_content) >= 500 else "medium"
     return {
         **preliminary,
         "summary": compact[:600] or str(preliminary.get("summary") or ""),
         "parse_status": "extracted",
-        "confidence": "high" if len(parsed.text_content) >= 500 else "medium",
+        "confidence": confidence,
         "warnings": list(parsed.warnings),
+        "parse_quality": quality,
+        "parser_metadata": dict(parsed.metadata or {}),
         "official_use_allowed": False,
         "use_boundary": str(
             preliminary.get("use_boundary")
@@ -107,6 +123,10 @@ def _record_failure(
         max(base_retry_seconds, 1) * (2 ** max(int(job["attempt_number"]) - 1, 0)),
         3600,
     )
+    extension = str(
+        job.get("extension") or Path(str(job.get("file_name") or "")).suffix
+    ).lower()
+    parser_name = "hxy-image-adapter" if extension in IMAGE_SUFFIXES else "markitdown"
     outcome = repository.retry_or_fail_job(
         job["job_id"],
         worker_id,
@@ -114,7 +134,7 @@ def _record_failure(
         error_code=error.code,
         error_summary=_error_summary(error.code),
         retry_delay_seconds=retry_delay,
-        parser_name="markitdown",
+        parser_name=parser_name,
         parser_version=None,
     )
     return {
@@ -131,7 +151,7 @@ def process_one_material_job(
     worker_id: str,
     lease_seconds: int,
     base_retry_seconds: int,
-    parser: Parser = parse_with_markitdown,
+    parser: Parser = parse_material,
 ) -> dict[str, str]:
     repository.reclaim_stale_leases(limit=100)
     job = repository.claim_next_job(worker_id, lease_seconds=lease_seconds)

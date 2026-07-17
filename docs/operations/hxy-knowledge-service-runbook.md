@@ -164,6 +164,60 @@ all meaningful business tokens ILIKE
 
 This makes queries such as `产品菜单类图片 草本泡脚 复购话术` and `竞品参考品牌图片 背书 价格 视觉风格` recall image understanding chunks even when the exact full sentence is absent.
 
+## OCR / Vision Adapter
+
+The source parser uses `hxy-image-adapter` for image files (`png`, `jpg`, `jpeg`,
+`webp`, `bmp`, and `gif`). It is a governed extraction adapter, not an
+approval path:
+
+```text
+source hash check
+-> isolated parser copy
+-> local RapidOCR (optional)
+-> HXY vision route (visual and business understanding)
+-> extraction quality gate
+-> non-authoritative reference artifact
+```
+
+Every image result carries `official_use_allowed=false`. A successful parse
+means that the image can be searched and reviewed; it does not make the image
+an approved brand, product, price, compliance, or operating fact. Low-quality
+or OCR-only results remain review-required. The original file is never
+overwritten and the model only receives an in-memory resized copy.
+
+Install the optional worker dependencies from the domestic mirror:
+
+```bash
+cd /root/hxy
+python3 -m pip install \
+  -i https://mirrors.aliyun.com/pypi/simple/ \
+  -r apps/api/requirements-parser-vision.txt
+```
+
+The adapter calls the existing `vision_understanding` model route. Configure
+that route through the HXY service environment and use the already approved
+HXY visual model. Do not place API keys in this runbook, source files, parser
+artifacts, or model prompts. A gateway configured for experiments must not be
+used for private HXY images unless it has been explicitly approved for that
+data class.
+
+Verify the worker without exposing environment values:
+
+```bash
+cd /root/hxy
+PYTHONPATH=apps/api .venv/bin/python - <<'PY'
+from importlib.util import find_spec
+
+for name in ("PIL", "rapidocr_onnxruntime", "onnxruntime"):
+    print(f"{name}={find_spec(name) is not None}")
+PY
+```
+
+For a parser job, use `parser_strategy=ocr_or_vision` for an image source. A
+failed source validation, failed adapter call, or unusable quality result goes
+to exception review. It must not be converted to `PENDING_ADAPTER` or silently
+treated as formal knowledge.
+
 ## Dependencies
 
 Install the API dependencies:
@@ -172,6 +226,10 @@ Install the API dependencies:
 cd /root/hxy
 python3 -m pip install --break-system-packages -r apps/api/requirements.txt
 ```
+
+For a worker that also processes images, install the additional dependency
+file above after the base requirements. Use the same domestic mirror in
+server deployments.
 
 ## PostgreSQL Setup
 

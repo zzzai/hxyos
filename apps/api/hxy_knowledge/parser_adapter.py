@@ -24,6 +24,13 @@ class UnsafeOutputError(ValueError):
     """Raised when a parser artifact path crosses its configured trust root."""
 
 
+def recognize_image(source: Path, **kwargs: Any) -> Any:
+    """Import lazily so text parsers do not require optional image packages."""
+    from .image_adapter import recognize_image as _recognize_image
+
+    return _recognize_image(source, **kwargs)
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -271,21 +278,6 @@ def _skip_result(job: dict[str, Any], *, status: str, reason: str, dependency: s
     if dependency:
         result["dependency"] = dependency
     return result
-
-
-def _pending_adapter_result(job: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "version": "hxy-parser-job-result.v1",
-        "job_id": job.get("job_id") or "",
-        "source_path": job.get("source_path") or "",
-        "parser": job.get("parser_strategy") or VISION_STRATEGY,
-        "status": "PENDING_ADAPTER",
-        "reason": "configured OCR or vision adapter is not connected yet",
-        "output_path": None,
-        "official_use_allowed": False,
-        "requires_human_review": False,
-        "created_at": _utc_now(),
-    }
 
 
 def assess_extraction_quality(
@@ -619,6 +611,90 @@ def _run_mineru_job(job: dict[str, Any], *, root_dir: Path, output_dir: Path, ti
         }
 
 
+def _run_vision_job(
+    job: dict[str, Any],
+    *,
+    root_dir: Path,
+    output_dir: Path,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    del timeout_seconds
+    source_path = str(job.get("source_path") or "")
+    source = _safe_source_path(root_dir, source_path)
+    if source is None:
+        return _skip_result(job, status="FAILED_INVALID_SOURCE", reason="source path is outside HXY inbox")
+    if not source.is_file():
+        return _skip_result(job, status="FAILED_MISSING_SOURCE", reason="source file does not exist")
+    source_content_hash, hash_failure = _source_hash_or_failure(job, source)
+    if hash_failure is not None:
+        return hash_failure
+    assert source_content_hash is not None
+
+    try:
+        temporary, isolated_source, _attempt_dir = _isolated_parser_source(
+            source,
+            output_root=output_dir,
+            job_component=_safe_artifact_component(str(job.get("job_id") or source.stem)),
+        )
+    except UnsafeOutputError as error:
+        return _skip_result(job, status="FAILED_UNSAFE_OUTPUT", reason=str(error))
+    except OSError:
+        return _skip_result(job, status="FAILED_INPUT_COPY", reason="image could not be isolated")
+
+    with temporary:
+        try:
+            recognition = recognize_image(isolated_source)
+        except Exception as error:
+            code = str(getattr(error, "code", "") or "")
+            if code == "parser_dependency_missing":
+                return _skip_result(
+                    job,
+                    status="SKIPPED_DEPENDENCY_MISSING",
+                    reason="image parser dependency is not installed",
+                    dependency="Pillow",
+                )
+            if code in {"source_missing", "invalid_image", "image_too_large"}:
+                return _skip_result(job, status="FAILED_IMAGE_INPUT", reason=code)
+            return _skip_result(job, status="FAILED_VISION_ADAPTER", reason=type(error).__name__)
+
+        source_changed = _source_changed_result(job, source, source_content_hash)
+        if source_changed is not None:
+            return source_changed
+
+        quality = dict(recognition.quality)
+        if quality.get("status") == "unusable":
+            return {
+                **_skip_result(
+                    job,
+                    status="FAILED_QUALITY_GATE",
+                    reason="image OCR and visual understanding produced no usable reference",
+                ),
+                "parser": recognition.parser_name,
+                "source_content_hash": source_content_hash,
+                "quality": quality,
+                "warnings": list(recognition.warnings),
+            }
+        return {
+            "version": "hxy-parser-job-result.v1",
+            "job_id": job.get("job_id") or "",
+            "source_path": source_path,
+            "parser": recognition.parser_name,
+            "status": "EXTRACTED",
+            "reason": "image_processed_by_ocr_and_vision_adapter",
+            "output_path": None,
+            "source_content_hash": source_content_hash,
+            "_extracted_text": recognition.text_content,
+            "byte_count": source.stat().st_size,
+            "char_count": len(recognition.text_content),
+            "quality": quality,
+            "metadata": recognition.metadata,
+            "warnings": list(recognition.warnings),
+            "official_use_allowed": False,
+            "requires_human_review": quality.get("status") != "usable",
+            "created_at": _utc_now(),
+        }
+
+
 def _run_parser_job_once(
     job: dict[str, Any],
     strategy: str,
@@ -637,6 +713,13 @@ def _run_parser_job_once(
         )
     if strategy == MINERU_STRATEGY:
         return _run_mineru_job(
+            attempt_job,
+            root_dir=root_dir,
+            output_dir=output_dir,
+            timeout_seconds=timeout_seconds,
+        )
+    if strategy == VISION_STRATEGY:
+        return _run_vision_job(
             attempt_job,
             root_dir=root_dir,
             output_dir=output_dir,
@@ -683,7 +766,11 @@ def run_parser_jobs(
             "authority_rule": "parser_outputs_are_non_authoritative_and_review_is_exception_based",
         }
 
-    allowed_strategies = strategies if strategies is not None else {MARKITDOWN_STRATEGY, MINERU_STRATEGY}
+    allowed_strategies = strategies if strategies is not None else {
+        MARKITDOWN_STRATEGY,
+        MINERU_STRATEGY,
+        VISION_STRATEGY,
+    }
     items = []
     for job in parser_jobs:
         source_path = str(job.get("source_path") or "")
@@ -713,18 +800,8 @@ def run_parser_jobs(
 
         primary_strategy = str(job.get("parser_strategy") or "")
         automation_state = str((job.get("parser_plan") or {}).get("automation_state") or "")
-        if primary_strategy == VISION_STRATEGY or automation_state == "pending_adapter":
-            pending = _pending_adapter_result(job)
-            pending["attempts"] = [
-                {
-                    "parser": primary_strategy or VISION_STRATEGY,
-                    "status": "PENDING_ADAPTER",
-                    "reason": pending["reason"],
-                    "quality": None,
-                }
-            ]
-            items.append(pending)
-            continue
+        if automation_state == "pending_adapter" and primary_strategy != VISION_STRATEGY:
+            job = {**job, "parser_strategy": primary_strategy or VISION_STRATEGY}
 
         strategies_for_job = [str(job.get("parser_strategy") or "")]
         strategies_for_job.extend(str(value) for value in (job.get("parser_fallbacks") or []))
@@ -748,7 +825,8 @@ def run_parser_jobs(
                     output_dir=output_root,
                     timeout_seconds=timeout_seconds,
                 )
-            last_result = result
+            if result.get("status") != "SKIPPED_UNSUPPORTED_STRATEGY" or last_result is None:
+                last_result = result
             attempts.append(
                 {
                     "parser": result.get("parser") or strategy,

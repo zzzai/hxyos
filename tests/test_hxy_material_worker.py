@@ -119,6 +119,48 @@ def test_worker_parses_one_job_and_writes_governed_artifacts(tmp_path: Path) -> 
     assert "official_answer" in source_card["blocked_use"]
 
 
+def test_worker_preserves_image_review_quality_in_understanding(tmp_path: Path) -> None:
+    parser_module = importlib.import_module("apps.api.hxy_product.material_parser")
+    worker_module = importlib.import_module("apps.api.hxy_product.material_worker")
+    job = _job()
+    job["file_name"] = "门店菜单.png"
+    job["extension"] = ".png"
+    _write_original(tmp_path, job)
+    repository = FakeRepository(job)
+
+    def parse(_path: Path):
+        return parser_module.MaterialParseResult(
+            text_content="# 图片资料\n\n视觉摘要：菜单信息，需要复核。",
+            title="图片资料",
+            parser_name="hxy-image-adapter",
+            parser_version="1.0",
+            warnings=("visual_understanding_incomplete",),
+            quality={
+                "status": "review",
+                "score": 60,
+                "confidence": 0.91,
+                "requires_visual_review": True,
+                "official_use_allowed": False,
+            },
+            metadata={"image_type": "menu"},
+        )
+
+    result = worker_module.process_one_material_job(
+        repository,
+        material_root=tmp_path,
+        worker_id="worker-a",
+        lease_seconds=90,
+        base_retry_seconds=30,
+        parser=parse,
+    )
+
+    assert result["status"] == "succeeded"
+    understanding = repository.completions[0]["understanding"]
+    assert understanding["confidence"] == "medium"
+    assert understanding["parse_quality"]["status"] == "review"
+    assert understanding["parser_metadata"]["image_type"] == "menu"
+
+
 def test_markdown_chunker_preserves_headings_paragraphs_and_overlap() -> None:
     module = importlib.import_module("apps.api.hxy_product.material_chunker")
     text = """# 首店运营

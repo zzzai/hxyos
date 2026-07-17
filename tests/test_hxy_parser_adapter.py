@@ -876,7 +876,7 @@ def test_extraction_quality_rejects_tiny_output_without_pdf_page_signals():
     assert "sparse_output" in quality["signals"]
 
 
-def test_image_job_stays_pending_adapter_without_creating_human_review(tmp_path):
+def test_invalid_image_job_enters_exception_review_without_pending_adapter(tmp_path):
     from hxy_knowledge.parser_adapter import run_parser_jobs
 
     root = tmp_path / "hxy"
@@ -899,10 +899,11 @@ def test_image_job_stays_pending_adapter_without_creating_human_review(tmp_path)
         output_dir=tmp_path / "extracted",
     )
 
-    assert result["items"][0]["status"] == "PENDING_ADAPTER"
-    assert result["items"][0]["requires_human_review"] is False
-    assert result["pending_count"] == 1
-    assert result["requires_human_review"] is False
+    assert result["items"][0]["status"] == "FAILED_IMAGE_INPUT"
+    assert result["items"][0]["requires_human_review"] is True
+    assert result["items"][0]["official_use_allowed"] is False
+    assert result["pending_count"] == 0
+    assert result["requires_human_review"] is True
 
 
 def test_run_parser_jobs_blocks_reference_when_all_outputs_fail_quality_gate(tmp_path, monkeypatch):
@@ -1087,3 +1088,50 @@ def test_api_requirements_pin_markitdown_for_parser_jobs():
     )
 
     assert "markitdown[docx,pdf,pptx,xls,xlsx]" in requirements
+
+
+def test_run_parser_jobs_executes_ocr_or_vision_image_adapter(tmp_path, monkeypatch):
+    import hxy_knowledge.parser_adapter as parser_adapter
+    from hxy_knowledge.image_adapter import ImageRecognitionResult
+
+    root = tmp_path / "hxy"
+    source = root / "knowledge" / "raw" / "inbox" / "menu.png"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"synthetic-image-source")
+    output_dir = tmp_path / "extracted"
+
+    monkeypatch.setattr(
+        parser_adapter,
+        "recognize_image",
+        lambda path, **_kwargs: ImageRecognitionResult(
+            text_content="# 图片理解\n\n视觉摘要：菜单图片。",
+            title="menu",
+            parser_name="hxy-image-adapter",
+            parser_version="1.0",
+            warnings=(),
+            quality={"status": "usable", "requires_visual_review": False},
+            metadata={"image_type": "menu"},
+            official_use_allowed=False,
+        ),
+    )
+
+    result = parser_adapter.run_parser_jobs(
+        [
+            {
+                "version": "hxy-parser-job.v1",
+                "job_id": "job-image-adapter",
+                "source_path": "knowledge/raw/inbox/menu.png",
+                "content_hash": _sha256(source),
+                "parser_strategy": "ocr_or_vision",
+            }
+        ],
+        root_dir=root,
+        output_dir=output_dir,
+        strategies={"ocr_or_vision"},
+    )
+
+    item = result["items"][0]
+    assert item["status"] == "EXTRACTED"
+    assert item["parser"] == "hxy-image-adapter"
+    assert item["status"] != "PENDING_ADAPTER"
+    assert "视觉摘要：菜单图片" in Path(item["output_path"]).read_text(encoding="utf-8")

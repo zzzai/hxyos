@@ -1,0 +1,6 @@
+-r requirements.txt
+
+# Optional image understanding dependencies. Install this on workers that process
+# image sources; text-only API instances do not need this file.
+Pillow>=10,<13
+rapidocr-onnxruntime==1.4.4

@@ -216,6 +216,8 @@ def build_source_card(
             "extracted_char_count": len(parsed.text_content),
             "title_detected": bool(parsed.title),
             "parser_warning_count": len(parsed.warnings),
+            "parser_quality_status": str(parsed.quality.get("status") or "unscored"),
+            "requires_visual_review": bool(parsed.quality.get("requires_visual_review")),
         },
         "allowed_use": policy["allowed_use"],
         "blocked_use": policy["blocked_use"],

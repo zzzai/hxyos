@@ -213,3 +213,31 @@ def test_source_card_v2_rejects_untrusted_approval_and_invalid_dimensions() -> N
     assert card["derivation"] == "original"
     assert card["retrieval_state"] == "pending_source_decision"
     assert card["official_use_allowed"] is False
+
+
+def test_image_material_uses_ocr_vision_adapter(monkeypatch, tmp_path: Path) -> None:
+    parser_module = importlib.import_module("apps.api.hxy_product.material_parser")
+    from hxy_knowledge.image_adapter import ImageRecognitionResult
+
+    source = tmp_path / "menu.png"
+    source.write_bytes(b"image")
+    monkeypatch.setattr(
+        parser_module,
+        "recognize_image",
+        lambda path, **_kwargs: ImageRecognitionResult(
+            text_content="# 图片资料\n\n视觉摘要：门店菜单。",
+            title="menu",
+            parser_name="hxy-image-adapter",
+            parser_version="1.0",
+            warnings=(),
+            quality={"status": "usable", "requires_visual_review": False},
+            metadata={"image_type": "menu"},
+            official_use_allowed=False,
+        ),
+    )
+
+    parsed = parser_module.parse_material(source)
+
+    assert parsed.parser_name == "hxy-image-adapter"
+    assert "视觉摘要：门店菜单" in parsed.text_content
+    assert parsed.warnings == ()
