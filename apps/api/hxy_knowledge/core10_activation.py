@@ -8,7 +8,8 @@ from typing import Any
 
 PACKET_VERSION = "hxyos-core10-activation-packet.v1"
 DECISION_OPTIONS = ("approve", "reject", "request_correction")
-GROUP_CASES = {
+AUTHORITY_RULE = "activation_packet_is_a_proposal_not_authority"
+ITEM_CASES = {
     "brand_constitution": ("core-brand-identity",),
     "product_system_sources": ("core-product-system",),
     "first_store_operations_sources": (
@@ -17,6 +18,15 @@ GROUP_CASES = {
     ),
     "reception_standard_answer_card": ("core-citation",),
 }
+_UPSTREAM_INPUT_KEYS = (
+    "report",
+    "constitution_state",
+    "constitution_draft",
+    "product_sources",
+    "operations_sources",
+    "reception_draft",
+    "existing_answer_cards",
+)
 _FORBIDDEN_KEYS = {"claim_id", "chunk_id"}
 _PUBLIC_ASSET_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$")
 _CONSTITUTION_VERSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
@@ -122,6 +132,32 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
+def _canonical_json_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): _canonical_json_value(nested)
+            for key, nested in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_canonical_json_value(nested) for nested in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+def json_fingerprint(payload: Any) -> dict[str, str]:
+    encoded = json.dumps(
+        _canonical_json_value(payload),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return {
+        "algorithm": "sha256",
+        "digest": hashlib.sha256(encoded).hexdigest(),
+    }
+
+
 def _payload_sha256(payload: dict[str, Any]) -> str:
     encoded = json.dumps(
         _json_safe(payload),
@@ -162,6 +198,36 @@ def _constitution_evidence(
     ]
 
 
+def _bounded_constitution_state(
+    constitution_state: dict[str, Any],
+) -> dict[str, Any]:
+    fields = ("status", "active_version", "authority_version")
+    return {
+        field: _json_safe(constitution_state[field])
+        for field in fields
+        if field in constitution_state
+    }
+
+
+def _bounded_constitution_draft(
+    constitution_draft: dict[str, Any] | None,
+) -> Any:
+    if not isinstance(constitution_draft, dict):
+        return None
+    fields = (
+        "version",
+        "core_statements",
+        "role_variants",
+        "forbidden_interpretations",
+        "source_references",
+    )
+    return {
+        field: _json_safe(constitution_draft[field])
+        for field in fields
+        if field in constitution_draft
+    }
+
+
 def _reception_evidence(
     reception_draft: dict[str, Any] | None,
     resolved_source_ids: set[str],
@@ -190,12 +256,15 @@ def _safe_reception_draft(
     reception_draft: dict[str, Any] | None,
 ) -> Any:
     canonical_draft = _canonical_reception_draft(reception_draft)
-    safe_draft = _json_safe(canonical_draft)
-    if isinstance(safe_draft, dict) and isinstance(canonical_draft, dict):
-        if "source_ids" in canonical_draft:
-            safe_draft["source_ids"] = _safe_reception_source_ids(
-                canonical_draft
-            )
+    if not isinstance(canonical_draft, dict):
+        return None
+    safe_draft = {
+        field: _json_safe(canonical_draft[field])
+        for field in ("question_pattern", "answer")
+        if field in canonical_draft
+    }
+    if "source_ids" in canonical_draft:
+        safe_draft["source_ids"] = _safe_reception_source_ids(canonical_draft)
     return safe_draft
 
 
@@ -428,6 +497,35 @@ def _approved_card_state(
     }
 
 
+def _reception_source_snapshots(
+    reception_draft: dict[str, Any] | None,
+    product_sources: list[dict[str, Any]],
+    operations_sources: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not isinstance(reception_draft, dict):
+        return []
+    selected_ids = set(_safe_reception_source_ids(reception_draft))
+    return [
+        source
+        for sources in (product_sources, operations_sources)
+        for source in sources
+        if isinstance(source, dict) and source.get("asset_id") in selected_ids
+    ]
+
+
+def _item_fingerprint(
+    item: dict[str, Any],
+    *,
+    dependencies: dict[str, Any],
+) -> str:
+    return json_fingerprint(
+        {
+            "item": item,
+            "dependencies": dependencies,
+        }
+    )["digest"]
+
+
 def build_core10_activation_packet(
     *,
     report: dict[str, Any],
@@ -441,6 +539,19 @@ def build_core10_activation_packet(
 ) -> dict[str, Any]:
     failed_cases = _failed_case_ids(report)
     timestamp = generated_at
+    upstream_payloads = {
+        "report": report,
+        "constitution_state": constitution_state,
+        "constitution_draft": constitution_draft,
+        "product_sources": product_sources,
+        "operations_sources": operations_sources,
+        "reception_draft": reception_draft,
+        "existing_answer_cards": existing_answer_cards,
+    }
+    upstream_fingerprints = {
+        key: json_fingerprint(upstream_payloads[key])
+        for key in _UPSTREAM_INPUT_KEYS
+    }
     approved_card_state = _approved_card_state(
         reception_draft,
         existing_answer_cards,
@@ -450,12 +561,12 @@ def build_core10_activation_packet(
         operations_sources,
     )
 
-    group_values = {
+    item_values = {
         "brand_constitution": {
-            "current_state": _json_safe(constitution_state),
+            "current_state": _bounded_constitution_state(constitution_state),
             "proposed_authority": {
                 "authority": "official_internal",
-                "draft": _json_safe(constitution_draft),
+                "draft": _bounded_constitution_draft(constitution_draft),
             },
             "source_evidence": _constitution_evidence(constitution_draft),
             "why_needed": "The brand identity case requires an approved constitution.",
@@ -515,13 +626,13 @@ def build_core10_activation_packet(
     }
 
     items = []
-    for group_id, mapped_cases in GROUP_CASES.items():
+    for item_key, mapped_cases in ITEM_CASES.items():
         affected_cases = [
             case_id for case_id in mapped_cases if case_id in failed_cases
         ]
         blockers: list[str] = []
         write_intents: list[dict[str, Any]] = []
-        if affected_cases and group_id == "brand_constitution":
+        if affected_cases and item_key == "brand_constitution":
             if not isinstance(constitution_draft, dict) or not constitution_draft:
                 blockers.append("missing_constitution_draft")
             elif not _is_valid_constitution_draft(constitution_draft):
@@ -537,21 +648,21 @@ def build_core10_activation_packet(
                 write_intents.append(
                     {**payload, "payload_sha256": _payload_sha256(constitution_draft)}
                 )
-        elif affected_cases and group_id == "product_system_sources":
+        elif affected_cases and item_key == "product_system_sources":
             blockers = _source_blockers(product_sources)
             if not blockers:
                 write_intents = _classification_intents(
                     product_sources,
                     reason="Selected source supports the Core-10 product-system case.",
                 )
-        elif affected_cases and group_id == "first_store_operations_sources":
+        elif affected_cases and item_key == "first_store_operations_sources":
             blockers = _source_blockers(operations_sources)
             if not blockers:
                 write_intents = _classification_intents(
                     operations_sources,
                     reason="Selected source supports the Core-10 first-store cases.",
                 )
-        elif affected_cases and group_id == "reception_standard_answer_card":
+        elif affected_cases and item_key == "reception_standard_answer_card":
             if not isinstance(reception_draft, dict) or not reception_draft:
                 blockers.append("missing_reception_draft")
             else:
@@ -588,8 +699,8 @@ def build_core10_activation_packet(
                     }
                 )
         item = {
-            "group_id": group_id,
-            **group_values[group_id],
+            "item_key": item_key,
+            **item_values[item_key],
             "affected_core10_cases": affected_cases,
             "exact_write_intents": write_intents,
             "blockers": blockers,
@@ -597,15 +708,220 @@ def build_core10_activation_packet(
             "official_use_allowed": False,
             "write_allowed": False,
         }
+        dependency_fingerprints = {
+            "report": upstream_fingerprints["report"],
+        }
+        if item_key == "brand_constitution":
+            dependency_fingerprints.update(
+                {
+                    "constitution_state": upstream_fingerprints[
+                        "constitution_state"
+                    ],
+                    "constitution_draft": upstream_fingerprints[
+                        "constitution_draft"
+                    ],
+                }
+            )
+        elif item_key == "product_system_sources":
+            dependency_fingerprints["product_sources"] = upstream_fingerprints[
+                "product_sources"
+            ]
+        elif item_key == "first_store_operations_sources":
+            dependency_fingerprints["operations_sources"] = (
+                upstream_fingerprints["operations_sources"]
+            )
+        elif item_key == "reception_standard_answer_card":
+            dependency_fingerprints.update(
+                {
+                    "reception_draft": upstream_fingerprints[
+                        "reception_draft"
+                    ],
+                    "existing_answer_cards": upstream_fingerprints[
+                        "existing_answer_cards"
+                    ],
+                    "resolved_source_snapshots": json_fingerprint(
+                        _reception_source_snapshots(
+                            reception_draft,
+                            product_sources,
+                            operations_sources,
+                        )
+                    ),
+                }
+            )
+        item["item_fingerprint"] = _item_fingerprint(
+            item,
+            dependencies=dependency_fingerprints,
+        )
         items.append(item)
 
-    return _json_safe(
-        {
-            "version": PACKET_VERSION,
-            "generated_at": timestamp,
-            "item_count": 4,
-            "write_to_database": False,
-            "publish_allowed": False,
-            "items": items,
-        }
+    packet = {
+        "version": PACKET_VERSION,
+        "generated_at": timestamp,
+        "item_count": len(ITEM_CASES),
+        "write_to_database": False,
+        "publish_allowed": False,
+        "official_use_allowed": False,
+        "requires_founder_decision": True,
+        "authority_rule": AUTHORITY_RULE,
+        "upstream_fingerprints": upstream_fingerprints,
+        "items": items,
+    }
+    packet_identity = {
+        key: value
+        for key, value in packet.items()
+        if key != "generated_at"
+    }
+    packet_fingerprint = json_fingerprint(packet_identity)["digest"]
+    packet["packet_fingerprint"] = packet_fingerprint
+    packet["packet_id"] = f"core10-activation:{packet_fingerprint[:12]}"
+    return _json_safe(packet)
+
+
+def validate_core10_activation_decisions(
+    packet: Any,
+    decisions: Any,
+) -> dict[str, Any]:
+    errors: list[dict[str, Any]] = []
+
+    def add_error(
+        code: str,
+        field: str,
+        *,
+        item_key: str | None = None,
+        index: int | None = None,
+    ) -> None:
+        error: dict[str, Any] = {"code": code, "field": field}
+        if item_key is not None:
+            error["item_key"] = item_key
+        if index is not None:
+            error["index"] = index
+        errors.append(error)
+
+    packet_record = packet if isinstance(packet, dict) else {}
+    request = decisions if isinstance(decisions, dict) else {}
+    if not isinstance(packet, dict):
+        add_error("invalid_packet", "packet")
+    if not isinstance(decisions, dict):
+        add_error("invalid_decision_payload", "decisions")
+
+    packet_id = packet_record.get("packet_id")
+    packet_fingerprint = packet_record.get("packet_fingerprint")
+    if not _is_nonblank_string(packet_id):
+        add_error("invalid_packet_id", "packet.packet_id")
+    if not (
+        isinstance(packet_fingerprint, str)
+        and re.fullmatch(r"[0-9a-f]{64}", packet_fingerprint)
+    ):
+        add_error("invalid_packet_fingerprint", "packet.packet_fingerprint")
+    if request.get("packet_id") != packet_id:
+        add_error("packet_id_mismatch", "packet_id")
+    if request.get("packet_fingerprint") != packet_fingerprint:
+        add_error("packet_fingerprint_mismatch", "packet_fingerprint")
+
+    actor = request.get("actor")
+    actor_record = actor if isinstance(actor, dict) else {}
+    if not _is_nonblank_string(actor_record.get("id")):
+        add_error("invalid_actor_id", "actor.id")
+    if actor_record.get("role") != "founder":
+        add_error("invalid_actor_role", "actor.role")
+
+    packet_items = packet_record.get("items")
+    packet_item_records = packet_items if isinstance(packet_items, list) else []
+    expected_items = {
+        item["item_key"]: item
+        for item in packet_item_records
+        if isinstance(item, dict)
+        and isinstance(item.get("item_key"), str)
+        and item["item_key"] in ITEM_CASES
+    }
+    if (
+        not isinstance(packet_items, list)
+        or len(packet_item_records) != len(ITEM_CASES)
+        or set(expected_items) != set(ITEM_CASES)
+    ):
+        add_error("invalid_packet_items", "packet.items")
+
+    submitted = request.get("decisions")
+    if not isinstance(submitted, list):
+        add_error("invalid_decisions", "decisions")
+        submitted_records: list[Any] = []
+    else:
+        submitted_records = submitted
+
+    seen: dict[str, int] = {}
+    for index, decision in enumerate(submitted_records):
+        field = f"decisions[{index}]"
+        if not isinstance(decision, dict):
+            add_error("invalid_decision", field, index=index)
+            continue
+
+        action = decision.get("action")
+        if action not in DECISION_OPTIONS:
+            add_error("invalid_action", f"{field}.action", index=index)
+        if not _is_nonblank_string(decision.get("reason")):
+            add_error("missing_reason", f"{field}.reason", index=index)
+
+        item_key = decision.get("item_key")
+        if not isinstance(item_key, str) or item_key not in ITEM_CASES:
+            add_error("unknown_item_key", f"{field}.item_key", index=index)
+            continue
+
+        seen[item_key] = seen.get(item_key, 0) + 1
+        if seen[item_key] > 1:
+            add_error(
+                "duplicate_item_key",
+                f"{field}.item_key",
+                item_key=item_key,
+                index=index,
+            )
+
+        expected_item = expected_items.get(item_key)
+        if expected_item is None:
+            add_error(
+                "item_not_in_packet",
+                f"{field}.item_key",
+                item_key=item_key,
+                index=index,
+            )
+            continue
+        if decision.get("item_fingerprint") != expected_item.get(
+            "item_fingerprint"
+        ):
+            add_error(
+                "item_fingerprint_mismatch",
+                f"{field}.item_fingerprint",
+                item_key=item_key,
+                index=index,
+            )
+        if action == "approve" and bool(expected_item.get("blockers")):
+            add_error(
+                "blocked_item_cannot_be_approved",
+                f"{field}.action",
+                item_key=item_key,
+                index=index,
+            )
+
+    for item_key in ITEM_CASES:
+        if seen.get(item_key, 0) == 0:
+            add_error(
+                "missing_item_decision",
+                "decisions",
+                item_key=item_key,
+            )
+
+    errors.sort(
+        key=lambda error: (
+            str(error.get("field", "")),
+            str(error.get("code", "")),
+            str(error.get("item_key", "")),
+            int(error.get("index", -1)),
+        )
     )
+    return {
+        "valid": not errors,
+        "errors": errors,
+        "preview_only": True,
+        "write_to_database": False,
+        "publish_allowed": False,
+        "official_use_allowed": False,
+    }

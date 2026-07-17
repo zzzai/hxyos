@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 
 import pytest
@@ -83,6 +84,35 @@ def _packet_inputs() -> dict[str, object]:
     }
 
 
+def _packet_item(packet: dict[str, object], item_key: str) -> dict[str, object]:
+    return next(
+        item
+        for item in packet["items"]
+        if item["item_key"] == item_key
+    )
+
+
+def _decision_payload(
+    packet: dict[str, object],
+    actions: dict[str, str] | None = None,
+) -> dict[str, object]:
+    selected_actions = actions or {}
+    return {
+        "actor": {"id": "founder-001", "role": "founder"},
+        "packet_id": packet["packet_id"],
+        "packet_fingerprint": packet["packet_fingerprint"],
+        "decisions": [
+            {
+                "item_key": item["item_key"],
+                "item_fingerprint": item["item_fingerprint"],
+                "action": selected_actions.get(item["item_key"], "approve"),
+                "reason": f"Founder decision for {item['item_key']}.",
+            }
+            for item in packet["items"]
+        ],
+    }
+
+
 def test_builds_read_only_four_group_packet_for_current_core10_failures() -> None:
     from apps.api.hxy_knowledge.core10_activation import (
         DECISION_OPTIONS,
@@ -97,7 +127,13 @@ def test_builds_read_only_four_group_packet_for_current_core10_failures() -> Non
     assert packet["item_count"] == 4
     assert packet["write_to_database"] is False
     assert packet["publish_allowed"] is False
-    assert [item["group_id"] for item in packet["items"]] == [
+    assert packet["official_use_allowed"] is False
+    assert packet["requires_founder_decision"] is True
+    assert (
+        packet["authority_rule"]
+        == "activation_packet_is_a_proposal_not_authority"
+    )
+    assert [item["item_key"] for item in packet["items"]] == [
         "brand_constitution",
         "product_system_sources",
         "first_store_operations_sources",
@@ -129,12 +165,13 @@ def test_builds_read_only_four_group_packet_for_current_core10_failures() -> Non
     }
     for item in packet["items"]:
         assert required_fields <= item.keys()
-        assert item["affected_core10_cases"] == expected_cases[item["group_id"]]
+        assert item["affected_core10_cases"] == expected_cases[item["item_key"]]
         assert item["decision_options"] == list(DECISION_OPTIONS)
         assert item["official_use_allowed"] is False
         assert item["write_allowed"] is False
 
     encoded = json.dumps(packet, ensure_ascii=True, sort_keys=True)
+    assert "group_id" not in encoded
     assert "claim_id" not in encoded
     assert "chunk_id" not in encoded
 
@@ -148,7 +185,7 @@ def test_canonical_reception_draft_drives_proposal_and_write_intent() -> None:
     reception_item = next(
         item
         for item in packet["items"]
-        if item["group_id"] == "reception_standard_answer_card"
+        if item["item_key"] == "reception_standard_answer_card"
     )
 
     assert "invalid_reception_draft" not in reception_item["blockers"]
@@ -178,7 +215,7 @@ def test_legacy_reception_question_is_normalized_to_question_pattern() -> None:
     reception_item = next(
         item
         for item in packet["items"]
-        if item["group_id"] == "reception_standard_answer_card"
+        if item["item_key"] == "reception_standard_answer_card"
     )
 
     assert "invalid_reception_draft" not in reception_item["blockers"]
@@ -197,7 +234,7 @@ def test_ignores_mapped_cases_that_are_not_currently_failing() -> None:
 
     packet = build_core10_activation_packet(**inputs)
     cases_by_group = {
-        item["group_id"]: item["affected_core10_cases"] for item in packet["items"]
+        item["item_key"]: item["affected_core10_cases"] for item in packet["items"]
     }
 
     assert cases_by_group == {
@@ -233,7 +270,7 @@ def test_fail_closed_blockers_cover_missing_external_unselected_and_unsafe_input
 
     packet = build_core10_activation_packet(**inputs)
     blockers = {
-        item["group_id"]: item["blockers"] for item in packet["items"]
+        item["item_key"]: item["blockers"] for item in packet["items"]
     }
 
     assert "missing_constitution_draft" in blockers["brand_constitution"]
@@ -265,7 +302,7 @@ def test_unknown_source_produces_only_a_declarative_classification_intent() -> N
     product_item = next(
         item
         for item in packet["items"]
-        if item["group_id"] == "product_system_sources"
+        if item["item_key"] == "product_system_sources"
     )
     source_intents = [
         intent
@@ -319,7 +356,7 @@ def test_external_source_never_produces_a_classification_intent() -> None:
     product_item = next(
         item
         for item in packet["items"]
-        if item["group_id"] == "product_system_sources"
+        if item["item_key"] == "product_system_sources"
     )
 
     assert "external_source_not_eligible" in product_item["blockers"]
@@ -348,7 +385,7 @@ def test_conflicting_approved_reception_card_fails_closed() -> None:
     reception_item = next(
         item
         for item in packet["items"]
-        if item["group_id"] == "reception_standard_answer_card"
+        if item["item_key"] == "reception_standard_answer_card"
     )
 
     assert "approved_answer_card_conflict" in reception_item["blockers"]
@@ -385,7 +422,7 @@ def test_approved_reception_card_uses_real_question_pattern_field(
     reception_item = next(
         item
         for item in packet["items"]
-        if item["group_id"] == "reception_standard_answer_card"
+        if item["item_key"] == "reception_standard_answer_card"
     )
 
     state = reception_item["current_state"]
@@ -464,7 +501,7 @@ def test_existing_official_source_is_never_downgraded_by_write_intent() -> None:
     product_item = next(
         item
         for item in packet["items"]
-        if item["group_id"] == "product_system_sources"
+        if item["item_key"] == "product_system_sources"
     )
 
     assert product_item["blockers"] == []
@@ -490,7 +527,7 @@ def test_invalid_source_governance_record_fails_closed() -> None:
     operations_item = next(
         item
         for item in packet["items"]
-        if item["group_id"] == "first_store_operations_sources"
+        if item["item_key"] == "first_store_operations_sources"
     )
 
     assert "invalid_source_record" in operations_item["blockers"]
@@ -529,7 +566,7 @@ def test_high_risk_reception_wording_fails_closed(unsafe_answer: str) -> None:
     reception_item = next(
         item
         for item in packet["items"]
-        if item["group_id"] == "reception_standard_answer_card"
+        if item["item_key"] == "reception_standard_answer_card"
     )
 
     assert "unsafe_answer_wording" in reception_item["blockers"]
@@ -568,7 +605,7 @@ def test_explicit_negative_boundary_is_not_misclassified(
     reception_item = next(
         item
         for item in packet["items"]
-        if item["group_id"] == "reception_standard_answer_card"
+        if item["item_key"] == "reception_standard_answer_card"
     )
 
     assert "unsafe_answer_wording" not in reception_item["blockers"]
@@ -609,7 +646,7 @@ def test_unsafe_source_asset_id_fails_closed(unsafe_asset_id: str) -> None:
     product_item = next(
         item
         for item in packet["items"]
-        if item["group_id"] == "product_system_sources"
+        if item["item_key"] == "product_system_sources"
     )
 
     assert "invalid_source_record" in product_item["blockers"]
@@ -640,7 +677,7 @@ def test_public_source_asset_id_style_remains_eligible(safe_asset_id: str) -> No
     product_item = next(
         item
         for item in packet["items"]
-        if item["group_id"] == "product_system_sources"
+        if item["item_key"] == "product_system_sources"
     )
 
     assert product_item["blockers"] == []
@@ -673,7 +710,7 @@ def test_reception_source_ids_use_the_same_public_id_gate(
     reception_item = next(
         item
         for item in packet["items"]
-        if item["group_id"] == "reception_standard_answer_card"
+        if item["item_key"] == "reception_standard_answer_card"
     )
 
     assert "invalid_source_record" in reception_item["blockers"]
@@ -697,7 +734,7 @@ def test_reception_card_requires_at_least_one_source_id() -> None:
     reception_item = next(
         item
         for item in packet["items"]
-        if item["group_id"] == "reception_standard_answer_card"
+        if item["item_key"] == "reception_standard_answer_card"
     )
 
     assert "missing_source_selection" in reception_item["blockers"]
@@ -761,7 +798,7 @@ def test_nonempty_invalid_constitution_draft_fails_closed(
     constitution_item = next(
         item
         for item in packet["items"]
-        if item["group_id"] == "brand_constitution"
+        if item["item_key"] == "brand_constitution"
     )
 
     assert "invalid_constitution_draft" in constitution_item["blockers"]
@@ -788,7 +825,7 @@ def test_constitution_draft_accepts_only_allowed_source_authorities(
     constitution_item = next(
         item
         for item in packet["items"]
-        if item["group_id"] == "brand_constitution"
+        if item["item_key"] == "brand_constitution"
     )
 
     assert "invalid_constitution_draft" not in constitution_item["blockers"]
@@ -825,7 +862,7 @@ def test_invalid_reception_draft_shape_fails_closed(
     reception_item = next(
         item
         for item in packet["items"]
-        if item["group_id"] == "reception_standard_answer_card"
+        if item["item_key"] == "reception_standard_answer_card"
     )
 
     assert "invalid_reception_draft" in reception_item["blockers"]
@@ -848,7 +885,7 @@ def test_unresolved_reception_source_evidence_fails_closed() -> None:
     reception_item = next(
         item
         for item in packet["items"]
-        if item["group_id"] == "reception_standard_answer_card"
+        if item["item_key"] == "reception_standard_answer_card"
     )
 
     assert "unresolved_source_evidence" in reception_item["blockers"]
@@ -880,7 +917,7 @@ def test_reception_evidence_accepts_sources_resolved_by_current_packet(
     reception_item = next(
         item
         for item in packet["items"]
-        if item["group_id"] == "reception_standard_answer_card"
+        if item["item_key"] == "reception_standard_answer_card"
     )
 
     assert "unresolved_source_evidence" not in reception_item["blockers"]
@@ -937,7 +974,7 @@ def test_untrusted_source_snapshot_cannot_resolve_reception_evidence(
     reception_item = next(
         item
         for item in packet["items"]
-        if item["group_id"] == "reception_standard_answer_card"
+        if item["item_key"] == "reception_standard_answer_card"
     )
 
     assert "unresolved_source_evidence" in reception_item["blockers"]
@@ -961,9 +998,399 @@ def test_constitution_draft_self_report_cannot_resolve_reception_evidence() -> N
     reception_item = next(
         item
         for item in packet["items"]
-        if item["group_id"] == "reception_standard_answer_card"
+        if item["item_key"] == "reception_standard_answer_card"
     )
 
     assert "unresolved_source_evidence" in reception_item["blockers"]
     assert reception_item["exact_write_intents"] == []
     assert reception_item["source_evidence"] == []
+
+
+def test_json_fingerprint_uses_canonical_utf8_json() -> None:
+    from apps.api.hxy_knowledge.core10_activation import json_fingerprint
+
+    payload = {"中文": "荷小悦", "nested": {"b": 2, "a": 1}}
+    expected_json = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    assert json_fingerprint(payload) == {
+        "algorithm": "sha256",
+        "digest": hashlib.sha256(expected_json).hexdigest(),
+    }
+    assert json_fingerprint(payload) == json_fingerprint(
+        {"nested": {"a": 1, "b": 2}, "中文": "荷小悦"}
+    )
+
+
+def test_generated_at_is_the_only_volatile_packet_identity_field() -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+    )
+
+    first_inputs = _packet_inputs()
+    second_inputs = _packet_inputs()
+    second_inputs["generated_at"] = "2026-07-17T11:00:00+00:00"
+
+    first = build_core10_activation_packet(**first_inputs)
+    second = build_core10_activation_packet(**second_inputs)
+
+    assert first["generated_at"] != second["generated_at"]
+    assert first["packet_id"] == second["packet_id"]
+    assert first["packet_fingerprint"] == second["packet_fingerprint"]
+    assert first["packet_id"] == (
+        "core10-activation:" + first["packet_fingerprint"][:12]
+    )
+    assert len(first["packet_fingerprint"]) == 64
+    assert [item["item_fingerprint"] for item in first["items"]] == [
+        item["item_fingerprint"] for item in second["items"]
+    ]
+
+
+def test_source_authority_version_changes_related_item_and_packet_identity() -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+    )
+
+    base_inputs = _packet_inputs()
+    changed_inputs = json.loads(json.dumps(base_inputs))
+    changed_inputs["product_sources"][0]["authority_version"] = 3
+
+    base = build_core10_activation_packet(**base_inputs)
+    changed = build_core10_activation_packet(**changed_inputs)
+
+    assert base["packet_fingerprint"] != changed["packet_fingerprint"]
+    assert (
+        base["upstream_fingerprints"]["product_sources"]
+        != changed["upstream_fingerprints"]["product_sources"]
+    )
+    assert (
+        _packet_item(base, "product_system_sources")["item_fingerprint"]
+        != _packet_item(changed, "product_system_sources")["item_fingerprint"]
+    )
+    assert (
+        _packet_item(base, "first_store_operations_sources")[
+            "item_fingerprint"
+        ]
+        == _packet_item(changed, "first_store_operations_sources")[
+            "item_fingerprint"
+        ]
+    )
+
+
+def test_packet_identity_is_independent_of_input_dict_insertion_order() -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+    )
+
+    ordered = _packet_inputs()
+    reordered = {
+        key: ordered[key]
+        for key in reversed(tuple(ordered))
+    }
+    reordered["constitution_state"] = dict(
+        reversed(tuple(ordered["constitution_state"].items()))
+    )
+    reordered["product_sources"] = [
+        dict(reversed(tuple(ordered["product_sources"][0].items())))
+    ]
+
+    first = build_core10_activation_packet(**ordered)
+    second = build_core10_activation_packet(**reordered)
+
+    assert first["upstream_fingerprints"] == second["upstream_fingerprints"]
+    assert first["packet_fingerprint"] == second["packet_fingerprint"]
+    assert first["packet_id"] == second["packet_id"]
+    assert [item["item_fingerprint"] for item in first["items"]] == [
+        item["item_fingerprint"] for item in second["items"]
+    ]
+
+
+def test_related_business_inputs_participate_in_item_identity() -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+    )
+
+    base_inputs = _packet_inputs()
+    base = build_core10_activation_packet(**base_inputs)
+    mutations = (
+        (
+            "brand_constitution",
+            lambda value: value["constitution_state"].update(
+                {"active_version": "prior.v1"}
+            ),
+        ),
+        (
+            "brand_constitution",
+            lambda value: value["constitution_draft"]["core_statements"].update(
+                {"brand_identity": "Changed fixture identity."}
+            ),
+        ),
+        (
+            "brand_constitution",
+            lambda value: value["report"].update(
+                {"version": "fixture-report.v2"}
+            ),
+        ),
+        (
+            "reception_standard_answer_card",
+            lambda value: value["reception_draft"].update(
+                {"answer": "Changed bounded reception answer."}
+            ),
+        ),
+        (
+            "reception_standard_answer_card",
+            lambda value: value["existing_answer_cards"].append(
+                {
+                    "card_id": "fixture-existing-card",
+                    "status": "approved",
+                    "question_pattern": "Another question?",
+                    "answer": "Another answer.",
+                }
+            ),
+        ),
+    )
+
+    for item_key, mutate in mutations:
+        changed_inputs = json.loads(json.dumps(base_inputs))
+        mutate(changed_inputs)
+        changed = build_core10_activation_packet(**changed_inputs)
+        assert (
+            _packet_item(base, item_key)["item_fingerprint"]
+            != _packet_item(changed, item_key)["item_fingerprint"]
+        )
+        assert base["packet_fingerprint"] != changed["packet_fingerprint"]
+
+
+def test_upstream_private_inputs_are_digest_only_and_not_surfaced() -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+    )
+
+    base = build_core10_activation_packet(**_packet_inputs())
+    inputs = _packet_inputs()
+    private_markers = {
+        "report-private-raw",
+        "state-private-raw",
+        "constitution-private-raw",
+        "product-private-raw",
+        "operations-private-raw",
+        "reception-private-raw",
+        "card-private-raw",
+    }
+    inputs["report"]["private_raw"] = "report-private-raw"
+    inputs["constitution_state"]["private_raw"] = "state-private-raw"
+    inputs["constitution_draft"]["private_raw"] = "constitution-private-raw"
+    inputs["product_sources"][0]["private_raw"] = "product-private-raw"
+    inputs["operations_sources"][0]["private_raw"] = "operations-private-raw"
+    inputs["reception_draft"]["private_raw"] = "reception-private-raw"
+    inputs["existing_answer_cards"].append(
+        {
+            "card_id": "fixture-private-card",
+            "status": "draft",
+            "private_raw": "card-private-raw",
+        }
+    )
+
+    packet = build_core10_activation_packet(**inputs)
+
+    assert set(packet["upstream_fingerprints"]) == {
+        "report",
+        "constitution_state",
+        "constitution_draft",
+        "product_sources",
+        "operations_sources",
+        "reception_draft",
+        "existing_answer_cards",
+    }
+    assert all(
+        set(fingerprint) == {"algorithm", "digest"}
+        and fingerprint["algorithm"] == "sha256"
+        and len(fingerprint["digest"]) == 64
+        for fingerprint in packet["upstream_fingerprints"].values()
+    )
+    assert base["packet_fingerprint"] != packet["packet_fingerprint"]
+    encoded = json.dumps(packet, ensure_ascii=False, sort_keys=True)
+    assert not any(marker in encoded for marker in private_markers)
+
+
+def test_mixed_independent_founder_decisions_are_valid_preview_only() -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+        validate_core10_activation_decisions,
+    )
+
+    packet = build_core10_activation_packet(**_packet_inputs())
+    decisions = _decision_payload(
+        packet,
+        {
+            "brand_constitution": "approve",
+            "product_system_sources": "reject",
+            "first_store_operations_sources": "request_correction",
+            "reception_standard_answer_card": "approve",
+        },
+    )
+
+    result = validate_core10_activation_decisions(packet, decisions)
+
+    assert result["valid"] is True
+    assert result["errors"] == []
+    assert result["preview_only"] is True
+    assert result["write_to_database"] is False
+    assert result["publish_allowed"] is False
+    assert result["official_use_allowed"] is False
+
+
+@pytest.mark.parametrize(
+    ("field", "stale_value", "expected_code"),
+    [
+        ("packet_id", "core10-activation:stale", "packet_id_mismatch"),
+        ("packet_fingerprint", "0" * 64, "packet_fingerprint_mismatch"),
+    ],
+)
+def test_stale_packet_identity_is_invalid(
+    field: str,
+    stale_value: str,
+    expected_code: str,
+) -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+        validate_core10_activation_decisions,
+    )
+
+    packet = build_core10_activation_packet(**_packet_inputs())
+    decisions = _decision_payload(packet)
+    decisions[field] = stale_value
+
+    result = validate_core10_activation_decisions(packet, decisions)
+
+    assert result["valid"] is False
+    assert expected_code in {error["code"] for error in result["errors"]}
+
+
+def test_stale_item_fingerprint_is_invalid() -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+        validate_core10_activation_decisions,
+    )
+
+    packet = build_core10_activation_packet(**_packet_inputs())
+    decisions = _decision_payload(packet)
+    decisions["decisions"][0]["item_fingerprint"] = "f" * 64
+
+    result = validate_core10_activation_decisions(packet, decisions)
+
+    assert result["valid"] is False
+    assert "item_fingerprint_mismatch" in {
+        error["code"] for error in result["errors"]
+    }
+
+
+@pytest.mark.parametrize("blocked_action", ["reject", "request_correction"])
+def test_blocked_item_may_be_rejected_or_returned_for_correction(
+    blocked_action: str,
+) -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+        validate_core10_activation_decisions,
+    )
+
+    inputs = _packet_inputs()
+    inputs["constitution_draft"] = None
+    packet = build_core10_activation_packet(**inputs)
+    decisions = _decision_payload(
+        packet,
+        {"brand_constitution": blocked_action},
+    )
+
+    result = validate_core10_activation_decisions(packet, decisions)
+
+    assert result["valid"] is True
+    assert result["errors"] == []
+
+
+def test_blocked_item_cannot_be_approved() -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+        validate_core10_activation_decisions,
+    )
+
+    inputs = _packet_inputs()
+    inputs["constitution_draft"] = None
+    packet = build_core10_activation_packet(**inputs)
+
+    result = validate_core10_activation_decisions(
+        packet,
+        _decision_payload(packet),
+    )
+
+    assert result["valid"] is False
+    assert "blocked_item_cannot_be_approved" in {
+        error["code"] for error in result["errors"]
+    }
+
+
+@pytest.mark.parametrize(
+    ("invalid_case", "expected_codes"),
+    [
+        ("actor_id", {"invalid_actor_id"}),
+        ("actor_role", {"invalid_actor_role"}),
+        ("reason", {"missing_reason"}),
+        ("action", {"invalid_action"}),
+        ("unknown", {"unknown_item_key", "missing_item_decision"}),
+        ("duplicate", {"duplicate_item_key"}),
+        ("missing", {"missing_item_decision"}),
+        ("decisions_shape", {"invalid_decisions"}),
+    ],
+)
+def test_decision_validation_fails_closed_for_invalid_input(
+    invalid_case: str,
+    expected_codes: set[str],
+) -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+        validate_core10_activation_decisions,
+    )
+
+    packet = build_core10_activation_packet(**_packet_inputs())
+    decisions = _decision_payload(packet)
+    if invalid_case == "actor_id":
+        decisions["actor"]["id"] = "   "
+    elif invalid_case == "actor_role":
+        decisions["actor"]["role"] = "admin"
+    elif invalid_case == "reason":
+        decisions["decisions"][0]["reason"] = "   "
+    elif invalid_case == "action":
+        decisions["decisions"][0]["action"] = "publish"
+    elif invalid_case == "unknown":
+        decisions["decisions"][0]["item_key"] = "unknown_item"
+    elif invalid_case == "duplicate":
+        decisions["decisions"].append(dict(decisions["decisions"][0]))
+    elif invalid_case == "missing":
+        decisions["decisions"].pop()
+    elif invalid_case == "decisions_shape":
+        decisions["decisions"] = None
+
+    result = validate_core10_activation_decisions(packet, decisions)
+
+    assert result["valid"] is False
+    assert expected_codes <= {error["code"] for error in result["errors"]}
+    assert result["preview_only"] is True
+    assert result["write_to_database"] is False
+    assert result["publish_allowed"] is False
+    assert result["official_use_allowed"] is False
+
+
+def test_malformed_packet_and_decisions_return_errors_instead_of_raising() -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        validate_core10_activation_decisions,
+    )
+
+    result = validate_core10_activation_decisions({}, None)
+
+    assert result["valid"] is False
+    assert result["errors"]
+    assert result["preview_only"] is True
