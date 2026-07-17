@@ -9,13 +9,15 @@ from datetime import date
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+API_ROOT = PROJECT_ROOT / "apps" / "api"
+for path in (PROJECT_ROOT, API_ROOT):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
 from apps.api.hxy_product.source_registry import (
     build_source_registry,
     write_registry_reports,
-)
+)  # noqa: E402
 
 
 def main() -> int:
