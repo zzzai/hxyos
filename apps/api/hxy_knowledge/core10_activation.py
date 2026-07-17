@@ -959,12 +959,52 @@ def _core10_artifact_paths(target: Path) -> dict[str, Path]:
     }
 
 
-def _existing_core10_artifact_paths(
+def _validate_core10_artifact_contents(
+    *,
+    target_name: str,
+    packet_payload: Any,
+    decision_payload: Any,
+    markdown: str,
+    expected_packet_id: str | None = None,
+    expected_packet_fingerprint: str | None = None,
+) -> dict[str, Any]:
+    conflict = ValueError("core10 activation artifact target conflict")
+    if not isinstance(packet_payload, dict) or not isinstance(
+        decision_payload,
+        dict,
+    ):
+        raise conflict
+    try:
+        _verify_core10_activation_packet_governance(packet_payload)
+        _verify_core10_activation_packet_fingerprints(packet_payload)
+    except (KeyError, TypeError, ValueError, RecursionError) as error:
+        raise conflict from error
+    packet_id = packet_payload.get("packet_id")
+    packet_fingerprint = packet_payload.get("packet_fingerprint")
+    if target_name != f"core10-activation-{str(packet_fingerprint)[:12]}":
+        raise conflict
+    if expected_packet_id is not None and packet_id != expected_packet_id:
+        raise conflict
+    if (
+        expected_packet_fingerprint is not None
+        and packet_fingerprint != expected_packet_fingerprint
+    ):
+        raise conflict
+    if markdown != render_core10_activation_packet_markdown(packet_payload):
+        raise conflict
+    if decision_payload != build_core10_activation_decision_sample(
+        packet_payload
+    ):
+        raise conflict
+    return packet_payload
+
+
+def _validated_existing_core10_artifact(
     target: Path,
     *,
-    packet_id: str,
-    packet_fingerprint: str,
-) -> dict[str, Path]:
+    expected_packet_id: str | None = None,
+    expected_packet_fingerprint: str | None = None,
+) -> tuple[dict[str, Path], dict[str, Any]]:
     conflict = ValueError("core10 activation artifact target conflict")
     try:
         if target.is_symlink() or not target.is_dir():
@@ -992,29 +1032,121 @@ def _existing_core10_artifact_paths(
             paths["decision_sample"].read_text(encoding="utf-8")
         )
         markdown = paths["packet_markdown"].read_text(encoding="utf-8")
-        if not isinstance(packet_payload, dict) or not isinstance(
-            decision_payload,
-            dict,
-        ):
-            raise conflict
-        try:
-            _verify_core10_activation_packet_governance(packet_payload)
-            _verify_core10_activation_packet_fingerprints(packet_payload)
-        except (KeyError, TypeError, ValueError) as error:
-            raise conflict from error
-        if packet_payload.get("packet_id") != packet_id:
-            raise conflict
-        if packet_payload.get("packet_fingerprint") != packet_fingerprint:
-            raise conflict
-        if markdown != render_core10_activation_packet_markdown(packet_payload):
-            raise conflict
-        if decision_payload != build_core10_activation_decision_sample(
-            packet_payload
-        ):
-            raise conflict
-        return paths
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        packet_payload = _validate_core10_artifact_contents(
+            target_name=target.name,
+            packet_payload=packet_payload,
+            decision_payload=decision_payload,
+            markdown=markdown,
+            expected_packet_id=expected_packet_id,
+            expected_packet_fingerprint=expected_packet_fingerprint,
+        )
+        return paths, packet_payload
+    except (OSError, UnicodeError, json.JSONDecodeError, RecursionError) as error:
         raise conflict from error
+
+
+def _existing_core10_artifact_paths(
+    target: Path,
+    *,
+    packet_id: str,
+    packet_fingerprint: str,
+) -> dict[str, Path]:
+    paths, _packet = _validated_existing_core10_artifact(
+        target,
+        expected_packet_id=packet_id,
+        expected_packet_fingerprint=packet_fingerprint,
+    )
+    return paths
+
+
+def _read_core10_artifact_file(directory_fd: int, filename: str) -> str:
+    conflict = ValueError("core10 activation artifact is invalid")
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor = -1
+    try:
+        descriptor = os.open(filename, flags, dir_fd=directory_fd)
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_size <= 0
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+        ):
+            raise conflict
+        with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+            descriptor = -1
+            return handle.read()
+    except (OSError, UnicodeError) as error:
+        raise conflict from error
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def load_core10_activation_artifact_from_dir_fd(
+    parent_fd: int,
+    directory_name: str,
+) -> dict[str, Any]:
+    conflict = ValueError("core10 activation artifact is invalid")
+    if not re.fullmatch(r"core10-activation-[a-f0-9]{12}", directory_name):
+        raise conflict
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise conflict
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | os.O_NOFOLLOW
+    )
+    directory_fd = -1
+    try:
+        directory_fd = os.open(directory_name, flags, dir_fd=parent_fd)
+        metadata = os.fstat(directory_fd)
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or stat.S_IMODE(metadata.st_mode) != 0o700
+            or set(os.listdir(directory_fd))
+            != set(_ARTIFACT_FILENAMES.values())
+        ):
+            raise conflict
+        packet_payload = json.loads(
+            _read_core10_artifact_file(
+                directory_fd,
+                _ARTIFACT_FILENAMES["packet_json"],
+            )
+        )
+        decision_payload = json.loads(
+            _read_core10_artifact_file(
+                directory_fd,
+                _ARTIFACT_FILENAMES["decision_sample"],
+            )
+        )
+        markdown = _read_core10_artifact_file(
+            directory_fd,
+            _ARTIFACT_FILENAMES["packet_markdown"],
+        )
+        return _validate_core10_artifact_contents(
+            target_name=directory_name,
+            packet_payload=packet_payload,
+            decision_payload=decision_payload,
+            markdown=markdown,
+        )
+    except (
+        OSError,
+        UnicodeError,
+        json.JSONDecodeError,
+        KeyError,
+        TypeError,
+        ValueError,
+        RecursionError,
+    ) as error:
+        raise conflict from error
+    finally:
+        if directory_fd >= 0:
+            os.close(directory_fd)
 
 
 def _write_synced_artifact(path: Path, content: str) -> None:
@@ -1096,6 +1228,25 @@ def write_core10_activation_artifacts(
     finally:
         if os.path.lexists(temporary):
             shutil.rmtree(temporary)
+
+
+def load_core10_activation_artifact(target: Path) -> dict[str, Any]:
+    conflict = ValueError("core10 activation artifact is invalid")
+    try:
+        _paths, packet = _validated_existing_core10_artifact(
+            Path(target),
+        )
+        return packet
+    except (
+        OSError,
+        UnicodeError,
+        json.JSONDecodeError,
+        KeyError,
+        TypeError,
+        ValueError,
+        RecursionError,
+    ) as error:
+        raise conflict from error
 
 
 def build_core10_activation_packet(

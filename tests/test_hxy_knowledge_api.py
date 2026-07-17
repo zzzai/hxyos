@@ -6,6 +6,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import httpx
 
@@ -101,6 +103,8 @@ class FakeRepository:
         self.answer_cards = []
         self.search_items = None
         self.search_items_by_query = {}
+        self.source_items = []
+        self.last_source_asset_id = None
         self.upserted_runs = []
         self.upserted_assets = []
         self.upserted_chunks = []
@@ -149,6 +153,10 @@ class FakeRepository:
                 "score": 10,
             }
         ][:limit]
+
+    def source_evidence(self, asset_id, limit=20):
+        self.last_source_asset_id = asset_id
+        return self.source_items[:limit]
 
     def save_answer_run(self, payload):
         self.saved_answer = payload
@@ -353,6 +361,692 @@ class FakeRepository:
     def save_store_daily_metrics(self, payload):
         self.saved_store_daily_metrics = payload
         return "store-daily-metrics-test-id"
+
+
+class Core10IdentityRepository:
+    def __init__(self, role: str = "founder") -> None:
+        self.role = role
+        self.write_calls = []
+
+    def resolve_session(self, raw_token: str):
+        if raw_token != "core10-session":
+            return None
+        from hxy_product.auth import Principal
+
+        return Principal(
+            account_id="core10-account",
+            display_name="Core10 Founder",
+            assignment_id="core10-assignment",
+        )
+
+    def list_assignments(self, account_id: str):
+        if account_id != "core10-account":
+            return []
+        return [
+            SimpleNamespace(
+                assignment_id="core10-assignment",
+                account_id=account_id,
+                role=self.role,
+            )
+        ]
+
+
+def write_core10_api_packet(
+    root: Path,
+    *,
+    generated_at: str,
+    asset_id: str,
+    unsafe_evidence: bool = False,
+    null_source_evidence: bool = False,
+    unsafe_nested_identifier: bool = False,
+) -> dict[str, object]:
+    from apps.api.hxy_knowledge import core10_activation
+
+    packet = core10_activation.build_core10_activation_packet(
+        report={
+            "version": "core10-api-fixture.v1",
+            "scores": [
+                {"case_id": case_id, "passed": False}
+                for case_id in (
+                    "core-brand-identity",
+                    "core-product-system",
+                    "core-operating-decision",
+                    "core-citation",
+                    "core-next-action",
+                )
+            ],
+        },
+        constitution_state={"status": "missing", "active_version": None},
+        constitution_draft={
+            "version": "core10-api-constitution.v1",
+            "core_statements": {
+                "brand_identity": "API fixture brand identity.",
+                "service_facts": ["API fixture service fact."],
+            },
+            "role_variants": {
+                "founder": "Founder wording.",
+                "headquarters": "Headquarters wording.",
+                "store_manager": "Store manager wording.",
+                "store_staff": "Store staff wording.",
+            },
+            "forbidden_interpretations": [
+                {
+                    "statement": "Forbidden fixture wording.",
+                    "blocked_terms": ["forbidden-fixture"],
+                }
+            ],
+            "source_references": [
+                {"source_id": "asset-brand-api", "authority": "official_internal"}
+            ],
+        },
+        product_sources=[
+            {
+                "asset_id": asset_id,
+                "title": f"Product source {asset_id}",
+                "source_origin": "internal",
+                "source_authority": "internal_material",
+                "authority_version": 1,
+            }
+        ],
+        operations_sources=[
+            {
+                "asset_id": "asset-operations-api",
+                "title": "Operations source",
+                "source_origin": "internal",
+                "source_authority": "internal_material",
+                "authority_version": 1,
+            }
+        ],
+        reception_draft={
+            "question_pattern": "How should staff introduce the service?",
+            "answer": "Describe the service experience without medical promises.",
+            "source_ids": ["asset-operations-api"],
+        },
+        existing_answer_cards=[],
+        generated_at=generated_at,
+    )
+    if unsafe_evidence or null_source_evidence or unsafe_nested_identifier:
+        product_item = next(
+            item
+            for item in packet["items"]
+            if item["item_key"] == "product_system_sources"
+        )
+    if unsafe_evidence:
+        product_item["source_evidence"][0].update(
+            {
+                "title": "https://alice:supersecret@example.test/source",
+                "source_path": "knowledge/raw/inbox/source.md",
+                "excerpt": "Authorization: Bearer bearer-secret-value " + "x" * 2000,
+                "credential": "must-not-leak",
+                "claim_id": "claim-must-not-leak",
+                "chunk_id": "chunk-must-not-leak",
+                "unknown_field": "unknown-must-not-leak",
+            }
+        )
+        product_item["source_evidence"].append(
+            {
+                "asset_id": "asset-absolute-path",
+                "title": "Unsafe absolute path evidence",
+                "source_path": "/root/hxy/data/private/source.md",
+                "source_origin": "internal",
+                "source_authority": "internal_material",
+                "authority_version": 1,
+                "excerpt": "safe excerpt",
+            }
+        )
+        product_item["source_evidence"].append(
+            {
+                "asset_id": "asset-private-key",
+                "title": "-----BEGIN PRIVATE KEY-----",
+                "source_origin": "internal",
+                "source_authority": "internal_material",
+                "authority_version": 1,
+                "excerpt": "-----BEGIN PRIVATE KEY----- private-key-body",
+            }
+        )
+        product_item["source_evidence"].append(
+            {
+                "asset_id": "asset-auth-header",
+                "title": "api_key sk-live-supersecret",
+                "source_origin": "api_key sk-live-supersecret",
+                "source_authority": "Authorization: Basic YWxpY2U6c2VjcmV0",
+                "authority_version": "private-key-body",
+                "excerpt": "Authorization: Basic YWxpY2U6c2VjcmV0",
+            }
+        )
+        product_item["source_evidence"].append(
+            {
+                "asset_id": "api_key_supersecret",
+                "source_origin": "internal",
+                "source_authority": "internal_material",
+                "authority_version": 1,
+            }
+        )
+        product_item["source_evidence"].append(
+            {
+                "asset_id": "asset-malformed-origin",
+                "source_origin": ["internal"],
+                "source_authority": "internal_material",
+                "authority_version": 1,
+            }
+        )
+        product_item["source_evidence"].append(
+            {
+                "asset_id": "asset-malformed-authority",
+                "source_origin": "internal",
+                "source_authority": {"value": "internal_material"},
+                "authority_version": 1,
+            }
+        )
+        product_item["why_needed"] = (
+            "Review /root/hxy/data/private and C:\\private\\packet.json first."
+        )
+        product_item["risk_if_rejected"] = (
+            "client_secret=embedded-must-not-leak"
+        )
+    if null_source_evidence:
+        product_item["source_evidence"] = None
+    if unsafe_nested_identifier:
+        product_item["proposed_authority"]["product_asset_ids"] = [
+            "sk_live_nested_must_not_leak"
+        ]
+    if unsafe_evidence or null_source_evidence or unsafe_nested_identifier:
+        product_item["item_fingerprint"] = core10_activation._item_fingerprint(
+            product_item,
+            upstream_fingerprints=packet["upstream_fingerprints"],
+        )
+        packet["packet_fingerprint"] = (
+            core10_activation._packet_fingerprint_digest(packet)
+        )
+        packet["packet_id"] = (
+            f"core10-activation:{packet['packet_fingerprint'][:12]}"
+        )
+        packet["artifact_fingerprint"] = (
+            core10_activation._artifact_fingerprint_digest(packet)
+        )
+    core10_activation.write_core10_activation_artifacts(
+        root / "data" / "private" / "core10-activation",
+        packet,
+    )
+    return packet
+
+
+def core10_decision_preview_payload(packet: dict[str, object]) -> dict[str, object]:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_decision_sample,
+    )
+
+    sample = build_core10_activation_decision_sample(packet)
+    return {
+        "packet_id": sample["packet_id"],
+        "packet_fingerprint": sample["packet_fingerprint"],
+        "decisions": sample["decisions"],
+    }
+
+
+class Core10ActivationApiTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        (self.root / "knowledge" / "raw" / "inbox").mkdir(parents=True)
+        self.previous_api_token = os.environ.get("HXY_API_TOKEN")
+        os.environ["HXY_API_TOKEN"] = "test-token"
+        self.module = importlib.import_module("apps.api.hxy_knowledge_api")
+
+    def tearDown(self):
+        if self.previous_api_token is None:
+            os.environ.pop("HXY_API_TOKEN", None)
+        else:
+            os.environ["HXY_API_TOKEN"] = self.previous_api_token
+        self.tmp.cleanup()
+
+    def make_client(
+        self,
+        *,
+        role: str = "founder",
+    ) -> tuple[TestClient, Core10IdentityRepository]:
+        identity_repository = Core10IdentityRepository(role=role)
+        app = self.module.create_app(
+            root_dir=self.root,
+            repository_factory=FakeRepository,
+            product_identity_repository_factory=lambda: identity_repository,
+        )
+        client = TestClient(app)
+        client.default_headers = {"Authorization": "Bearer core10-session"}
+        return client, identity_repository
+
+    def test_core10_activation_packet_missing_returns_safe_404(self):
+        client, _repository = self.make_client()
+
+        response = client.get("/api/operating-brain/core10-activation-packet")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json(), {"detail": "Core-10 activation packet not found"})
+
+    def test_core10_activation_packet_requires_session(self):
+        write_core10_api_packet(
+            self.root,
+            generated_at="2026-07-17T09:00:00+00:00",
+            asset_id="asset-private-packet",
+        )
+        client, repository = self.make_client()
+        client.default_headers = {}
+
+        response = client.get("/api/operating-brain/core10-activation-packet")
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(repository.write_calls, [])
+
+    def test_core10_activation_packet_rejects_non_founder(self):
+        write_core10_api_packet(
+            self.root,
+            generated_at="2026-07-17T09:00:00+00:00",
+            asset_id="asset-private-packet",
+        )
+        client, repository = self.make_client(role="hq_operations")
+
+        response = client.get("/api/operating-brain/core10-activation-packet")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(repository.write_calls, [])
+
+    def test_core10_activation_packet_returns_latest_complete_valid_packet(self):
+        write_core10_api_packet(
+            self.root,
+            generated_at="2026-07-17T08:00:00+00:00",
+            asset_id="asset-old",
+        )
+        latest = write_core10_api_packet(
+            self.root,
+            generated_at="2026-07-17T09:00:00+00:00",
+            asset_id="asset-latest-valid",
+        )
+        tampered = write_core10_api_packet(
+            self.root,
+            generated_at="2026-07-17T10:00:00+00:00",
+            asset_id="asset-newer-tampered",
+        )
+        private_root = self.root / "data" / "private" / "core10-activation"
+        tampered_dir = private_root / (
+            f"core10-activation-{tampered['packet_fingerprint'][:12]}"
+        )
+        (tampered_dir / "packet.md").write_text("tampered\n", encoding="utf-8")
+        incomplete = private_root / "core10-activation-deadbeefdead"
+        incomplete.mkdir(mode=0o700)
+        (incomplete / "packet.json").write_text("{}", encoding="utf-8")
+        malformed = private_root / "core10-activation-badbadbadbad"
+        malformed.mkdir(mode=0o700)
+        (malformed / "packet.json").write_text("{", encoding="utf-8")
+        symlink = private_root / "core10-activation-feedfacecafe"
+        symlink.symlink_to(
+            private_root
+            / f"core10-activation-{latest['packet_fingerprint'][:12]}",
+            target_is_directory=True,
+        )
+        client, _repository = self.make_client()
+
+        response = client.get("/api/operating-brain/core10-activation-packet")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["packet_id"], latest["packet_id"])
+        self.assertNotIn("asset-newer-tampered", json.dumps(body, ensure_ascii=False))
+
+    def test_core10_activation_packet_rejects_symlinked_private_boundaries(self):
+        external_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(external_tmp.cleanup)
+        external_root = Path(external_tmp.name)
+        write_core10_api_packet(
+            external_root,
+            generated_at="2026-07-17T09:00:00+00:00",
+            asset_id="asset-outside-hxy-private-root",
+        )
+        external_packets = (
+            external_root / "data" / "private" / "core10-activation"
+        )
+        private_parent = self.root / "data" / "private"
+        private_parent.mkdir(parents=True)
+        (private_parent / "core10-activation").symlink_to(
+            external_packets,
+            target_is_directory=True,
+        )
+        client, _repository = self.make_client()
+
+        response = client.get("/api/operating-brain/core10-activation-packet")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertNotIn(
+            "asset-outside-hxy-private-root",
+            json.dumps(response.json(), ensure_ascii=False),
+        )
+
+    def test_core10_activation_packet_rejects_symlinked_private_parent(self):
+        external_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(external_tmp.cleanup)
+        external_root = Path(external_tmp.name)
+        write_core10_api_packet(
+            external_root,
+            generated_at="2026-07-17T09:00:00+00:00",
+            asset_id="asset-outside-hxy-private-parent",
+        )
+        (self.root / "data").mkdir()
+        (self.root / "data" / "private").symlink_to(
+            external_root / "data" / "private",
+            target_is_directory=True,
+        )
+        client, _repository = self.make_client()
+
+        response = client.get("/api/operating-brain/core10-activation-packet")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertNotIn(
+            "asset-outside-hxy-private-parent",
+            json.dumps(response.json(), ensure_ascii=False),
+        )
+
+    def test_core10_activation_packet_holds_directory_handle_during_scan(self):
+        external_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(external_tmp.cleanup)
+        external_root = Path(external_tmp.name)
+        write_core10_api_packet(
+            external_root,
+            generated_at="2026-07-17T09:00:00+00:00",
+            asset_id="asset-swapped-after-boundary-check",
+        )
+        private_root = self.root / "data" / "private" / "core10-activation"
+        private_root.mkdir(parents=True)
+        external_packets = (
+            external_root / "data" / "private" / "core10-activation"
+        )
+        client, _repository = self.make_client()
+        original_resolve = Path.resolve
+        original_open = os.open
+        swapped = False
+
+        def swap_private_root() -> None:
+            nonlocal swapped
+            if swapped:
+                return
+            private_root.rmdir()
+            private_root.symlink_to(external_packets, target_is_directory=True)
+            swapped = True
+
+        def swap_after_resolve(path: Path, *args: object, **kwargs: object) -> Path:
+            resolved = original_resolve(path, *args, **kwargs)
+            if path == private_root and not swapped:
+                swap_private_root()
+            return resolved
+
+        def swap_after_open(
+            path: object,
+            flags: int,
+            mode: int = 0o777,
+            *,
+            dir_fd: int | None = None,
+        ) -> int:
+            descriptor = original_open(path, flags, mode, dir_fd=dir_fd)
+            if path == "core10-activation" and dir_fd is not None:
+                swap_private_root()
+            return descriptor
+
+        with patch.object(Path, "resolve", swap_after_resolve), patch.object(
+            os,
+            "open",
+            swap_after_open,
+        ):
+            response = client.get(
+                "/api/operating-brain/core10-activation-packet"
+            )
+
+        self.assertTrue(swapped)
+        self.assertEqual(response.status_code, 404)
+        self.assertNotIn(
+            "asset-swapped-after-boundary-check",
+            json.dumps(response.json(), ensure_ascii=False),
+        )
+
+    def test_core10_activation_packet_ignores_recursion_bomb_and_uses_valid_packet(self):
+        valid = write_core10_api_packet(
+            self.root,
+            generated_at="2026-07-17T09:00:00+00:00",
+            asset_id="asset-valid-before-recursion-bomb",
+        )
+        private_root = self.root / "data" / "private" / "core10-activation"
+        corrupt = private_root / "core10-activation-deaddeaddead"
+        corrupt.mkdir(mode=0o700)
+        valid_dir = private_root / (
+            f"core10-activation-{valid['packet_fingerprint'][:12]}"
+        )
+        corrupt_packet = (valid_dir / "packet.json").read_text(encoding="utf-8")
+        corrupt_packet = corrupt_packet.replace(
+            f'"packet_fingerprint": "{valid["packet_fingerprint"]}"',
+            '"packet_fingerprint": "deaddeaddead' + "0" * 52 + '"',
+            1,
+        ).replace(
+            f'"packet_id": "{valid["packet_id"]}"',
+            '"packet_id": "core10-activation:deaddeaddead"',
+            1,
+        ).replace(
+            '"affected_core10_cases":',
+            '"deep": ' + "[" * 1500 + "0" + "]" * 1500 + ',\n      "affected_core10_cases":',
+            1,
+        )
+        artifact_contents = {
+            "packet.json": corrupt_packet,
+            "packet.md": (valid_dir / "packet.md").read_text(encoding="utf-8"),
+            "decisions.sample.json": (
+                valid_dir / "decisions.sample.json"
+            ).read_text(encoding="utf-8"),
+        }
+        for filename, content in artifact_contents.items():
+            path = corrupt / filename
+            path.write_text(content, encoding="utf-8")
+            path.chmod(0o600)
+        client, _repository = self.make_client()
+
+        response = client.get("/api/operating-brain/core10-activation-packet")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["packet_id"], valid["packet_id"])
+
+    def test_core10_activation_packet_projects_only_safe_evidence(self):
+        write_core10_api_packet(
+            self.root,
+            generated_at="2026-07-17T09:00:00+00:00",
+            asset_id="asset-safe-projection",
+            unsafe_evidence=True,
+        )
+        client, _repository = self.make_client()
+
+        response = client.get("/api/operating-brain/core10-activation-packet")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        serialized = json.dumps(body, ensure_ascii=False)
+        for forbidden in (
+            "/root/",
+            "must-not-leak",
+            "supersecret",
+            "bearer-secret-value",
+            "BEGIN PRIVATE KEY",
+            "private-key-body",
+            "sk-live-supersecret",
+            "api_key_supersecret",
+            "Authorization: Basic",
+            "YWxpY2U6c2VjcmV0",
+            "C:\\\\private",
+            "claim_id",
+            "chunk_id",
+            "credential",
+            "unknown_field",
+        ):
+            self.assertNotIn(forbidden, serialized)
+        item = next(
+            record
+            for record in body["items"]
+            if record["item_key"] == "product_system_sources"
+        )
+        allowed_fields = {
+            "asset_id",
+            "source_origin",
+            "source_authority",
+            "authority_version",
+        }
+        self.assertTrue(item["source_evidence"])
+        self.assertTrue(
+            any(
+                str(evidence.get("asset_id") or "").startswith("asset-ref:")
+                for evidence in item["source_evidence"]
+            )
+        )
+        self.assertNotIn("asset-safe-projection", serialized)
+        self.assertTrue(
+            all(set(evidence) <= allowed_fields for evidence in item["source_evidence"])
+        )
+        self.assertTrue(
+            all(
+                "title" not in evidence
+                and "source_path" not in evidence
+                and "excerpt" not in evidence
+                for evidence in item["source_evidence"]
+            )
+        )
+
+    def test_core10_activation_packet_drops_credential_shaped_asset_ids(self):
+        credential = "asset-sk_live-51ABCDEF0123456789"
+        write_core10_api_packet(
+            self.root,
+            generated_at="2026-07-17T09:00:00+00:00",
+            asset_id=credential,
+        )
+        client, _repository = self.make_client()
+
+        response = client.get("/api/operating-brain/core10-activation-packet")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(
+            credential,
+            json.dumps(response.json(), ensure_ascii=False),
+        )
+
+    def test_core10_activation_packet_drops_unknown_nested_identifier_fields(self):
+        credential = "sk_live_nested_must_not_leak"
+        write_core10_api_packet(
+            self.root,
+            generated_at="2026-07-17T09:00:00+00:00",
+            asset_id="asset-nested-identifier",
+            unsafe_nested_identifier=True,
+        )
+        client, _repository = self.make_client()
+
+        response = client.get("/api/operating-brain/core10-activation-packet")
+
+        self.assertEqual(response.status_code, 200)
+        serialized = json.dumps(response.json(), ensure_ascii=False)
+        self.assertNotIn(credential, serialized)
+        self.assertNotIn("product_asset_ids", serialized)
+
+    def test_core10_activation_packet_ignores_null_evidence_container(self):
+        write_core10_api_packet(
+            self.root,
+            generated_at="2026-07-17T09:00:00+00:00",
+            asset_id="asset-null-evidence",
+            null_source_evidence=True,
+        )
+        client, _repository = self.make_client()
+
+        response = client.get("/api/operating-brain/core10-activation-packet")
+
+        self.assertEqual(response.status_code, 200)
+        item = next(
+            record
+            for record in response.json()["items"]
+            if record["item_key"] == "product_system_sources"
+        )
+        self.assertEqual(item["source_evidence"], [])
+
+    def test_core10_activation_decision_preview_is_founder_only_and_read_only(self):
+        packet = write_core10_api_packet(
+            self.root,
+            generated_at="2026-07-17T09:00:00+00:00",
+            asset_id="asset-preview",
+        )
+        client, repository = self.make_client()
+
+        response = client.post(
+            "/api/operating-brain/core10-activation-decision-preview",
+            json=core10_decision_preview_payload(packet),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "valid": True,
+                "errors": [],
+                "preview_only": True,
+                "write_to_database": False,
+                "publish_allowed": False,
+                "official_use_allowed": False,
+            },
+        )
+        self.assertEqual(repository.write_calls, [])
+
+    def test_core10_activation_decision_preview_requires_session(self):
+        packet = write_core10_api_packet(
+            self.root,
+            generated_at="2026-07-17T09:00:00+00:00",
+            asset_id="asset-preview",
+        )
+        client, repository = self.make_client()
+        client.default_headers = {}
+
+        response = client.post(
+            "/api/operating-brain/core10-activation-decision-preview",
+            json=core10_decision_preview_payload(packet),
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(repository.write_calls, [])
+
+    def test_core10_activation_decision_preview_rejects_non_founder(self):
+        packet = write_core10_api_packet(
+            self.root,
+            generated_at="2026-07-17T09:00:00+00:00",
+            asset_id="asset-preview",
+        )
+        client, repository = self.make_client(role="hq_operations")
+
+        response = client.post(
+            "/api/operating-brain/core10-activation-decision-preview",
+            json=core10_decision_preview_payload(packet),
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(repository.write_calls, [])
+
+    def test_core10_activation_decision_preview_forbids_actor_and_unknown_fields(self):
+        packet = write_core10_api_packet(
+            self.root,
+            generated_at="2026-07-17T09:00:00+00:00",
+            asset_id="asset-preview",
+        )
+        client, repository = self.make_client()
+        valid_payload = core10_decision_preview_payload(packet)
+        invalid_fields = {
+            "actor": {"id": "client-supplied", "role": "founder"},
+            "publish_allowed": True,
+            "unknown": "value",
+        }
+
+        for field, value in invalid_fields.items():
+            with self.subTest(field=field):
+                response = client.post(
+                    "/api/operating-brain/core10-activation-decision-preview",
+                    json={**valid_payload, field: value},
+                )
+                self.assertEqual(response.status_code, 422)
+        self.assertEqual(repository.write_calls, [])
 
 
 class FakeModelRouter:
@@ -3618,6 +4312,40 @@ used_by:
         self.assertEqual(self.repo.last_search["domain"], "product")
         self.assertEqual(self.repo.last_search["stage"], "preparation")
 
+    def test_chat_uses_selected_source_asset_for_authority_classification(self):
+        self.repo.source_items = [
+            {
+                "chunk_id": "external-001:0",
+                "asset_id": "asset-external-001",
+                "source_id": "asset-external-001",
+                "title": "外部公众号文章",
+                "domain": "external",
+                "source_origin": "external",
+                "authority_source": "external_reference",
+                "authority_version": 1,
+                "authority_recorded": True,
+                "source_type": "external_article",
+                "status": "active",
+                "content": "这是一篇外部行业观点文章。",
+                "score": 100,
+            }
+        ]
+
+        response = self.client.post(
+            "/api/knowledge/chat",
+            json={
+                "question": "这份外部公众号文章能直接作为正式口径吗？",
+                "source_asset_id": "asset-external-001",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(self.repo.last_source_asset_id, "asset-external-001")
+        self.assertEqual(body["answer_mode"], "reference")
+        self.assertEqual(body["authority_source"], "external_reference")
+        self.assertIn("不能直接作为正式口径", body["answer"])
+
     def test_chat_requires_bearer_token_when_configured(self):
         response = self.client.post(
             "/api/knowledge/chat",
@@ -3630,7 +4358,7 @@ used_by:
     def test_chat_returns_enterprise_answer_contract_and_persists_run(self):
         response = self.client.post(
             "/api/knowledge/chat",
-            json={"question": "荷小悦的品牌定位是什么？"},
+            json={"question": "清泡调补养怎么给门店员工培训？"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -3649,13 +4377,13 @@ used_by:
             "needs_review",
         ]:
             self.assertIn(key, body)
-        self.assertEqual(body["intent"], "brand_positioning")
+        self.assertEqual(body["intent"], "product_system")
         self.assertIsInstance(body["reasoning"], list)
         self.assertIsInstance(body["evidence"], list)
         self.assertTrue(body["evidence"])
         self.assertIn(body["confidence"], {"high", "medium", "low"})
         self.assertEqual(body["answer_id"], "answer-test-id")
-        self.assertEqual(self.repo.saved_answer["intent"], "brand_positioning")
+        self.assertEqual(self.repo.saved_answer["intent"], "product_system")
 
     def test_chat_does_not_treat_builtin_golden_question_as_approved_authority(self):
         response = self.client.post(
@@ -3680,7 +4408,7 @@ used_by:
         self.assertNotIn("policy_decision", body["answer"])
         self.assertNotIn("evidence_plan", body["answer"])
 
-    def test_chat_does_not_match_builtin_authority_card_even_when_intent_is_generic(self):
+    def test_chat_brand_identity_without_constitution_stops_before_builtin_authority(self):
         response = self.client.post(
             "/api/knowledge/chat",
             json={"question": "荷小悦是什么？", "scenario": "用户端宣传"},
@@ -3691,7 +4419,9 @@ used_by:
         self.assertFalse(body["from_answer_card"])
         self.assertTrue(body["needs_review"])
         self.assertNotEqual(body["answer_status"], "已批准")
-        self.assertGreaterEqual(len(self.repo.search_calls), 1)
+        self.assertEqual(body["answer_mode"], "working")
+        self.assertEqual(body["authority_source"], "none")
+        self.assertEqual(self.repo.search_calls, [])
 
     def test_chat_does_not_use_brand_asset_cards_as_approved_authority(self):
         response = self.client.post(
@@ -3763,7 +4493,7 @@ used_by:
 
         response = self.client.post(
             "/api/knowledge/chat",
-            json={"question": "荷小悦是什么？", "scenario": "品牌定位", "limit": 1},
+            json={"question": "请总结这份定位讨论稿的核心判断。", "scenario": "品牌定位", "limit": 1},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -4114,7 +4844,7 @@ used_by:
     def test_chat_accepts_scenario_and_returns_operating_brain_fields(self):
         response = self.client.post(
             "/api/knowledge/chat",
-            json={"question": "荷小悦的品牌定位是什么？", "scenario": "招商话术"},
+            json={"question": "清泡调补养怎么讲？", "scenario": "招商话术"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -4465,7 +5195,7 @@ used_by:
     def test_chat_returns_stable_operating_result_card(self):
         response = self.client.post(
             "/api/knowledge/chat",
-            json={"question": "荷小悦的品牌定位是什么？", "scenario": "用户端宣传"},
+            json={"question": "清泡调补养怎么讲？", "scenario": "用户端宣传"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -4495,26 +5225,26 @@ used_by:
         self.client.post(
             "/api/knowledge/answer-cards",
             json={
-                "question_pattern": "荷小悦的品牌定位是什么",
-                "intent": "brand_positioning",
-                "audience": "founder",
-                "answer": "权威答案：荷小悦是社区功效泡脚养生品牌。",
+                "question_pattern": "门店员工接待流程怎么执行",
+                "intent": "operations",
+                "audience": "operations",
+                "answer": "标准答案：先问候和了解需求，再确认服务方案与风险边界。",
                 "status": "approved",
             },
         )
 
         response = self.client.post(
             "/api/knowledge/chat",
-            json={"question": "荷小悦的品牌定位是什么？", "scenario": "招商话术"},
+            json={"question": "门店员工接待流程怎么执行？", "scenario": "门店员工培训"},
         )
 
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertTrue(body["from_answer_card"])
         self.assertIn("result_card", body)
-        self.assertEqual(body["result_card"]["stability_level"], "review_required")
-        self.assertEqual(body["answer_mode"], "working")
-        self.assertIn("招商话术", body["result_card"]["business_result"])
+        self.assertEqual(body["result_card"]["stability_level"], "stable")
+        self.assertEqual(body["answer_mode"], "formal")
+        self.assertIn("门店员工培训", body["result_card"]["business_result"])
 
     def test_compliance_preflight_rejects_risky_approved_answer_card(self):
         response = self.client.post(
@@ -4986,18 +5716,18 @@ used_by:
         create_response = self.client.post(
             "/api/knowledge/answer-cards",
             json={
-                "question_pattern": "荷小悦的品牌定位是什么",
-                "intent": "brand_positioning",
-                "audience": "founder",
-                "answer": "权威答案：荷小悦是社区功效泡脚养生品牌。",
-                "reasoning": ["已由创始人确认"],
-                "evidence": [{"title": "品牌战略汇总", "source_path": "knowledge/raw/inbox/brand.docx"}],
+                "question_pattern": "门店接待流程是什么",
+                "intent": "operations",
+                "audience": "operations",
+                "answer": "标准答案：先问候和了解需求，再确认服务方案与风险边界。",
+                "reasoning": ["已由运营负责人确认"],
+                "evidence": [{"title": "门店接待 SOP", "source_path": "knowledge/raw/inbox/reception.md"}],
                 "status": "approved",
             },
         )
         chat_response = self.client.post(
             "/api/knowledge/chat",
-            json={"question": "荷小悦的品牌定位是什么？"},
+            json={"question": "门店接待流程是什么？"},
         )
 
         self.assertEqual(create_response.status_code, 200)
@@ -5005,7 +5735,7 @@ used_by:
         self.assertEqual(chat_response.status_code, 200)
         body = chat_response.json()
         self.assertTrue(body["from_answer_card"])
-        self.assertEqual(body["answer"], "权威答案：荷小悦是社区功效泡脚养生品牌。")
+        self.assertEqual(body["answer"], "标准答案：先问候和了解需求，再确认服务方案与风险边界。")
 
     def test_brand_positioning_prioritizes_owned_brand_evidence(self):
         class MixedDomainRepository(FakeRepository):
@@ -5041,7 +5771,10 @@ used_by:
         app = module.create_app(root_dir=self.root, repository_factory=lambda: repo)
         client = TestClient(app)
 
-        response = client.post("/api/knowledge/chat", json={"question": "荷小悦的品牌定位是什么？"})
+        response = client.post(
+            "/api/knowledge/chat",
+            json={"question": "这两份资料对品牌定位的判断分别是什么？"},
+        )
 
         self.assertEqual(response.status_code, 200)
         body = response.json()
@@ -5086,7 +5819,10 @@ used_by:
         app = module.create_app(root_dir=self.root, repository_factory=lambda: repo)
         client = TestClient(app)
 
-        response = client.post("/api/knowledge/chat", json={"question": "荷小悦的品牌定位是什么？"})
+        response = client.post(
+            "/api/knowledge/chat",
+            json={"question": "根据这份资料，品牌定位结论是什么？"},
+        )
 
         self.assertEqual(response.status_code, 200)
         answer = response.json()["answer"]
@@ -5125,7 +5861,10 @@ used_by:
         app = module.create_app(root_dir=self.root, repository_factory=lambda: repo)
         client = TestClient(app)
 
-        response = client.post("/api/knowledge/chat", json={"question": "荷小悦的核爆点定位是什么？"})
+        response = client.post(
+            "/api/knowledge/chat",
+            json={"question": "根据这份资料，核爆点定位是什么？"},
+        )
 
         self.assertEqual(response.status_code, 200)
         answer = response.json()["answer"]
@@ -5161,7 +5900,10 @@ used_by:
         app = module.create_app(root_dir=self.root, repository_factory=lambda: repo)
         client = TestClient(app)
 
-        response = client.post("/api/knowledge/chat", json={"question": "荷小悦的品牌定位是什么？"})
+        response = client.post(
+            "/api/knowledge/chat",
+            json={"question": "根据这份品牌战略资料，定位结论是什么？"},
+        )
 
         self.assertEqual(response.status_code, 200)
         answer = response.json()["answer"]

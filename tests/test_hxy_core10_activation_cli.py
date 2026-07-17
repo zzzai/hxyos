@@ -359,6 +359,37 @@ def test_existing_complete_artifact_is_reused_idempotently(
     assert list(tmp_path.iterdir()) == [first["packet_json"].parent]
 
 
+def test_loader_returns_the_packet_snapshot_that_passed_integrity_checks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from apps.api.hxy_knowledge import core10_activation
+
+    packet = _packet()
+    paths = core10_activation.write_core10_activation_artifacts(tmp_path, packet)
+    packet_path = paths["packet_json"]
+    tampered = json.loads(json.dumps(packet))
+    tampered["items"][0]["why_needed"] = "unverified replacement"
+    tampered_json = json.dumps(tampered, ensure_ascii=False)
+    original_read_text = Path.read_text
+    packet_reads = 0
+
+    def replace_between_reads(path: Path, *args: object, **kwargs: object) -> str:
+        nonlocal packet_reads
+        if path == packet_path:
+            packet_reads += 1
+            if packet_reads == 1:
+                return tampered_json
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", replace_between_reads)
+
+    with pytest.raises(ValueError, match="artifact is invalid"):
+        core10_activation.load_core10_activation_artifact(packet_path.parent)
+
+    assert packet_reads == 1
+
+
 def test_existing_artifact_with_tampered_packet_is_not_reused(
     tmp_path: Path,
 ) -> None:

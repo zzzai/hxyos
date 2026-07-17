@@ -5,17 +5,18 @@ import json
 import os
 import re
 import base64
+import hashlib
 import secrets
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from hxy_knowledge import answer_service
 from hxy_knowledge.answer_service import AnswerServiceHooks
@@ -36,6 +37,10 @@ from hxy_knowledge.answer_engine import (
 from hxy_knowledge.answer_engine import classify_intent
 from hxy_knowledge.config import get_settings
 from hxy_knowledge.compliance_rules import check_brand_risk_text, load_brand_risk_rules
+from hxy_knowledge.core10_activation import (
+    load_core10_activation_artifact_from_dir_fd,
+    validate_core10_activation_decisions,
+)
 from hxy_knowledge.eval_runner import run_golden_evals
 from hxy_knowledge.enterprise_governance import (
     build_enterprise_governance_report,
@@ -83,7 +88,7 @@ from hxy_knowledge.workspace_events import (
     list_workspace_events,
     redact_workspace_event,
 )
-from hxy_product.auth import ProductAuthSettings
+from hxy_product.auth import Principal, ProductAuthSettings, build_principal_resolver
 from hxy_product.knowledge_context import AssignmentKnowledgeRepository
 from hxy_product.journey_routes import create_journey_router
 from hxy_product.conversation_repository import ConversationRepository
@@ -94,13 +99,343 @@ from hxy_product.material_understanding import build_material_understanding
 from hxy_product.onboarding_repository import OnboardingRepository
 from hxy_product.onboarding_routes import create_onboarding_router, validate_public_app_url
 from hxy_product.repository import IdentityRepository
-from hxy_product.routes import create_identity_router
+from hxy_product.routes import assignment_for_principal, create_identity_router
 from hxy_product.task_repository import TaskRepository
 from hxy_product.task_routes import create_task_router
 from hxy_product.training_repository import ProductTrainingRepository
 
 
 RepositoryFactory = Callable[[], Any]
+
+_CORE10_ARTIFACT_DIRECTORY_PATTERN = re.compile(
+    r"core10-activation-[a-f0-9]{12}"
+)
+_CORE10_PUBLIC_PACKET_FIELDS = {
+    "version",
+    "generated_at",
+    "item_count",
+    "preview_only",
+    "write_to_database",
+    "publish_allowed",
+    "official_use_allowed",
+    "requires_founder_decision",
+    "authority_rule",
+    "upstream_fingerprints",
+    "items",
+    "packet_fingerprint",
+    "packet_id",
+    "artifact_fingerprint",
+}
+_CORE10_PUBLIC_ITEM_FIELDS = {
+    "item_key",
+    "current_state",
+    "proposed_authority",
+    "why_needed",
+    "risk_if_approved",
+    "risk_if_rejected",
+    "affected_core10_cases",
+    "source_evidence",
+    "blockers",
+    "exact_write_intents",
+    "decision_options",
+    "official_use_allowed",
+    "write_allowed",
+    "item_fingerprint",
+}
+_CORE10_SOURCE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$")
+_CORE10_CANONICAL_PUBLIC_ASSET_ID_PATTERN = re.compile(
+    r"^hxy-(?:inbox|file):[a-f0-9]{16}(?::path:[a-f0-9]{10})?$"
+)
+_CORE10_PUBLIC_SOURCE_ORIGINS = {"internal"}
+_CORE10_PUBLIC_SOURCE_AUTHORITIES = {
+    "approved_answer_card",
+    "internal_material",
+    "official_internal",
+}
+_CORE10_UNSAFE_KEY_TOKENS = {
+    "claim_id",
+    "chunk_id",
+    "credential",
+    "credentials",
+    "database_url",
+    "db_url",
+    "dsn",
+    "password",
+    "passwd",
+    "secret",
+    "token",
+}
+_CORE10_PUBLIC_NESTED_FIELDS = {
+    "active_version",
+    "algorithm",
+    "answer",
+    "approved_conflict_count",
+    "approved_match_count",
+    "asset_id",
+    "asset_ids",
+    "authority",
+    "authority_version",
+    "blocked_terms",
+    "brand_identity",
+    "constitution_draft",
+    "constitution_state",
+    "core_statements",
+    "digest",
+    "draft",
+    "draft_present",
+    "draft_version",
+    "existing_answer_card_count",
+    "existing_answer_cards",
+    "expected_previous_version",
+    "forbidden_interpretations",
+    "founder",
+    "headquarters",
+    "operation",
+    "operations_sources",
+    "payload_sha256",
+    "product_sources",
+    "question_pattern",
+    "reception_draft",
+    "report",
+    "role_variants",
+    "selected_source_count",
+    "service_facts",
+    "source_id",
+    "source_ids",
+    "source_references",
+    "statement",
+    "status",
+    "store_manager",
+    "store_staff",
+    "version",
+}
+_CORE10_SENSITIVE_TEXT_PATTERN = re.compile(
+    r"(?:api[-_ ]?key|access[-_ ]?token|client[-_ ]?secret|password|"
+    r"passwd|credential|database[-_ ]?url|db[-_ ]?url)\s*[:=]",
+    re.IGNORECASE,
+)
+_CORE10_DATABASE_URL_PATTERN = re.compile(
+    r"\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis)://\S+",
+    re.IGNORECASE,
+)
+_CORE10_CREDENTIAL_URL_PATTERN = re.compile(
+    r"\b[a-z][a-z0-9+.-]*://[^\s/:@]+:[^\s/@]+@",
+    re.IGNORECASE,
+)
+_CORE10_BEARER_TOKEN_PATTERN = re.compile(
+    r"\b(?:authorization\s*:\s*)?bearer\s+[A-Za-z0-9._~+/=-]+",
+    re.IGNORECASE,
+)
+_CORE10_PRIVATE_KEY_PATTERN = re.compile(
+    r"-----BEGIN(?: [A-Z0-9]+)* PRIVATE KEY-----",
+    re.IGNORECASE,
+)
+_CORE10_EMBEDDED_POSIX_PATH_PATTERN = re.compile(
+    r"(?:^|[\s\"'`(=])/(?:[A-Za-z0-9._~-]+/)*[A-Za-z0-9._~-]+"
+)
+_CORE10_EMBEDDED_WINDOWS_PATH_PATTERN = re.compile(
+    r"\b[A-Za-z]:[\\/](?:[^\s\\/]+[\\/])*[^\s\\/]+"
+)
+_CORE10_REDACTION = "[redacted]"
+
+
+class Core10ActivationDecisionItemRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    item_key: Literal[
+        "brand_constitution",
+        "product_system_sources",
+        "first_store_operations_sources",
+        "reception_standard_answer_card",
+    ]
+    item_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    action: Literal["approve", "reject", "request_correction"]
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+class Core10ActivationDecisionPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    packet_id: str = Field(pattern=r"^core10-activation:[0-9a-f]{12}$")
+    packet_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    decisions: list[Core10ActivationDecisionItemRequest] = Field(
+        min_length=4,
+        max_length=4,
+    )
+
+
+def _core10_public_text(value: str, *, max_length: int = 4000) -> str:
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", " ", value)
+    text = re.sub(r"\s+", " ", text).strip()
+    if (
+        _CORE10_SENSITIVE_TEXT_PATTERN.search(text)
+        or _CORE10_DATABASE_URL_PATTERN.search(text)
+        or _CORE10_CREDENTIAL_URL_PATTERN.search(text)
+        or _CORE10_BEARER_TOKEN_PATTERN.search(text)
+        or _CORE10_PRIVATE_KEY_PATTERN.search(text)
+        or _CORE10_EMBEDDED_POSIX_PATH_PATTERN.search(text)
+        or _CORE10_EMBEDDED_WINDOWS_PATH_PATTERN.search(text)
+    ):
+        return _CORE10_REDACTION
+    return text[:max_length]
+
+
+def _core10_public_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        public: dict[str, Any] = {}
+        for key, nested in value.items():
+            key_text = str(key)
+            normalized_key = key_text.strip().lower().replace("-", "_")
+            if (
+                normalized_key in _CORE10_UNSAFE_KEY_TOKENS
+                or normalized_key.endswith("_path")
+                or normalized_key not in _CORE10_PUBLIC_NESTED_FIELDS
+            ):
+                continue
+            if normalized_key in {"asset_id", "source_id"}:
+                asset_id = _core10_public_asset_id(nested)
+                if asset_id is not None:
+                    public[key_text] = asset_id
+                continue
+            if normalized_key in {"asset_ids", "source_ids"}:
+                if isinstance(nested, list):
+                    public[key_text] = [
+                        asset_id
+                        for item in nested
+                        if (asset_id := _core10_public_asset_id(item)) is not None
+                    ]
+                continue
+            public[key_text] = _core10_public_value(nested)
+        return public
+    if isinstance(value, list):
+        return [_core10_public_value(nested) for nested in value]
+    if isinstance(value, str):
+        return _core10_public_text(value)
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return _core10_public_text(str(value))
+
+
+def _core10_public_asset_id(value: Any) -> str | None:
+    if not isinstance(value, str) or not _CORE10_SOURCE_ID_PATTERN.fullmatch(value):
+        return None
+    if _CORE10_CANONICAL_PUBLIC_ASSET_ID_PATTERN.fullmatch(value):
+        return value
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:32]
+    return f"asset-ref:{digest}"
+
+
+def _core10_public_evidence(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    public: dict[str, Any] = {}
+    asset_id = _core10_public_asset_id(value.get("asset_id"))
+    if asset_id is not None:
+        public["asset_id"] = asset_id
+    source_origin = value.get("source_origin")
+    if (
+        isinstance(source_origin, str)
+        and source_origin in _CORE10_PUBLIC_SOURCE_ORIGINS
+    ):
+        public["source_origin"] = source_origin
+    source_authority = value.get("source_authority")
+    if (
+        isinstance(source_authority, str)
+        and source_authority in _CORE10_PUBLIC_SOURCE_AUTHORITIES
+    ):
+        public["source_authority"] = source_authority
+    authority_version = value.get("authority_version")
+    if type(authority_version) is int and authority_version >= 1:
+        public["authority_version"] = authority_version
+    return public or None
+
+
+def _core10_public_packet(packet: dict[str, Any]) -> dict[str, Any]:
+    public = {
+        key: _core10_public_value(value)
+        for key, value in packet.items()
+        if key in _CORE10_PUBLIC_PACKET_FIELDS and key != "items"
+    }
+    items = []
+    for raw_item in packet.get("items", []):
+        if not isinstance(raw_item, dict):
+            continue
+        item = {
+            key: _core10_public_value(value)
+            for key, value in raw_item.items()
+            if key in _CORE10_PUBLIC_ITEM_FIELDS and key != "source_evidence"
+        }
+        source_evidence = raw_item.get("source_evidence")
+        if not isinstance(source_evidence, list):
+            source_evidence = []
+        item["source_evidence"] = [
+            projected
+            for evidence in source_evidence
+            if (projected := _core10_public_evidence(evidence)) is not None
+        ]
+        items.append(item)
+    public["items"] = items
+    return public
+
+
+def _latest_core10_activation_packet(root_dir: Path) -> dict[str, Any] | None:
+    if not hasattr(os, "O_NOFOLLOW"):
+        return None
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | os.O_NOFOLLOW
+    )
+    directory_fd = -1
+    try:
+        directory_fd = os.open(root_dir, flags)
+        for segment in ("data", "private", "core10-activation"):
+            next_fd = os.open(segment, flags, dir_fd=directory_fd)
+            os.close(directory_fd)
+            directory_fd = next_fd
+        candidates = os.listdir(directory_fd)
+    except OSError:
+        if directory_fd >= 0:
+            os.close(directory_fd)
+        return None
+
+    valid_packets: list[tuple[datetime, str, dict[str, Any]]] = []
+    try:
+        for candidate in candidates:
+            if not _CORE10_ARTIFACT_DIRECTORY_PATTERN.fullmatch(candidate):
+                continue
+            try:
+                packet = load_core10_activation_artifact_from_dir_fd(
+                    directory_fd,
+                    candidate,
+                )
+                generated_at = datetime.fromisoformat(
+                    str(packet["generated_at"]).replace("Z", "+00:00")
+                )
+                if (
+                    generated_at.tzinfo is None
+                    or generated_at.utcoffset()
+                    != timezone.utc.utcoffset(generated_at)
+                ):
+                    continue
+                valid_packets.append(
+                    (generated_at, str(packet["packet_fingerprint"]), packet)
+                )
+            except (
+                KeyError,
+                TypeError,
+                ValueError,
+                OSError,
+                UnicodeError,
+                RecursionError,
+            ):
+                continue
+    finally:
+        os.close(directory_fd)
+    if not valid_packets:
+        return None
+    return max(valid_packets, key=lambda record: (record[0], record[1]))[2]
 
 
 class ChatRequest(BaseModel):
@@ -109,6 +444,7 @@ class ChatRequest(BaseModel):
     domain: str | None = None
     stage: str | None = None
     limit: int = Field(default=5, ge=1, le=10)
+    source_asset_id: str | None = Field(default=None, max_length=200)
 
 
 class FeedbackRequest(BaseModel):
@@ -1307,12 +1643,22 @@ def _apply_frontdoor_to_answer(answer: dict[str, Any], frontdoor: dict[str, Any]
 
 
 def _model_answer_messages(question: str, answer: dict[str, Any]) -> list[dict[str, str]]:
+    def bounded_text(value: Any, limit: int) -> str:
+        normalized = " ".join(str(value or "").split())
+        if len(normalized) <= limit:
+            return normalized
+        return normalized[: limit - 3].rstrip() + "..."
+
     evidence_lines = []
-    evidence = [item for item in answer.get("evidence") or [] if not is_process_memory_evidence(item)]
+    evidence = [
+        item
+        for item in answer.get("evidence") or []
+        if not is_process_memory_evidence(item)
+    ][:1]
     for index, item in enumerate(evidence, start=1):
-        title = item.get("title") or "未命名资料"
-        domain = item.get("domain") or "unknown"
-        excerpt = item.get("excerpt") or ""
+        title = bounded_text(item.get("title") or "未命名资料", 28)
+        domain = bounded_text(item.get("domain") or "unknown", 16)
+        excerpt = bounded_text(item.get("excerpt") or "", 100)
         evidence_lines.append(f"{index}. {title} [{domain}]：{excerpt}")
     system = (
         "你是荷小悦经营大脑的答案生成器。只能基于给定证据和已生成草稿回答。"
@@ -1321,13 +1667,13 @@ def _model_answer_messages(question: str, answer: dict[str, Any]) -> list[dict[s
     )
     user = "\n".join(
         [
-            f"问题：{question}",
-            f"场景：{answer.get('scenario') or '经营问答'}",
-            f"意图：{answer.get('intent') or 'unknown'}",
-            f"当前草稿：{answer.get('answer') or ''}",
-            "证据：",
+            f"问题：{bounded_text(question, 48)}",
+            f"场景：{bounded_text(answer.get('scenario') or '经营问答', 32)}",
+            f"意图：{bounded_text(answer.get('intent') or 'unknown', 24)}",
+            f"当前草稿：{bounded_text(answer.get('answer') or '', 160)}",
+            "最高相关证据：",
             "\n".join(evidence_lines) or "无",
-            "请输出更清晰、可执行、克制的可用答案。",
+            "请输出更清晰、可执行、克制的可用答案，不超过 120 个汉字。",
         ]
     )
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
@@ -3651,6 +3997,13 @@ def create_app(
         product_identity_repository_factory
         or _default_product_identity_repository_factory(settings.database_url)
     )
+
+    def get_product_identity_repository() -> Any:
+        return make_product_identity_repository()
+
+    resolve_product_principal = build_principal_resolver(
+        get_product_identity_repository
+    )
     make_onboarding_repository = onboarding_repository_factory
     if make_onboarding_repository is None and settings.database_url.strip():
         make_onboarding_repository = _default_onboarding_repository_factory(
@@ -3961,6 +4314,44 @@ def create_app(
     @app.get("/api/operating-brain/capabilities")
     async def operating_brain_capabilities_endpoint() -> dict[str, Any]:
         return operating_brain_capabilities()
+
+    @app.get("/api/operating-brain/core10-activation-packet")
+    async def operating_brain_core10_activation_packet_endpoint(
+        principal: Principal = Depends(resolve_product_principal),
+        repository: Any = Depends(get_product_identity_repository),
+    ) -> dict[str, Any]:
+        assignment = assignment_for_principal(principal, repository)
+        if assignment.role != "founder":
+            raise HTTPException(status_code=403, detail="Forbidden")
+        packet = _latest_core10_activation_packet(resolved_root)
+        if packet is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Core-10 activation packet not found",
+            )
+        return _core10_public_packet(packet)
+
+    @app.post("/api/operating-brain/core10-activation-decision-preview")
+    async def operating_brain_core10_activation_decision_preview_endpoint(
+        request: Core10ActivationDecisionPreviewRequest,
+        principal: Principal = Depends(resolve_product_principal),
+        repository: Any = Depends(get_product_identity_repository),
+    ) -> dict[str, Any]:
+        assignment = assignment_for_principal(principal, repository)
+        if assignment.role != "founder":
+            raise HTTPException(status_code=403, detail="Forbidden")
+        packet = _latest_core10_activation_packet(resolved_root)
+        if packet is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Core-10 activation packet not found",
+            )
+        payload = request.model_dump()
+        payload["actor"] = {
+            "id": principal.account_id,
+            "role": assignment.role,
+        }
+        return validate_core10_activation_decisions(packet, payload)
 
     @app.get("/api/operating-brain/model-router")
     async def operating_brain_model_router_endpoint() -> dict[str, Any]:
@@ -5058,6 +5449,7 @@ def create_app(
             role="founder",
             pipeline_role="team",
             brand_constitution=brand_constitution,
+            source_asset_id=request.source_asset_id,
         )
 
     @app.post("/api/knowledge/feedback", dependencies=[Depends(require_api_token)])
