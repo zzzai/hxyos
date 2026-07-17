@@ -119,7 +119,7 @@ def test_source_card_preserves_claimed_authority_without_promoting_it(
 
     card = source_module.build_source_card(material, parsed, created_at=CREATED_AT)
 
-    assert card["version"] == "hxy-source-card.v1"
+    assert card["version"] == "hxy-source-card.v2"
     assert card["source_id"] == f"material:{MATERIAL_ID}"
     assert card["source_hash"] == "a" * 64
     assert card["source_origin"] == origin
@@ -132,4 +132,84 @@ def test_source_card_preserves_claimed_authority_without_promoting_it(
     assert card["quality_signals"]["extracted_char_count"] == len(parsed.text_content)
     assert card["parser"]["name"] == "markitdown"
     if origin == "external":
-        assert card["allowed_use"] == ["reference", "draft"]
+        assert {"reference", "draft"}.issubset(card["allowed_use"])
+
+
+def test_source_card_v2_adds_independent_governance_dimensions() -> None:
+    parser_module = importlib.import_module("apps.api.hxy_product.material_parser")
+    source_module = importlib.import_module("apps.api.hxy_product.source_card")
+    parsed = parser_module.MaterialParseResult(
+        text_content="# 外部品牌文章\n\n仅供研究参考。",
+        title="外部品牌文章",
+        parser_name="markitdown",
+        parser_version="0.1.6",
+        warnings=(),
+    )
+    material = {
+        "material_id": MATERIAL_ID,
+        "file_name": "外部品牌文章.md",
+        "sha256": "b" * 64,
+        "size_bytes": 512,
+        "understanding": {
+            "source_origin": "external",
+            "authority_level": "reference",
+            "material_class": "ai_derived",
+            "lifecycle": "current_candidate",
+            "authority_state": "candidate",
+            "scope": ["brand", "external_method"],
+            "sensitivity": "public",
+            "business_stage": "evergreen",
+            "derivation": "ai_summary",
+        },
+    }
+
+    card = source_module.build_source_card(material, parsed, created_at=CREATED_AT)
+
+    assert card["material_class"] == "ai_derived"
+    assert card["lifecycle"] == "current_candidate"
+    assert card["authority_state"] == "candidate"
+    assert card["scope"] == ["brand", "external_method"]
+    assert card["sensitivity"] == "public"
+    assert card["business_stage"] == "evergreen"
+    assert card["derivation"] == "ai_summary"
+    assert card["retrieval_state"] == "eligible_reference"
+    assert "evidence_citation" in card["blocked_use"]
+    assert "automatic_publication" in card["blocked_use"]
+    assert card["official_use_allowed"] is False
+
+
+def test_source_card_v2_rejects_untrusted_approval_and_invalid_dimensions() -> None:
+    parser_module = importlib.import_module("apps.api.hxy_product.material_parser")
+    source_module = importlib.import_module("apps.api.hxy_product.source_card")
+    parsed = parser_module.MaterialParseResult(
+        text_content="未经治理的上传资料。",
+        title=None,
+        parser_name="markitdown",
+        parser_version="0.1.6",
+        warnings=(),
+    )
+    material = {
+        "material_id": MATERIAL_ID,
+        "file_name": "未知资料.bin",
+        "understanding": {
+            "authority_state": "approved",
+            "material_class": "official_internal",
+            "lifecycle": "latest",
+            "scope": ["brand", "not_a_scope", "brand"],
+            "sensitivity": "open_to_everyone",
+            "business_stage": "hypergrowth",
+            "derivation": "human_truth",
+        },
+    }
+
+    card = source_module.build_source_card(material, parsed, created_at=CREATED_AT)
+
+    assert card["authority_state"] == "unclassified"
+    assert card["material_class"] == "internal_project"
+    assert card["lifecycle"] == "undetermined"
+    assert card["scope"] == ["external_method"]
+    assert card["sensitivity"] == "internal"
+    assert card["business_stage"] == "evergreen"
+    assert card["derivation"] == "original"
+    assert card["retrieval_state"] == "pending_source_decision"
+    assert card["official_use_allowed"] is False
