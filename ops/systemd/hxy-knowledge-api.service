@@ -1,5 +1,5 @@
 [Unit]
-Description=HXY Knowledge API
+Description=HXYOS Knowledge API (release)
 After=network-online.target
 Wants=network-online.target
 
@@ -7,13 +7,13 @@ Wants=network-online.target
 Type=simple
 User=root
 Group=root
-WorkingDirectory=/root/hxy
+WorkingDirectory=/root/hxy/releases/current
 Environment=HOME=/root
 Environment=HXY_ROOT_DIR=/root/hxy
 Environment=HXY_ENV_FILE=/root/hxy/ops/env/hxy-knowledge-api.env
-Environment=HXY_API_HOST=127.0.0.1
-Environment=HXY_API_PORT=18081
-ExecStart=/usr/bin/env bash /root/hxy/ops/hxy-knowledge-api.sh
+Environment=PYTHONPATH=/root/hxy/releases/current/apps/api
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/bin/bash -c 'set -a; source /root/hxy/ops/env/hxy-knowledge-api.env; set +a; export HXY_ROOT_DIR=/root/hxy PYTHONPATH=/root/hxy/releases/current/apps/api PYTHONDONTWRITEBYTECODE=1; exec /root/hxy/releases/current/.venv/bin/python -m uvicorn apps.api.hxy_knowledge_api:app --host 127.0.0.1 --port 18081'
 Restart=always
 RestartSec=5
 TimeoutStopSec=20

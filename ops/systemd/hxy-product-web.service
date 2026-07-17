@@ -1,0 +1,17 @@
+[Unit]
+Description=HXYOS Product Web (release)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root/hxy/releases/current/apps/hxy-web/dist
+ExecStart=/usr/bin/python3 -m http.server 18084 --bind 127.0.0.1 --directory /root/hxy/releases/current/apps/hxy-web/dist
+Restart=always
+RestartSec=5
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target
