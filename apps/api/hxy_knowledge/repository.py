@@ -75,7 +75,6 @@ _MAX_SOURCE_AUTHORITY_BATCH = 100
 _MAX_CORE10_ACTIVATION_ASSETS = 20
 _MAX_CORE10_EVIDENCE_PER_ASSET = 10
 _MAX_CORE10_EVIDENCE_EXCERPT_CHARS = 2000
-_MAX_CORE10_APPROVED_ANSWER_CARDS = 100
 
 
 def _normalized_source_classification(item: dict[str, Any]) -> dict[str, Any]:
@@ -662,6 +661,10 @@ class KnowledgeRepository:
             asset_id: [] for asset_id in selected_asset_ids
         }
         with self.connect() as conn:
+            conn.execute(
+                "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+                (),
+            )
             if selected_asset_ids:
                 asset_rows = conn.execute(
                     """
@@ -736,10 +739,9 @@ class KnowledgeRepository:
                 SELECT card_id::text, question_pattern, intent, audience, answer, status
                 FROM hxy_knowledge_answer_cards
                 WHERE status = %s
-                ORDER BY updated_at DESC
-                LIMIT %s
+                ORDER BY updated_at DESC, card_id::text ASC
                 """,
-                ("approved", _MAX_CORE10_APPROVED_ANSWER_CARDS),
+                ("approved",),
             ).fetchall()
 
         for asset_id, source in source_by_id.items():

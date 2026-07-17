@@ -36,6 +36,8 @@ class _SnapshotConnection:
     def execute(self, sql: str, params: tuple[Any, ...]) -> _Result:
         normalized = " ".join(sql.split())
         self.statements.append((normalized, params))
+        if normalized == "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ":
+            return _Result([])
         if "FROM hxy_knowledge_assets" in normalized:
             selected = set(params[0])
             return _Result(
@@ -47,13 +49,42 @@ class _SnapshotConnection:
             )
         if "FROM hxy_knowledge_chunks" in normalized:
             selected = set(params[0])
-            return _Result(
-                [row for row in self.chunks if row.get("asset_id") in selected]
+            excerpt_chars = int(params[1])
+            evidence_limit = int(params[2])
+            rows = sorted(
+                (row for row in self.chunks if row.get("asset_id") in selected),
+                key=lambda row: (
+                    str(row.get("asset_id") or ""),
+                    int(row.get("chunk_index") or 0),
+                ),
             )
+            bounded: list[dict[str, Any]] = []
+            counts: dict[str, int] = {}
+            for row in rows:
+                asset_id = str(row.get("asset_id") or "")
+                counts[asset_id] = counts.get(asset_id, 0) + 1
+                if counts[asset_id] > evidence_limit:
+                    continue
+                bounded.append(
+                    {
+                        **row,
+                        "content": str(row.get("content") or "")[:excerpt_chars],
+                    }
+                )
+            return _Result(bounded)
         if "FROM hxy_knowledge_answer_cards" in normalized:
             rows = self.answer_cards
             if "WHERE status = %s" in normalized:
                 rows = [row for row in rows if row.get("status") == params[0]]
+            if "ORDER BY updated_at DESC, card_id::text ASC" in normalized:
+                rows = sorted(rows, key=lambda row: str(row.get("card_id") or ""))
+                rows = sorted(
+                    rows,
+                    key=lambda row: str(row.get("updated_at") or ""),
+                    reverse=True,
+                )
+            if "LIMIT %s" in normalized:
+                rows = rows[: int(params[-1])]
             return _Result(rows)
         raise AssertionError(normalized)
 
@@ -151,6 +182,16 @@ def test_activation_snapshot_resolves_only_explicit_asset_ids_in_caller_order() 
     )
     assert not any(asset_id in asset_sql for asset_id in asset_params[0])
     assert "postgresql://" not in repr(snapshot)
+    assert connection.statements[0] == (
+        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+        (),
+    )
+    data_reads = [
+        sql
+        for sql, _params in connection.statements
+        if re.match(r"^(?:SELECT|WITH)\b", sql, re.IGNORECASE)
+    ]
+    assert len(data_reads) == 3
     assert not any(
         re.search(r"\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\b", sql, re.IGNORECASE)
         for sql, _params in connection.statements
@@ -309,21 +350,29 @@ def test_evidence_count_and_content_are_bounded_per_asset() -> None:
         if "FROM hxy_knowledge_chunks" in statement[0]
     )
     assert "PARTITION BY" in chunk_sql
+    assert "ROW_NUMBER() OVER" in chunk_sql
+    assert "PARTITION BY asset_id" in chunk_sql
+    assert "ORDER BY chunk_index ASC, updated_at DESC" in chunk_sql
     assert "LEFT(content, %s)" in chunk_sql
-    assert "%s" in chunk_sql
+    assert "WHERE evidence_rank <= %s" in chunk_sql
+    assert "ORDER BY asset_id, chunk_index" in chunk_sql
     assert chunk_params == (["asset-product"], 12, 2)
 
 
-def test_snapshot_returns_only_approved_answer_cards() -> None:
+def test_snapshot_returns_every_approved_answer_card_without_truncation() -> None:
     cards = [
         {
-            "card_id": "card-approved",
-            "question_pattern": "如何接待顾客？",
+            "card_id": f"card-{index:03d}",
+            "question_pattern": f"如何接待顾客？-{index}",
             "intent": "reception",
             "audience": "employee",
-            "answer": "先询问顾客状态和偏好。",
+            "answer": f"先询问顾客状态和偏好。-{index}",
             "status": "approved",
-        },
+            "updated_at": "2026-07-17T12:00:00Z",
+        }
+        for index in range(101)
+    ]
+    cards.append(
         {
             "card_id": "card-draft",
             "question_pattern": "草稿问题",
@@ -331,25 +380,69 @@ def test_snapshot_returns_only_approved_answer_cards() -> None:
             "audience": "employee",
             "answer": "草稿答案",
             "status": "draft",
-        },
-    ]
+            "updated_at": "2026-07-17T13:00:00Z",
+        }
+    )
     connection = _SnapshotConnection(answer_cards=cards)
     snapshot = _repository(connection).core10_activation_snapshot(
         product_asset_ids=[],
         operations_asset_ids=[],
     )
 
-    assert [card["card_id"] for card in snapshot["approved_answer_cards"]] == [
-        "card-approved",
-    ]
+    assert len(snapshot["approved_answer_cards"]) == 101
+    assert snapshot["approved_answer_cards"][0]["card_id"] == "card-000"
+    assert snapshot["approved_answer_cards"][-1]["card_id"] == "card-100"
+    assert all(card["status"] == "approved" for card in snapshot["approved_answer_cards"])
     card_sql, card_params = next(
         statement
         for statement in connection.statements
         if "answer_cards" in statement[0]
     )
     assert "WHERE status = %s" in card_sql
-    assert "LIMIT %s" in card_sql
-    assert card_params == ("approved", 100)
+    assert "LIMIT" not in card_sql
+    assert "ORDER BY updated_at DESC, card_id::text ASC" in card_sql
+    assert card_params == ("approved",)
+
+
+def test_approved_answer_cards_have_a_stable_updated_at_and_id_order() -> None:
+    cards = [
+        {
+            "card_id": "card-b",
+            "question_pattern": "问题 B",
+            "intent": "reception",
+            "audience": "employee",
+            "answer": "答案 B",
+            "status": "approved",
+            "updated_at": "2026-07-17T12:00:00Z",
+        },
+        {
+            "card_id": "card-a",
+            "question_pattern": "问题 A",
+            "intent": "reception",
+            "audience": "employee",
+            "answer": "答案 A",
+            "status": "approved",
+            "updated_at": "2026-07-17T12:00:00Z",
+        },
+        {
+            "card_id": "card-newer",
+            "question_pattern": "较新问题",
+            "intent": "reception",
+            "audience": "employee",
+            "answer": "较新答案",
+            "status": "approved",
+            "updated_at": "2026-07-17T13:00:00Z",
+        },
+    ]
+    snapshot = _repository(
+        _SnapshotConnection(answer_cards=cards)
+    ).core10_activation_snapshot(product_asset_ids=[], operations_asset_ids=[])
+
+    assert [card["card_id"] for card in snapshot["approved_answer_cards"]] == [
+        "card-newer",
+        "card-a",
+        "card-b",
+    ]
 
 
 def test_snapshot_is_select_only_and_empty_categories_do_not_scan_sources() -> None:
@@ -366,4 +459,15 @@ def test_snapshot_is_select_only_and_empty_categories_do_not_scan_sources() -> N
     }
     assert not any("hxy_knowledge_assets" in sql for sql, _ in connection.statements)
     assert not any("hxy_knowledge_chunks" in sql for sql, _ in connection.statements)
-    assert all(re.match(r"^SELECT\b", sql, re.IGNORECASE) for sql, _ in connection.statements)
+    assert connection.statements[0] == (
+        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+        (),
+    )
+    assert all(
+        re.match(r"^(?:SET TRANSACTION|SELECT|WITH)\b", sql, re.IGNORECASE)
+        for sql, _ in connection.statements
+    )
+    assert not any(
+        re.search(r"\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\b", sql, re.IGNORECASE)
+        for sql, _ in connection.statements
+    )
