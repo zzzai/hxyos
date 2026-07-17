@@ -2943,7 +2943,7 @@ used_by:
         self.assertEqual(body["status"], "missing")
         self.assertFalse(body["official_use_allowed"])
 
-    def test_operating_brain_ingest_loop_run_requires_auth_and_stops_at_review(self):
+    def test_operating_brain_ingest_loop_run_returns_unpromoted_candidates(self):
         (self.root / "knowledge" / "raw" / "inbox" / "brand.md").write_text(
             "荷小悦是社区轻养生品牌。不能说治疗失眠。",
             encoding="utf-8",
@@ -2954,8 +2954,10 @@ used_by:
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertEqual(body["version"], "hxy-ingest-loop-state.v1")
-        self.assertEqual(body["status"], "review_required")
+        self.assertEqual(body["status"], "candidate_ready")
         self.assertFalse(body["official_use_allowed"])
+        self.assertFalse(body["requires_human_review"])
+        self.assertTrue(body["promotion_review_pending"])
 
     def test_operating_brain_brand_decision_review_requires_auth_and_does_not_approve(self):
         response = self.client.post(

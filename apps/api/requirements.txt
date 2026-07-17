@@ -9,3 +9,4 @@ python-multipart>=0.0.9,<1.0
 pytest>=8.2,<9.0
 markitdown[docx,pdf,pptx,xls,xlsx]>=0.1.6,<0.2.0
 python-docx>=1.1,<2.0
+pypdf>=6.0,<7.0

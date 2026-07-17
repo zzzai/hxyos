@@ -26,7 +26,7 @@ def test_compiler_creates_review_artifacts_without_approval(tmp_path: Path) -> N
     assert (wiki_dir / "answer-card-drafts.json").exists()
 
 
-def test_ingest_loop_stops_at_human_review(tmp_path: Path) -> None:
+def test_ingest_loop_keeps_candidates_unpromoted_without_blocking_source_processing(tmp_path: Path) -> None:
     raw_dir = tmp_path / "raw"
     raw_dir.mkdir()
     (raw_dir / "source.md").write_text("ExampleCo reference material requires review.", encoding="utf-8")
@@ -40,9 +40,10 @@ def test_ingest_loop_stops_at_human_review(tmp_path: Path) -> None:
         root_dir=tmp_path,
     )
 
-    assert state["status"] == "review_required"
+    assert state["status"] == "candidate_ready"
     assert state["official_use_allowed"] is False
-    assert state["requires_human_review"] is True
+    assert state["requires_human_review"] is False
+    assert state["promotion_review_pending"] is True
 
 
 def test_process_memory_is_context_hint_not_authority() -> None:

@@ -6,7 +6,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from hxy_knowledge.document_router import build_parser_plan
 from hxy_knowledge.knowledge_compiler import compile_directory
+from hxy_knowledge.parser_adapter import reference_manifest_path
 
 
 TEXT_COMPILABLE_SUFFIXES = {".md", ".txt"}
@@ -15,8 +17,10 @@ PARSING_REQUIRED_SUFFIXES = {
     ".doc",
     ".docx",
     ".epub",
+    ".gif",
     ".html",
     ".htm",
+    ".bmp",
     ".jpeg",
     ".jpg",
     ".json",
@@ -24,6 +28,8 @@ PARSING_REQUIRED_SUFFIXES = {
     ".png",
     ".ppt",
     ".pptx",
+    ".tif",
+    ".tiff",
     ".webp",
     ".xls",
     ".xlsx",
@@ -31,7 +37,7 @@ PARSING_REQUIRED_SUFFIXES = {
 DISCOVERABLE_SUFFIXES = TEXT_COMPILABLE_SUFFIXES | PARSING_REQUIRED_SUFFIXES
 MINERU_SUFFIXES: set[str] = set()
 MARKITDOWN_SUFFIXES = {".csv", ".doc", ".docx", ".epub", ".html", ".htm", ".json", ".pdf", ".ppt", ".pptx", ".xls", ".xlsx"}
-VISION_SUFFIXES = {".jpeg", ".jpg", ".png", ".webp"}
+VISION_SUFFIXES = {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
 
 
 def _utc_now() -> str:
@@ -54,6 +60,7 @@ def _relative(path: Path, root_dir: Path) -> str:
 
 
 def _parser_strategy_for_suffix(suffix: str) -> str:
+    """Keep the suffix helper for older callers; routing is path-aware now."""
     if suffix in MINERU_SUFFIXES:
         return "mineru"
     if suffix in MARKITDOWN_SUFFIXES:
@@ -75,15 +82,52 @@ def _is_file_safely(path: Path) -> bool:
         return False
 
 
-def _existing_extracted_reference_path(inbox_dir: Path, source_path: str) -> Path | None:
-    current_path = _extracted_reference_path_for(inbox_dir, source_path)
-    if _is_file_safely(current_path):
-        return current_path
-    legacy_path = inbox_dir / "extracted-reference" / f"{Path(source_path).name}.reference.txt"
-    if _is_file_safely(legacy_path):
-        return legacy_path
-    legacy_stem_path = inbox_dir / "extracted-reference" / f"{Path(source_path).stem}.reference.txt"
-    return legacy_stem_path if _is_file_safely(legacy_stem_path) else None
+def _reference_matches_source(reference_path: Path, *, source_path: str, source_content_hash: str) -> bool:
+    manifest_path = reference_manifest_path(reference_path)
+    if not _is_file_safely(reference_path) or not _is_file_safely(manifest_path):
+        return False
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    quality = manifest.get("quality")
+    parser = manifest.get("parser")
+    if not isinstance(quality, dict):
+        return False
+    return (
+        manifest.get("version") == "hxy-parser-reference.v1"
+        and manifest.get("source_path") == source_path
+        and manifest.get("source_content_hash") == source_content_hash
+        and manifest.get("reference_content_hash") == _hash_file(reference_path)
+        and parser in {"markitdown", "mineru", "ocr_or_vision"}
+        and manifest.get("official_use_allowed") is False
+        and quality.get("version") == "hxy-parser-quality.v1"
+        and quality.get("status") in {"usable", "review"}
+        and quality.get("needs_fallback") is False
+        and quality.get("source_path") == source_path
+        and quality.get("parser_strategy") == parser
+    )
+
+
+def _existing_extracted_reference_path(
+    inbox_dir: Path,
+    source_path: str,
+    *,
+    source_content_hash: str,
+) -> Path | None:
+    candidates = [
+        _extracted_reference_path_for(inbox_dir, source_path),
+        inbox_dir / "extracted-reference" / f"{Path(source_path).name}.reference.txt",
+        inbox_dir / "extracted-reference" / f"{Path(source_path).stem}.reference.txt",
+    ]
+    for candidate in candidates:
+        if _reference_matches_source(
+            candidate,
+            source_path=source_path,
+            source_content_hash=source_content_hash,
+        ):
+            return candidate
+    return None
 
 
 def discover_inbox_materials(inbox_dir: Path, *, root_dir: Path) -> dict[str, Any]:
@@ -95,7 +139,7 @@ def discover_inbox_materials(inbox_dir: Path, *, root_dir: Path) -> dict[str, An
             continue
         suffix = path.suffix.lower()
         rel_path = _relative(path, root_dir)
-        if "extracted-reference/" in rel_path and not rel_path.endswith(".reference.txt"):
+        if "extracted-reference/" in rel_path:
             ignored_items.append(
                 {
                     "source_path": rel_path,
@@ -118,11 +162,24 @@ def discover_inbox_materials(inbox_dir: Path, *, root_dir: Path) -> dict[str, An
         duplicate_of = seen_by_hash.get(content_hash)
         if duplicate_of is None:
             seen_by_hash[content_hash] = rel_path
-        extracted_reference_path = None if compiler_ready else _existing_extracted_reference_path(inbox_dir, rel_path)
+        extracted_reference_path = (
+            None
+            if compiler_ready
+            else _existing_extracted_reference_path(
+                inbox_dir,
+                rel_path,
+                source_content_hash=content_hash,
+            )
+        )
         extracted_reference_rel = (
             _relative(extracted_reference_path, root_dir)
             if not compiler_ready and extracted_reference_path is not None
             else ""
+        )
+        parser_plan = (
+            build_parser_plan(path)
+            if not compiler_ready and not extracted_reference_rel
+            else None
         )
         parse_status = (
             "compiler_ready"
@@ -148,12 +205,17 @@ def discover_inbox_materials(inbox_dir: Path, *, root_dir: Path) -> dict[str, An
                 "parser_hint": (
                     "hxy_text_compiler"
                     if compiler_ready
-                    else ("compiled_from_extracted_reference" if extracted_reference_rel else f"{_parser_strategy_for_suffix(suffix)}_required")
+                    else (
+                        "compiled_from_extracted_reference"
+                        if extracted_reference_rel
+                        else f"{str(parser_plan.get('primary') if parser_plan else _parser_strategy_for_suffix(suffix))}_required"
+                    )
                 ),
+                "parser_plan": parser_plan,
                 "duplicate_of": duplicate_of,
                 "canonical_source_path": duplicate_of or rel_path,
                 "official_use_allowed": False,
-                "requires_human_review": True,
+                "requires_human_review": bool((parser_plan or {}).get("requires_human_review")),
                 "risk_flags": [],
                 "artifact_refs": {"extracted_reference": extracted_reference_rel} if extracted_reference_rel else {},
                 "created_at": timestamp,
@@ -216,11 +278,17 @@ def _build_parser_jobs(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "source_type": task.get("source_type") or "file",
                 "suffix": suffix,
                 "content_hash": task.get("content_hash") or "",
-                "parser_strategy": _parser_strategy_for_suffix(suffix),
+                "parser_strategy": str(
+                    (task.get("parser_plan") or {}).get("primary")
+                    or _parser_strategy_for_suffix(suffix)
+                ),
+                "parser_fallbacks": list((task.get("parser_plan") or {}).get("fallbacks") or []),
+                "parser_plan": task.get("parser_plan") or {},
+                "preflight": dict((task.get("parser_plan") or {}).get("preflight") or {}),
                 "status": "PENDING",
                 "output_contract": "write extracted text/reference artifact, then rerun ingest loop",
                 "official_use_allowed": False,
-                "requires_human_review": True,
+                "requires_human_review": bool(task.get("requires_human_review")),
             }
         )
     return jobs
@@ -236,20 +304,46 @@ def run_ingest_loop(
     root_dir: Path,
 ) -> dict[str, Any]:
     discovery = discover_inbox_materials(raw_dir, root_dir=root_dir)
-    compiler_source_paths = [
-        root_dir / str(task["source_path"])
-        for task in discovery["items"]
-        if task.get("compiler_ready") and not task.get("duplicate_of")
-    ]
+    compiler_source_paths = []
+    for task in discovery["items"]:
+        if task.get("duplicate_of"):
+            continue
+        if task.get("compiler_ready"):
+            compiler_source_paths.append(root_dir / str(task["source_path"]))
+            continue
+        extracted_reference = str((task.get("artifact_refs") or {}).get("extracted_reference") or "")
+        if task.get("parse_status") == "extracted_reference_available" and extracted_reference:
+            compiler_source_paths.append(root_dir / extracted_reference)
     compiler_report = compile_directory(raw_dir, wiki_dir, source_paths=compiler_source_paths)
     _write_json(report_path, _public_compiler_report(compiler_report))
     parser_jobs = _build_parser_jobs(discovery["items"])
+    parser_exception_count = sum(
+        1
+        for task in discovery["items"]
+        if not task.get("duplicate_of") and bool(task.get("requires_human_review"))
+    )
+    promotion_review_pending = bool(
+        int(compiler_report.get("review_queue_count") or 0)
+        or int(compiler_report.get("compliance_review_count") or 0)
+    )
+    if parser_exception_count:
+        run_status = "review_required"
+        stop_reason = "parser_exception_requires_human"
+    elif parser_jobs:
+        run_status = "parsing_required"
+        stop_reason = "parser_jobs_pending"
+    elif promotion_review_pending:
+        run_status = "candidate_ready"
+        stop_reason = "candidate_knowledge_not_promoted"
+    else:
+        run_status = "completed"
+        stop_reason = "automated_ingest_complete"
 
     state = {
         "version": "hxy-ingest-loop-state.v1",
         "run_id": run_id,
-        "status": "review_required",
-        "stop_reason": "human_review_required",
+        "status": run_status,
+        "stop_reason": stop_reason,
         "task_count": discovery["count"],
         "unique_count": discovery["unique_count"],
         "duplicate_count": discovery["duplicate_count"],
@@ -259,6 +353,7 @@ def run_ingest_loop(
         "parsed_reference_count": discovery["parsed_reference_count"],
         "ignored_count": discovery["ignored_count"],
         "parser_job_count": len(parser_jobs),
+        "parser_exception_count": parser_exception_count,
         "extract_count": int(compiler_report.get("extract_count") or 0),
         "claim_count": int(compiler_report.get("claim_count") or 0),
         "review_queue_count": int(compiler_report.get("review_queue_count") or 0),
@@ -274,7 +369,7 @@ def run_ingest_loop(
                     "DUPLICATE"
                     if task.get("duplicate_of")
                     else (
-                        "REVIEWING"
+                        "COMPILED"
                         if task.get("compiler_ready")
                         else ("PARSED_REFERENCE_READY" if task.get("parse_status") == "extracted_reference_available" else "PARSING_REQUIRED")
                     )
@@ -297,8 +392,9 @@ def run_ingest_loop(
         "ignored_items": discovery["ignored_items"],
         "duplicate_groups": discovery["duplicate_groups"],
         "official_use_allowed": False,
-        "requires_human_review": True,
-        "authority_rule": "ingest_loop_outputs_are_candidates_until_human_review",
+        "requires_human_review": bool(parser_exception_count),
+        "promotion_review_pending": promotion_review_pending,
+        "authority_rule": "ingest_completion_does_not_promote_candidate_knowledge",
         "next_actions": [
             "在知识工作台复核 review queue。",
             "先解析 PDF/DOCX/PPTX/图片等非文本资料，再进入编译。",

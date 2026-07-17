@@ -1,9 +1,41 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import subprocess
 import sys
+
+
+def _hash_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _bind_reference_to_source(reference: Path, source: Path, source_path: str) -> None:
+    from hxy_knowledge.parser_adapter import reference_manifest_path
+
+    manifest_path = reference_manifest_path(reference)
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "version": "hxy-parser-reference.v1",
+                "source_path": source_path,
+                "source_content_hash": _hash_file(source),
+                "reference_content_hash": _hash_file(reference),
+                "parser": "markitdown",
+                "quality": {
+                    "version": "hxy-parser-quality.v1",
+                    "status": "usable",
+                    "needs_fallback": False,
+                    "source_path": source_path,
+                    "parser_strategy": "markitdown",
+                },
+                "official_use_allowed": False,
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_discover_inbox_materials_returns_hash_stable_tasks(tmp_path):
@@ -23,7 +55,7 @@ def test_discover_inbox_materials_returns_hash_stable_tasks(tmp_path):
     assert task["source_path"] == "knowledge/raw/inbox/brand.md"
     assert task["content_hash"]
     assert task["official_use_allowed"] is False
-    assert task["requires_human_review"] is True
+    assert task["requires_human_review"] is False
 
 
 def test_discover_inbox_materials_tracks_parse_readiness_and_ignores_scripts(tmp_path):
@@ -112,8 +144,10 @@ def test_run_ingest_loop_compiles_and_stops_at_review(tmp_path):
     )
 
     assert state["version"] == "hxy-ingest-loop-state.v1"
-    assert state["status"] == "review_required"
-    assert state["stop_reason"] == "human_review_required"
+    assert state["status"] == "candidate_ready"
+    assert state["stop_reason"] == "candidate_knowledge_not_promoted"
+    assert state["requires_human_review"] is False
+    assert state["promotion_review_pending"] is True
     assert state["official_use_allowed"] is False
     assert state["task_count"] == 1
     assert state["claim_count"] >= 1
@@ -156,7 +190,7 @@ def test_run_ingest_loop_separates_compiler_ready_and_parsing_required_tasks(tmp
     assert state["claim_count"] >= 1
 
     tasks = {item["source_path"]: item for item in state["tasks"]}
-    assert tasks["knowledge/raw/inbox/risk.md"]["status"] == "REVIEWING"
+    assert tasks["knowledge/raw/inbox/risk.md"]["status"] == "COMPILED"
     assert tasks["knowledge/raw/inbox/risk.md"]["compiler_ready"] is True
     assert tasks["knowledge/raw/inbox/finance.docx"]["status"] == "PARSING_REQUIRED"
     assert tasks["knowledge/raw/inbox/finance.docx"]["compiler_ready"] is False
@@ -197,7 +231,7 @@ def test_run_ingest_loop_skips_duplicate_text_compilation_and_builds_parser_jobs
     assert state["parsing_required_count"] == 3
 
     tasks = {item["source_path"]: item for item in state["tasks"]}
-    assert tasks["knowledge/raw/inbox/brand-a.md"]["status"] == "REVIEWING"
+    assert tasks["knowledge/raw/inbox/brand-a.md"]["status"] == "COMPILED"
     assert tasks["knowledge/raw/inbox/brand-b.md"]["status"] == "DUPLICATE"
     assert tasks["knowledge/raw/inbox/brand-b.md"]["artifact_refs"] == {}
     assert tasks["knowledge/raw/inbox/brand-b.md"]["duplicate_of"] == "knowledge/raw/inbox/brand-a.md"
@@ -209,6 +243,7 @@ def test_run_ingest_loop_skips_duplicate_text_compilation_and_builds_parser_jobs
     assert jobs["knowledge/raw/inbox/photo.png"]["parser_strategy"] == "ocr_or_vision"
     assert all(job["status"] == "PENDING" for job in state["parser_jobs"])
     assert all(job["official_use_allowed"] is False for job in state["parser_jobs"])
+    assert all(job["requires_human_review"] is False for job in state["parser_jobs"])
 
 
 def test_run_ingest_loop_compiles_extracted_reference_and_skips_completed_parser_job(tmp_path):
@@ -219,10 +254,12 @@ def test_run_ingest_loop_compiles_extracted_reference_and_skips_completed_parser
     report_path = tmp_path / "knowledge" / "reports" / "ingest-latest.json"
     runs_dir = tmp_path / "knowledge" / "runs"
     raw_dir.mkdir(parents=True)
-    (raw_dir / "plan.docx").write_bytes(b"PK placeholder")
+    source = raw_dir / "plan.docx"
+    source.write_bytes(b"PK placeholder")
     reference = raw_dir / "extracted-reference" / "knowledge" / "raw" / "inbox" / "plan.docx.reference.txt"
     reference.parent.mkdir(parents=True)
     reference.write_text("荷小悦 DOCX 解析文本。员工不能说治疗失眠。", encoding="utf-8")
+    _bind_reference_to_source(reference, source, "knowledge/raw/inbox/plan.docx")
 
     state = run_ingest_loop(
         raw_dir=raw_dir,
@@ -233,10 +270,10 @@ def test_run_ingest_loop_compiles_extracted_reference_and_skips_completed_parser
         root_dir=tmp_path,
     )
 
-    assert state["task_count"] == 2
+    assert state["task_count"] == 1
     assert state["parsed_reference_count"] == 1
     assert state["parser_job_count"] == 0
-    assert state["compiler_ready_unique_count"] == 1
+    assert state["compiler_ready_unique_count"] == 0
     assert state["extract_count"] == 1
     assert state["claim_count"] >= 1
 
@@ -246,11 +283,101 @@ def test_run_ingest_loop_compiles_extracted_reference_and_skips_completed_parser
     assert docx_task["parse_status"] == "extracted_reference_available"
     assert docx_task["artifact_refs"]["extracted_reference"].endswith("plan.docx.reference.txt")
 
-    reference_task = tasks[
-        "knowledge/raw/inbox/extracted-reference/knowledge/raw/inbox/plan.docx.reference.txt"
-    ]
-    assert reference_task["status"] == "REVIEWING"
-    assert reference_task["compiler_ready"] is True
+    assert all("extracted-reference/" not in path for path in tasks)
+
+
+def test_run_ingest_loop_rejects_reference_not_bound_to_current_source(tmp_path):
+    from hxy_knowledge.ingest_loop import run_ingest_loop
+
+    raw_dir = tmp_path / "knowledge" / "raw" / "inbox"
+    wiki_dir = tmp_path / "knowledge" / "wiki"
+    report_path = tmp_path / "knowledge" / "reports" / "ingest-latest.json"
+    runs_dir = tmp_path / "knowledge" / "runs"
+    raw_dir.mkdir(parents=True)
+    (raw_dir / "plan.docx").write_bytes(b"current source")
+    reference = raw_dir / "extracted-reference" / "knowledge" / "raw" / "inbox" / "plan.docx.reference.txt"
+    reference.parent.mkdir(parents=True)
+    reference.write_text("这是旧版本的解析文本，不应进入编译层。", encoding="utf-8")
+    from hxy_knowledge.parser_adapter import reference_manifest_path
+
+    manifest_path = reference_manifest_path(reference)
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "version": "hxy-parser-reference.v1",
+                "source_path": "knowledge/raw/inbox/plan.docx",
+                "source_content_hash": "0" * 64,
+                "reference_content_hash": "0" * 64,
+                "parser": "markitdown",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    state = run_ingest_loop(
+        raw_dir=raw_dir,
+        wiki_dir=wiki_dir,
+        report_path=report_path,
+        runs_dir=runs_dir,
+        run_id="ingest-loop-test",
+        root_dir=tmp_path,
+    )
+
+    tasks = {item["source_path"]: item for item in state["tasks"]}
+    source_task = tasks["knowledge/raw/inbox/plan.docx"]
+    assert source_task["status"] == "PARSING_REQUIRED"
+    assert source_task["parse_status"] == "external_parser_required"
+    assert source_task["artifact_refs"] == {}
+    assert state["parsed_reference_count"] == 0
+    assert state["parser_job_count"] == 1
+    assert state["extract_count"] == 0
+    assert all("extracted-reference/" not in path for path in tasks)
+
+
+def test_run_ingest_loop_rejects_reference_with_incomplete_quality_manifest(tmp_path):
+    from hxy_knowledge.ingest_loop import run_ingest_loop
+    from hxy_knowledge.parser_adapter import reference_manifest_path
+
+    raw_dir = tmp_path / "knowledge" / "raw" / "inbox"
+    wiki_dir = tmp_path / "knowledge" / "wiki"
+    report_path = tmp_path / "knowledge" / "reports" / "ingest-latest.json"
+    runs_dir = tmp_path / "knowledge" / "runs"
+    raw_dir.mkdir(parents=True)
+    source = raw_dir / "plan.docx"
+    source.write_bytes(b"current source")
+    source_path = "knowledge/raw/inbox/plan.docx"
+    reference = raw_dir / "extracted-reference" / f"{source_path}.reference.txt"
+    reference.parent.mkdir(parents=True)
+    reference.write_text("缺少质量证据的旧解析文本不能进入编译层。", encoding="utf-8")
+    manifest_path = reference_manifest_path(reference)
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "version": "hxy-parser-reference.v1",
+                "source_path": source_path,
+                "source_content_hash": _hash_file(source),
+                "reference_content_hash": _hash_file(reference),
+                "parser": "markitdown",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    state = run_ingest_loop(
+        raw_dir=raw_dir,
+        wiki_dir=wiki_dir,
+        report_path=report_path,
+        runs_dir=runs_dir,
+        run_id="incomplete-reference-manifest",
+        root_dir=tmp_path,
+    )
+
+    task = {item["source_path"]: item for item in state["tasks"]}[source_path]
+    assert task["parse_status"] == "external_parser_required"
+    assert state["parsed_reference_count"] == 0
+    assert state["extract_count"] == 0
 
 
 def test_run_ingest_loop_accepts_legacy_extracted_reference_location(tmp_path):
@@ -261,10 +388,12 @@ def test_run_ingest_loop_accepts_legacy_extracted_reference_location(tmp_path):
     report_path = tmp_path / "knowledge" / "reports" / "ingest-latest.json"
     runs_dir = tmp_path / "knowledge" / "runs"
     raw_dir.mkdir(parents=True)
-    (raw_dir / "deck.pdf").write_bytes(b"%PDF-1.4 placeholder")
+    source = raw_dir / "deck.pdf"
+    source.write_bytes(b"%PDF-1.4 placeholder")
     reference = raw_dir / "extracted-reference" / "deck.pdf.reference.txt"
     reference.parent.mkdir(parents=True)
     reference.write_text("荷小悦 PDF 解析文本。不能承诺治疗。", encoding="utf-8")
+    _bind_reference_to_source(reference, source, "knowledge/raw/inbox/deck.pdf")
 
     state = run_ingest_loop(
         raw_dir=raw_dir,
@@ -292,10 +421,12 @@ def test_run_ingest_loop_accepts_legacy_stem_extracted_reference_location(tmp_pa
     report_path = tmp_path / "knowledge" / "reports" / "ingest-latest.json"
     runs_dir = tmp_path / "knowledge" / "runs"
     raw_dir.mkdir(parents=True)
-    (raw_dir / "deck.pdf").write_bytes(b"%PDF-1.4 placeholder")
+    source = raw_dir / "deck.pdf"
+    source.write_bytes(b"%PDF-1.4 placeholder")
     reference = raw_dir / "extracted-reference" / "deck.reference.txt"
     reference.parent.mkdir(parents=True)
     reference.write_text("荷小悦 PDF 解析文本。不能承诺治疗。", encoding="utf-8")
+    _bind_reference_to_source(reference, source, "knowledge/raw/inbox/deck.pdf")
 
     state = run_ingest_loop(
         raw_dir=raw_dir,
@@ -324,10 +455,12 @@ def test_run_ingest_loop_does_not_create_reference_of_reference_tasks(tmp_path):
     runs_dir = tmp_path / "knowledge" / "runs"
     raw_dir.mkdir(parents=True)
     long_name = f"{'荷小悦品牌资产参考书' * 8}.epub"
-    (raw_dir / long_name).write_bytes(b"epub placeholder")
+    source = raw_dir / long_name
+    source.write_bytes(b"epub placeholder")
     reference = raw_dir / "extracted-reference" / f"{Path(long_name).stem}.reference.txt"
     reference.parent.mkdir(parents=True)
     reference.write_text("荷小悦参考书解析文本。不能承诺治疗。", encoding="utf-8")
+    _bind_reference_to_source(reference, source, f"knowledge/raw/inbox/{long_name}")
 
     state = run_ingest_loop(
         raw_dir=raw_dir,
@@ -338,15 +471,13 @@ def test_run_ingest_loop_does_not_create_reference_of_reference_tasks(tmp_path):
         root_dir=tmp_path,
     )
 
-    assert state["task_count"] == 2
+    assert state["task_count"] == 1
     assert state["parser_job_count"] == 0
     assert all(
         not item["source_path"].endswith(".reference.txt.reference.txt")
         for item in state["tasks"]
     )
-    assert f"knowledge/raw/inbox/extracted-reference/{Path(long_name).stem}.reference.txt" in {
-        item["source_path"] for item in state["tasks"]
-    }
+    assert all("extracted-reference/" not in item["source_path"] for item in state["tasks"])
 
 
 def test_run_ingest_loop_ignores_parser_run_manifest_in_extracted_reference(tmp_path):
@@ -373,6 +504,47 @@ def test_run_ingest_loop_ignores_parser_run_manifest_in_extracted_reference(tmp_
     assert state["parser_job_count"] == 0
     assert state["ignored_count"] == 1
     assert state["ignored_items"][0]["source_path"] == "knowledge/raw/inbox/extracted-reference/parser-run-manifest.json"
+
+
+def test_discovery_routes_all_supported_image_suffixes_consistently(tmp_path):
+    from hxy_knowledge.ingest_loop import discover_inbox_materials
+
+    inbox = tmp_path / "knowledge" / "raw" / "inbox"
+    inbox.mkdir(parents=True)
+    suffixes = [".jpeg", ".jpg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff"]
+    for index, suffix in enumerate(suffixes):
+        (inbox / f"image-{index}{suffix}").write_bytes(f"image-{index}".encode("ascii"))
+
+    discovery = discover_inbox_materials(inbox, root_dir=tmp_path)
+
+    assert discovery["count"] == len(suffixes)
+    assert discovery["ignored_count"] == 0
+    assert {item["suffix"] for item in discovery["items"]} == set(suffixes)
+    assert all(item["parser_plan"]["primary"] == "ocr_or_vision" for item in discovery["items"])
+    assert all(item["requires_human_review"] is False for item in discovery["items"])
+
+
+def test_run_ingest_loop_requires_human_only_for_manual_parser_exception(tmp_path):
+    from hxy_knowledge.ingest_loop import run_ingest_loop
+
+    raw_dir = tmp_path / "knowledge" / "raw" / "inbox"
+    raw_dir.mkdir(parents=True)
+    (raw_dir / "legacy.ppt").write_bytes(b"legacy presentation")
+
+    state = run_ingest_loop(
+        raw_dir=raw_dir,
+        wiki_dir=tmp_path / "knowledge" / "wiki",
+        report_path=tmp_path / "knowledge" / "reports" / "ingest-latest.json",
+        runs_dir=tmp_path / "knowledge" / "runs",
+        run_id="manual-exception",
+        root_dir=tmp_path,
+    )
+
+    assert state["status"] == "review_required"
+    assert state["stop_reason"] == "parser_exception_requires_human"
+    assert state["requires_human_review"] is True
+    assert state["tasks"][0]["requires_human_review"] is True
+    assert state["parser_jobs"][0]["requires_human_review"] is True
 
 
 def test_ingest_loop_cli_writes_state(tmp_path):
@@ -406,4 +578,4 @@ def test_ingest_loop_cli_writes_state(tmp_path):
 
     assert result.returncode == 0, result.stderr
     state = json.loads((runs_dir / "ingest-loop-test" / "loop-state.json").read_text(encoding="utf-8"))
-    assert state["status"] == "review_required"
+    assert state["status"] == "completed"

@@ -36,6 +36,20 @@ import pytest
             },
         ),
         (
+            "荷小悦资料/09_知识库与参考资料/行业文章/batch_download.py",
+            {
+                "material_class": "tool_artifact",
+                "retrieval_state": "excluded",
+            },
+        ),
+        (
+            "荷小悦资料/09_知识库与参考资料/营销类书籍/desktop.ini",
+            {
+                "material_class": "tool_artifact",
+                "retrieval_state": "excluded",
+            },
+        ),
+        (
             "荷小悦资料/06_融资商务/融资_荷小悦股东合作协议_20260605.docx",
             {
                 "material_class": "internal_record",

@@ -37,6 +37,7 @@ _FOUNDER_ONLY_SIGNALS = (
     "收购方",
 )
 _RESTRICTED_SIGNALS = ("报价", "合同", "协议", "法务", "融资", "分账", "支付")
+_TOOL_SUFFIXES = {".bat", ".cmd", ".ini", ".ps1", ".py", ".sh"}
 
 
 def _normalized_path(value: str) -> str:
@@ -103,13 +104,14 @@ def classify_source_path(source_path: str) -> dict[str, Any]:
         derivation = "extracted_copy"
         confidence = "high"
         reasons.append("material_class:extracted-reference")
-    elif "/scripts/" in f"/{path}" or (
-        path.startswith("荷小悦资料/scripts/")
-        and PurePosixPath(path).suffix.lower() in {".py", ".html", ".json"}
+    elif (
+        PurePosixPath(path).suffix.lower() in _TOOL_SUFFIXES
+        or "/scripts/" in f"/{path}"
+        or path.startswith("荷小悦资料/scripts/")
     ):
         material_class = "tool_artifact"
         confidence = "high"
-        reasons.append("material_class:tool-directory")
+        reasons.append("material_class:tool-file-or-directory")
     elif name in _COMPLIANCE_CANDIDATES and "09_风险与合规" in path:
         material_class = "internal_project"
         lifecycle = "current_candidate"

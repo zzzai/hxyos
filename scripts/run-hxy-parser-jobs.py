@@ -20,7 +20,7 @@ def main() -> int:
     parser.add_argument("--state", default="knowledge/runs/ingest-loop-latest/loop-state.json")
     parser.add_argument("--output-dir", default="knowledge/raw/inbox/extracted-reference")
     parser.add_argument("--root-dir", default=".")
-    parser.add_argument("--strategy", action="append", default=["markitdown"])
+    parser.add_argument("--strategy", action="append")
     parser.add_argument("--timeout-seconds", type=int, default=120)
     args = parser.parse_args()
 
@@ -32,7 +32,7 @@ def main() -> int:
         parser_jobs,
         root_dir=root_dir,
         output_dir=(root_dir / args.output_dir).resolve(),
-        strategies=set(args.strategy),
+        strategies=set(args.strategy) if args.strategy else None,
         timeout_seconds=args.timeout_seconds,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
