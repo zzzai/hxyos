@@ -5,7 +5,11 @@ from typing import Any
 
 import pytest
 
-from apps.api.hxy_knowledge.answer_engine import build_task_intent_answer, classify_task_intent
+from apps.api.hxy_knowledge.answer_engine import (
+    build_task_intent_answer,
+    classify_intent,
+    classify_task_intent,
+)
 from apps.api.hxy_knowledge.answer_service import AnswerServiceHooks, generate_answer
 from apps.api.hxy_knowledge_api import _classify_frontdoor
 from apps.api.hxy_product.conversation_routes import _role_result_envelope
@@ -63,6 +67,43 @@ def test_capability_equivalents_route_deterministically(question: str) -> None:
 
 def test_business_question_is_not_mistaken_for_system_capability() -> None:
     assert classify_task_intent("泡脚能做什么？") is None
+
+
+def test_medical_efficacy_question_routes_to_risk_boundary() -> None:
+    assert classify_intent("泡脚能治疗失眠吗？") == ("risk_boundary", "compliance")
+
+
+def test_first_store_opening_priority_routes_to_operations_without_model() -> None:
+    question = "首店开业前当前最应该先做什么？"
+    rule_intent, rule_audience = classify_intent(question)
+    router = _Router(failure=AssertionError("clear opening operations question must not call a model"))
+
+    result = _classify_frontdoor(
+        model_router=router,
+        question=question,
+        scenario="创始人内部决策",
+        rule_intent=rule_intent,
+        rule_audience=rule_audience,
+        rule_task_intent=None,
+    )
+
+    assert (rule_intent, rule_audience) == ("operations", "operations")
+    assert result["intent"] == "operations"
+    assert router.generated == []
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        ("首店开业前选址要看哪些参数？", ("store_model", "founder")),
+        ("首店开业前需要准备多少投资？", ("finance", "founder")),
+    ],
+)
+def test_first_store_opening_keeps_explicit_specialist_domain(
+    question: str,
+    expected: tuple[str, str],
+) -> None:
+    assert classify_intent(question) == expected
 
 
 @pytest.mark.parametrize(
@@ -210,6 +251,12 @@ def test_capability_answer_skips_private_knowledge_and_review_creation() -> None
     serialized = json.dumps(result, ensure_ascii=False)
     for forbidden in ("selected_model", "token", "frontdoor_classification", "model_route"):
         assert forbidden not in serialized
+
+
+def test_founder_can_start_reception_practice() -> None:
+    result = build_task_intent_answer("training", role="founder")
+
+    assert [item["type"] for item in result["actions"]] == ["training"]
 
 
 def test_product_envelope_keeps_only_actions_allowed_for_the_role() -> None:

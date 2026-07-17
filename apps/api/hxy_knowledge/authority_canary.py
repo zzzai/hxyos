@@ -13,6 +13,42 @@ MODEL_CANARY_ROUTES = (
 BOUNDARY_MARKERS = ("不能", "不得", "不替代", "不能替代", "因人而异", "建议咨询")
 
 
+def build_core_10_request_payload(
+    case: dict[str, Any],
+    *,
+    source_asset_id: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "question": str(case.get("question") or ""),
+        "scenario": "HXYOS Core-10 canary",
+    }
+    source_context = case.get("source_context")
+    if isinstance(source_context, dict) and source_context.get("required") is True:
+        asset_id = str(source_asset_id or "").strip()
+        if not asset_id:
+            raise ValueError("source_asset_id is required for this Core-10 case")
+        payload["source_asset_id"] = asset_id
+    return payload
+
+
+def select_source_asset_id(
+    assets: list[dict[str, Any]],
+    source_context: dict[str, Any],
+) -> str:
+    expected_origin = str(source_context.get("source_origin") or "").strip()
+    expected_authority = str(source_context.get("source_authority") or "").strip()
+    for asset in assets:
+        asset_id = str(asset.get("asset_id") or "").strip()
+        if not asset_id:
+            continue
+        if expected_origin and str(asset.get("source_origin") or "") != expected_origin:
+            continue
+        if expected_authority and str(asset.get("source_authority") or "") != expected_authority:
+            continue
+        return asset_id
+    raise ValueError("no database source asset matches the Core-10 source context")
+
+
 def _usage_tokens(response: dict[str, Any]) -> tuple[int, int]:
     generation = response.get("model_generation")
     usage = generation.get("usage") if isinstance(generation, dict) else None
@@ -30,6 +66,9 @@ def _usage_tokens(response: dict[str, Any]) -> tuple[int, int]:
 
 
 def _authority_provenance(response: dict[str, Any]) -> str:
+    explicit = str(response.get("authority_provenance") or "")
+    if explicit:
+        return explicit
     if response.get("from_brand_constitution") is True:
         return "brand_constitution"
     if response.get("from_answer_card") is True:
@@ -40,6 +79,8 @@ def _authority_provenance(response: dict[str, Any]) -> str:
     if task_intent:
         return "workflow_catalog"
     authority_source = str(response.get("authority_source") or "")
+    if authority_source == "system_policy":
+        return "system_policy"
     if authority_source in {"official_internal", "internal_material", "external_reference"}:
         return "source_record"
     return "no_evidence"

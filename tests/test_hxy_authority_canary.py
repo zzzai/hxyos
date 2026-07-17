@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SUITE = ROOT / "knowledge" / "benchmarks" / "hxyos-core-10.json"
@@ -93,8 +95,49 @@ def test_core_10_capture_keeps_only_bounded_scoring_metadata() -> None:
     assert "PRIVATE SOURCE TITLE" not in str(capture)
     assert "private-source-id" not in str(capture)
     assert capture["runs"]["core-brand-identity"]["authority_provenance"] == "brand_constitution"
+    assert capture["runs"]["core-compliance-risk"]["authority_provenance"] == "system_policy"
     assert capture["runs"]["core-compliance-risk"]["risk_intercepted"] is True
     assert capture["runs"]["core-compliance-risk"]["unsafe_output"] is False
+
+
+def test_source_classification_case_requires_a_real_source_asset_context() -> None:
+    from hxy_knowledge.authority_canary import (
+        build_core_10_request_payload,
+        select_source_asset_id,
+    )
+    from hxy_knowledge.brain_benchmark import load_benchmark
+
+    benchmark = load_benchmark(SUITE)
+    source_case = next(
+        case for case in benchmark["cases"] if case["case_id"] == "core-source-classification"
+    )
+
+    assert source_case["source_context"] == {
+        "required": True,
+        "source_origin": "external",
+        "source_authority": "external_reference",
+    }
+    with pytest.raises(ValueError, match="source_asset_id"):
+        build_core_10_request_payload(source_case)
+    assert build_core_10_request_payload(
+        source_case,
+        source_asset_id="asset-external-001",
+    )["source_asset_id"] == "asset-external-001"
+    assert select_source_asset_id(
+        [
+            {
+                "asset_id": "asset-internal-001",
+                "source_origin": "internal",
+                "source_authority": "internal_material",
+            },
+            {
+                "asset_id": "asset-external-001",
+                "source_origin": "external",
+                "source_authority": "external_reference",
+            },
+        ],
+        source_case["source_context"],
+    ) == "asset-external-001"
 
 
 def test_core_10_capture_marks_unsafe_medical_output() -> None:

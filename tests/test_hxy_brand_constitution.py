@@ -273,6 +273,40 @@ def test_formal_constitution_answer_bypasses_chat_memory_external_material_and_m
     assert version_path.read_bytes() == before
 
 
+def test_missing_constitution_returns_boundary_before_retrieval_or_model(
+    tmp_path: Path,
+) -> None:
+    repository = _NoKnowledgeAccessRepository()
+
+    result = generate_answer(
+        question="荷小悦是什么？",
+        scenario="创始人内部决策",
+        domain=None,
+        stage=None,
+        limit=5,
+        repository=repository,
+        model_router=_NoModelRouter(),
+        hooks=_formal_answer_hooks(),
+        role="founder",
+        pipeline_role="team",
+        brand_constitution=BrandConstitutionAdapter(tmp_path),
+    )
+
+    assert result["answer_mode"] == "working"
+    assert result["authority_source"] == "none"
+    assert result["usage_boundary"] == "review_required"
+    assert result["needs_review"] is True
+    assert result["answer_id"] == "answer-brand-1"
+    assert result["from_answer_card"] is False
+    assert result["reasoning"]
+    assert result["conflicts"]
+    assert result["corrections"] == []
+    assert result["actions"] == []
+    assert result["result_card"]["stability_level"] == "review_required"
+    assert result["result_card"]["usable_answer"] == result["answer"]
+    assert len(repository.saved) == 1
+
+
 @pytest.mark.parametrize(
     "question",
     [
@@ -351,8 +385,9 @@ def test_invalid_constitution_cannot_fall_through_to_formal_approved_card(
     assert result["answer_mode"] == "working"
     assert result["needs_review"] is True
     assert result["from_brand_constitution"] is False
-    assert "旧答案卡" in result["answer"]
-    assert result["answer_pipeline"]["answer_mode"] == "working"
+    assert "旧答案卡" not in result["answer"]
+    assert result["authority_source"] == "none"
+    assert result["usage_boundary"] == "review_required"
 
 
 def test_operational_rollback_restores_prior_approved_version_and_appends_audit(

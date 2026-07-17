@@ -14,7 +14,12 @@ API_ROOT = ROOT / "apps" / "api"
 if str(API_ROOT) not in sys.path:
     sys.path.insert(0, str(API_ROOT))
 
-from hxy_knowledge.authority_canary import capture_core_10_runs, run_model_route_canary  # noqa: E402
+from hxy_knowledge.authority_canary import (  # noqa: E402
+    build_core_10_request_payload,
+    capture_core_10_runs,
+    run_model_route_canary,
+    select_source_asset_id,
+)
 from hxy_knowledge.brain_benchmark import build_core_10_report, load_benchmark  # noqa: E402
 from hxy_knowledge.model_router import ModelRouter  # noqa: E402
 
@@ -31,12 +36,33 @@ def _api_answer_client(base_url: str, api_token: str):
     except ImportError as exc:  # pragma: no cover - runtime dependency guard
         raise RuntimeError("httpx is required for the API canary") from exc
     client = httpx.Client(base_url=base_url.rstrip("/"), timeout=60)
+    source_assets: list[dict[str, Any]] | None = None
+
+    def resolve_source_asset_id(source_context: dict[str, Any]) -> str:
+        nonlocal source_assets
+        if source_assets is None:
+            response = client.get(
+                "/api/knowledge/assets",
+                headers={"Authorization": f"Bearer {api_token}"},
+                params={"limit": 500},
+            )
+            response.raise_for_status()
+            payload = response.json()
+            items = payload.get("items") if isinstance(payload, dict) else None
+            if not isinstance(items, list):
+                raise ValueError("knowledge assets returned a non-list payload")
+            source_assets = [item for item in items if isinstance(item, dict)]
+        return select_source_asset_id(source_assets, source_context)
 
     def request(case: dict[str, Any]) -> dict[str, Any]:
+        source_context = case.get("source_context")
+        source_asset_id = None
+        if isinstance(source_context, dict) and source_context.get("required") is True:
+            source_asset_id = resolve_source_asset_id(source_context)
         response = client.post(
             "/api/knowledge/chat",
             headers={"Authorization": f"Bearer {api_token}"},
-            json={"question": str(case.get("question") or ""), "scenario": "HXYOS Core-10 canary"},
+            json=build_core_10_request_payload(case, source_asset_id=source_asset_id),
         )
         response.raise_for_status()
         payload = response.json()

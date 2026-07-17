@@ -194,6 +194,30 @@ def build_search_query(
     return sql, params
 
 
+def build_source_evidence_query(asset_id: str, limit: int = 20) -> tuple[str, list[Any]]:
+    sql = """
+        SELECT c.chunk_id, c.asset_id, c.title, c.source_path, c.normalized_path,
+               c.domain, c.stage, c.content,
+               a.asset_id AS source_id,
+               a.source_origin AS source_origin,
+               a.source_origin AS origin,
+               a.source_authority AS source_authority,
+               a.source_authority AS authority_source,
+               a.authority_version AS authority_version,
+               TRUE AS authority_recorded,
+               COALESCE(NULLIF(c.metadata_json->>'source_type', ''), NULLIF(a.metadata_json->>'source_type', '')) AS source_type,
+               COALESCE(NULLIF(c.metadata_json->>'status', ''), NULLIF(a.metadata_json->>'status', ''), a.status) AS status,
+               FALSE AS official_use_allowed,
+               100 AS score
+        FROM hxy_knowledge_chunks c
+        JOIN hxy_knowledge_assets a ON a.asset_id = c.asset_id
+        WHERE c.asset_id = %s
+        ORDER BY c.chunk_index ASC, c.updated_at DESC
+        LIMIT %s
+    """
+    return sql, [asset_id, limit]
+
+
 def normalize_review_question(question: str) -> str:
     stop_chars = "，。！？?；;：:、（）()[]【】\"'“”‘’"
     normalized = question or ""
@@ -565,7 +589,8 @@ class KnowledgeRepository:
                 """
                 SELECT asset_id, title, file_name, source_path, domain, stage, status,
                        quality_score::float, quality_grade, quality_scores_json,
-                       normalized_path, updated_at
+                       normalized_path, source_origin, source_authority,
+                       authority_version, updated_at
                 FROM hxy_knowledge_assets
                 ORDER BY updated_at DESC
                 LIMIT %s
@@ -582,6 +607,11 @@ class KnowledgeRepository:
         domain_hint: str | None = None,
     ) -> list[dict[str, Any]]:
         sql, params = build_search_query(query, domain=domain, stage=stage, limit=limit, domain_hint=domain_hint)
+        with self.connect() as conn:
+            return conn.execute(sql, params).fetchall()
+
+    def source_evidence(self, asset_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        sql, params = build_source_evidence_query(asset_id, limit=limit)
         with self.connect() as conn:
             return conn.execute(sql, params).fetchall()
 

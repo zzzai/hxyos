@@ -178,7 +178,12 @@ def _has_unapproved_reference_evidence(evidence: list[dict[str, Any]]) -> bool:
     for item in evidence:
         if _is_process_memory_evidence(item):
             continue
-        if evidence_authority_source(item) in {"approved_answer_card", "official_internal", "internal_material"}:
+        if evidence_authority_source(item) in {
+            "approved_answer_card",
+            "official_internal",
+            "internal_material",
+            "system_policy",
+        }:
             continue
         status = str(item.get("status") or "").lower()
         stage = str(item.get("stage") or "").lower()
@@ -202,6 +207,8 @@ def _evidence_sources(evidence: list[dict[str, Any]], from_answer_card: bool) ->
     sources: list[str] = []
     if from_answer_card:
         sources.append("权威答案卡")
+    if any(evidence_authority_source(item) == "system_policy" for item in evidence):
+        sources.append("系统安全策略")
     domains = {str(item.get("domain") or "") for item in evidence if item.get("domain")}
     if any(_is_process_memory_evidence(item) for item in evidence):
         sources.append("过程记忆")
@@ -251,17 +258,19 @@ def _guardrail_result(
     risk_flags: list[str],
     from_answer_card: bool,
     evidence_has_conflict: bool = False,
+    trusted_system_policy: bool = False,
 ) -> dict[str, Any]:
     findings: list[str] = []
     if "source_path" in answer or "chunk_id" in answer or "knowledge/raw" in answer:
         findings.append("技术痕迹")
-    overclaim_hits = _overclaim_hits(answer)
-    if overclaim_hits:
-        findings.append(f"高风险表达：{'、'.join(overclaim_hits)}")
-    compliance_hits = check_brand_risk_text(answer).get("hits") or []
-    compliance_words = [word for hit in compliance_hits for word in (hit.get("words") or [])]
-    if compliance_words:
-        findings.append(f"高风险表达：{'、'.join(compliance_words)}")
+    if not trusted_system_policy:
+        overclaim_hits = _overclaim_hits(answer)
+        if overclaim_hits:
+            findings.append(f"高风险表达：{'、'.join(overclaim_hits)}")
+        compliance_hits = check_brand_risk_text(answer).get("hits") or []
+        compliance_words = [word for hit in compliance_hits for word in (hit.get("words") or [])]
+        if compliance_words:
+            findings.append(f"高风险表达：{'、'.join(compliance_words)}")
     if evidence_has_conflict:
         findings.append("证据冲突")
     if policy_action != "answer":
@@ -317,14 +326,25 @@ def build_answer_pipeline(
     evidence_has_conflict = _has_conflicting_evidence(evidence)
     reference_only = _has_reference_only_evidence(evidence, from_answer_card)
     process_memory_only = bool(evidence) and all(_is_process_memory_evidence(item) for item in evidence)
+    system_policy_boundary = (
+        model_route.get("task_type") == "deterministic_risk_boundary"
+        and bool(evidence)
+        and all(evidence_authority_source(item) == "system_policy" for item in evidence)
+    )
+    if system_policy_boundary:
+        risk_flags = []
     if evidence_has_conflict and "证据冲突" not in risk_flags:
         risk_flags.append("证据冲突")
-    policy_action = _policy_action(
-        evidence=evidence,
-        confidence=confidence,
-        needs_review=needs_review,
-        from_answer_card=from_answer_card,
-        risk_flags=risk_flags,
+    policy_action = (
+        "answer"
+        if system_policy_boundary
+        else _policy_action(
+            evidence=evidence,
+            confidence=confidence,
+            needs_review=needs_review,
+            from_answer_card=from_answer_card,
+            risk_flags=risk_flags,
+        )
     )
     evidence_sources = _evidence_sources(evidence, from_answer_card)
     guardrail = _guardrail_result(
@@ -333,6 +353,7 @@ def build_answer_pipeline(
         risk_flags=risk_flags,
         from_answer_card=from_answer_card,
         evidence_has_conflict=evidence_has_conflict,
+        trusted_system_policy=system_policy_boundary,
     )
     authority_contract = classify_answer_authority(
         evidence=evidence,
@@ -340,15 +361,19 @@ def build_answer_pipeline(
         requires_review=policy_action != "answer",
     )
     answer_type = (
-        "authority_answer"
-        if from_answer_card
+        "safety_boundary"
+        if system_policy_boundary
         else (
-            "insufficient_answer"
-            if policy_action == "needs_review" and confidence == "low" and not reference_only
+            "authority_answer"
+            if from_answer_card
             else (
-                "context_draft"
-                if policy_action == "needs_review" and process_memory_only
-                else ("reference_draft" if policy_action == "needs_review" and reference_only else "rag_answer")
+                "insufficient_answer"
+                if policy_action == "needs_review" and confidence == "low" and not reference_only
+                else (
+                    "context_draft"
+                    if policy_action == "needs_review" and process_memory_only
+                    else ("reference_draft" if policy_action == "needs_review" and reference_only else "rag_answer")
+                )
             )
         )
     )

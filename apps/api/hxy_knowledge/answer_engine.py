@@ -42,6 +42,55 @@ BRAND_IDENTITY_QUESTIONS = {
     "荷小悦品牌是什么",
 }
 
+RISK_BOUNDARY_TERMS = (
+    "治疗",
+    "治愈",
+    "疗效",
+    "保证有效",
+    "肯定有效",
+    "一定有效",
+    "药到病除",
+    "排毒治病",
+    "替代医疗",
+    "保证回本",
+    "稳赚",
+    "一定回本",
+    "绝对有效",
+)
+
+OPENING_OPERATIONS_TERMS = ("首店开业", "开业前", "开业准备")
+OPENING_OPERATIONS_ACTION_TERMS = (
+    "当前最应该",
+    "先做",
+    "准备",
+    "推进",
+    "待办",
+    "任务",
+    "流程",
+    "演练",
+)
+OPENING_SPECIALIST_TERMS = (
+    "品牌定位",
+    "核爆点",
+    "产品体系",
+    "清泡调补养",
+    "泡脚方",
+    "门店模型",
+    "小店模型",
+    "单店模型",
+    "选址",
+    "面积",
+    "坪效",
+    "财务",
+    "回本",
+    "roi",
+    "投资",
+    "利润",
+    "营收",
+    "加盟",
+    "招商",
+)
+
 
 def decode_legacy_entities(value: str) -> str:
     decoded = re.sub(r"\\([&#])", r"\1", value or "")
@@ -162,8 +211,16 @@ def has_metadata_noise(text: str) -> bool:
 
 def classify_intent(question: str, items: list[dict[str, Any]] | None = None) -> tuple[str, str]:
     lowered = question.lower()
+    if any(term in lowered for term in RISK_BOUNDARY_TERMS):
+        return "risk_boundary", "compliance"
     if is_brand_identity_question(question):
         return "brand_positioning", "brand"
+    if (
+        any(term in lowered for term in OPENING_OPERATIONS_TERMS)
+        and any(term in lowered for term in OPENING_OPERATIONS_ACTION_TERMS)
+        and not any(term in lowered for term in OPENING_SPECIALIST_TERMS)
+    ):
+        return "operations", "operations"
     for intent, audience, keywords in INTENT_RULES:
         if any(keyword.lower() in lowered for keyword in keywords):
             return intent, audience
@@ -303,7 +360,7 @@ def build_task_intent_answer(task_intent: str, *, role: str) -> dict[str, Any]:
             answer = "我可以帮你处理当前权限内的系统问题。直接说现在要做什么。"
             actions = []
     elif task_intent == "training":
-        if role_key == "store_staff":
+        if role_key in {"store_staff", "founder"}:
             answer = "现在开始。我会扮演顾客追问，你按真实接待方式回答。"
             actions = [{"type": "training", "label": "开始练接待"}]
         else:
@@ -372,6 +429,8 @@ def build_evidence(items: list[dict[str, Any]], intent: str = "knowledge_lookup"
                 "domain": item.get("domain"),
                 "authority_source": item.get("authority_source"),
                 "source_authority": item.get("source_authority"),
+                "authority_version": item.get("authority_version"),
+                "authority_recorded": item.get("authority_recorded"),
                 "official_use_allowed": item.get("official_use_allowed"),
                 "stage": item.get("stage"),
                 "status": item.get("status"),
@@ -452,6 +511,25 @@ def build_next_actions(intent: str, confidence: str, conflicts: list[str], scena
     if confidence == "low":
         result.append("低置信度回答需要人工复核")
     return result
+
+
+def build_typed_actions(intent: str) -> list[dict[str, str]]:
+    if intent == "operations":
+        return [{"type": "tasks", "label": "转为下一项任务"}]
+    return []
+
+
+def build_deterministic_risk_boundary_answer(question: str) -> str:
+    if any(term in question for term in ("回本", "盈利", "收益", "稳赚")):
+        return (
+            "不能承诺稳赚、保证回本或确定收益。"
+            "经营结果取决于选址、客流、交付、成本和执行条件，必须基于真实数据说明假设和风险。"
+        )
+    return (
+        "不能把泡脚表述为能够治疗失眠、治愈疾病或保证疗效。"
+        "泡脚可以作为放松体验，但不能替代医疗诊断或治疗；"
+        "如果长期失眠或身体不适，建议咨询医疗专业人员。"
+    )
 
 
 def usage_for(intent: str, scenario: str) -> str:
@@ -1222,5 +1300,6 @@ def synthesize_answer(question: str, query: str, items: list[dict[str, Any]], sc
         "corrections": corrections,
         "confidence": confidence,
         "next_actions": next_actions,
+        "actions": build_typed_actions(intent),
         "needs_review": needs_review,
     }

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from .answer_engine import (
+    build_deterministic_risk_boundary_answer,
     build_result_card,
     build_task_intent_answer,
     classify_intent,
@@ -11,7 +12,12 @@ from .answer_engine import (
     synthesize_answer,
 )
 from .brand_constitution import BrandConstitutionAdapter
-from .reliability import insufficient_answer, is_process_memory_evidence, score_answer_quality
+from .reliability import (
+    evidence_authority_source,
+    insufficient_answer,
+    is_process_memory_evidence,
+    score_answer_quality,
+)
 from .thinking_lenses import apply_thinking_lenses
 from .understanding_engine import understand_text
 
@@ -33,7 +39,14 @@ def _apply_authority_contract(answer: dict[str, Any]) -> dict[str, Any]:
     pipeline = answer.get("answer_pipeline")
     if not isinstance(pipeline, dict):
         return answer
-    for field in ["answer_mode", "authority_source", "usage_boundary", "citations", "context_metadata"]:
+    for field in [
+        "answer_mode",
+        "authority_source",
+        "authority_provenance",
+        "usage_boundary",
+        "citations",
+        "context_metadata",
+    ]:
         if field in pipeline:
             answer[field] = pipeline[field]
     for field in ["evidence", "sources"]:
@@ -45,43 +58,6 @@ def _apply_authority_contract(answer: dict[str, Any]) -> dict[str, Any]:
         answer["needs_review"] = True
         if answer.get("answer_status") != "资料不足":
             answer["answer_status"] = "待复核"
-    return answer
-
-
-def _apply_brand_constitution_boundary(
-    answer: dict[str, Any],
-    boundary: dict[str, Any] | None,
-) -> dict[str, Any]:
-    if not boundary or boundary.get("answer_mode") != "working":
-        return answer
-    answer.update(
-        {
-            "answer_mode": "working",
-            "authority_source": "none",
-            "usage_boundary": "review_required",
-            "answer_status": "待复核",
-            "needs_review": True,
-            "from_brand_constitution": False,
-            "constitution_status": boundary.get("constitution_status") or "unavailable",
-        }
-    )
-    pipeline = answer.get("answer_pipeline")
-    if isinstance(pipeline, dict):
-        pipeline.update(
-            {
-                "answer_mode": "working",
-                "authority_source": "none",
-                "usage_boundary": "review_required",
-            }
-        )
-        policy = pipeline.get("policy_decision")
-        if isinstance(policy, dict):
-            policy["action"] = "needs_review"
-            policy["reason"] = "品牌宪法缺失、失效或完整性校验失败。"
-    result_card = answer.get("result_card")
-    if isinstance(result_card, dict):
-        result_card["stability_level"] = "review_required"
-        result_card["risk_boundary"] = "当前品牌口径未由有效品牌宪法授权，只能内部参考。"
     return answer
 
 
@@ -98,6 +74,7 @@ def generate_answer(
     role: str = "founder",
     pipeline_role: str = "team",
     brand_constitution: BrandConstitutionAdapter | None = None,
+    source_asset_id: str | None = None,
 ) -> dict[str, Any]:
     """Generate and persist one governed answer without binding to an HTTP framework."""
     rule_task_intent = classify_task_intent(question)
@@ -119,7 +96,6 @@ def generate_answer(
     }:
         return build_task_intent_answer(resolved_task_intent, role=role)
 
-    constitution_boundary: dict[str, Any] | None = None
     if brand_constitution is not None and brand_constitution.covers_question(question):
         constitution_answer = brand_constitution.answer_for_brand_identity(role=role)
         if constitution_answer.get("answer_mode") == "formal":
@@ -135,7 +111,33 @@ def generate_answer(
             answer_id = repository.save_answer_run(constitution_answer)
             constitution_answer["answer_id"] = answer_id
             return constitution_answer
-        constitution_boundary = constitution_answer
+        constitution_answer.update(
+            {
+                "question": question,
+                "query": question,
+                "scenario": scenario,
+                "usage": f"仅用于{scenario}中的知识边界提示，不能作为正式品牌口径。",
+                "applicable_scenarios": [scenario],
+                "from_answer_card": False,
+                "reasoning": ["当前没有可验证的生效品牌宪法，系统拒绝用聊天、旧答案卡或检索资料补写正式口径。"],
+                "conflicts": ["品牌宪法缺失、失效或完整性校验失败。"],
+                "corrections": [],
+                "actions": [],
+            }
+        )
+        constitution_answer["result_card"] = build_result_card(
+            intent="brand_positioning",
+            scenario=scenario,
+            answer=constitution_answer["answer"],
+            evidence=[],
+            confidence="low",
+            conflicts=constitution_answer["conflicts"],
+            needs_review=True,
+        )
+        constitution_answer["result_card"]["stability_level"] = "review_required"
+        answer_id = repository.save_answer_run(constitution_answer)
+        constitution_answer["answer_id"] = answer_id
+        return constitution_answer
 
     understanding = understand_text(question, scenario=scenario, role=role)
     understanding["thinking_lenses"] = apply_thinking_lenses(question, stage="zero_to_one")
@@ -153,17 +155,21 @@ def generate_answer(
     if domain_hint not in allowed_frontdoor_intents:
         domain_hint = rule_domain_hint
 
-    items = hooks.repository_search(
-        repository,
-        question,
-        domain=domain,
-        stage=stage,
-        limit=limit,
-        domain_hint=domain_hint,
-    )
+    selected_source_id = str(source_asset_id or "").strip()
+    if selected_source_id:
+        items = repository.source_evidence(selected_source_id, limit=limit)
+    else:
+        items = hooks.repository_search(
+            repository,
+            question,
+            domain=domain,
+            stage=stage,
+            limit=limit,
+            domain_hint=domain_hint,
+        )
     used_query = question
     usable_items = [item for item in items if not is_process_memory_evidence(item)]
-    if hooks.items_need_better_retrieval(usable_items, domain_hint):
+    if not selected_source_id and hooks.items_need_better_retrieval(usable_items, domain_hint):
         for fallback_query in hooks.fallback_queries(question):
             fallback_items = hooks.repository_search(
                 repository,
@@ -188,7 +194,10 @@ def generate_answer(
     intent, _audience = classify_intent(question, usable_items)
     if frontdoor.get("mode") == "ai" and domain_hint != "knowledge_lookup":
         intent = domain_hint
-    card = repository.find_answer_card(question, intent)
+    source_authority_question = selected_source_id and any(
+        marker in question for marker in ("正式口径", "正式依据", "权威依据", "直接引用")
+    )
+    card = None if source_authority_question else repository.find_answer_card(question, intent)
     if card:
         answer = hooks.answer_from_authority_card(
             question=question,
@@ -200,7 +209,6 @@ def generate_answer(
         hooks.attach_model_route(answer, model_router.route("authority_answer"))
         hooks.attach_answer_pipeline(answer, role=pipeline_role)
         _apply_authority_contract(answer)
-        _apply_brand_constitution_boundary(answer, constitution_boundary)
         answer_id = repository.save_answer_run(answer)
         answer["answer_id"] = answer_id
         return answer
@@ -209,8 +217,69 @@ def generate_answer(
     answer["from_answer_card"] = False
     answer["understanding"] = understanding
     hooks.apply_frontdoor_to_answer(answer, frontdoor)
-    hooks.attach_model_route(answer, model_router.route("rag_answer"))
-    hooks.maybe_apply_model_answer(model_router=model_router, question=question, answer=answer)
+    if source_authority_question:
+        authorities = {
+            evidence_authority_source(item)
+            for item in answer.get("evidence") or []
+            if not is_process_memory_evidence(item)
+        }
+        if "external_reference" in authorities:
+            answer["answer"] = (
+                "不能直接作为正式口径。这份资料的数据库权威记录是外部参考，"
+                "可用于对照和启发；转成荷小悦正式口径前，必须与内部事实核对并由负责人核定。"
+            )
+        else:
+            answer["answer"] = (
+                "当前选中资料没有可验证的正式发布授权，不能直接作为正式口径。"
+                "请先核对来源权威记录、适用范围和当前版本。"
+            )
+        answer["needs_review"] = True
+        hooks.attach_model_route(
+            answer,
+            {
+                "task_type": "deterministic_source_authority",
+                "should_call_model": False,
+                "reason": "database_source_authority",
+            },
+        )
+    elif answer.get("intent") == "risk_boundary":
+        answer["answer"] = build_deterministic_risk_boundary_answer(question)
+        system_policy_evidence = {
+            "source_id": "system-policy:medical-claims-boundary:v1",
+            "title": "HXYOS 医疗功效表达安全策略",
+            "domain": "system_policy",
+            "source_type": "system_policy",
+            "status": "active",
+            "authority_source": "system_policy",
+            "authority_recorded": True,
+            "authority_version": 1,
+            "immutable": True,
+        }
+        answer["evidence"] = [system_policy_evidence]
+        answer["sources"] = [system_policy_evidence]
+        answer["confidence"] = "high"
+        answer["needs_review"] = False
+        answer["answer_status"] = "系统安全边界"
+        answer["result_card"] = build_result_card(
+            intent="risk_boundary",
+            scenario=scenario,
+            answer=answer["answer"],
+            evidence=[system_policy_evidence],
+            confidence="high",
+            conflicts=[],
+            needs_review=False,
+        )
+        hooks.attach_model_route(
+            answer,
+            {
+                "task_type": "deterministic_risk_boundary",
+                "should_call_model": False,
+                "reason": "policy_boundary",
+            },
+        )
+    else:
+        hooks.attach_model_route(answer, model_router.route("rag_answer"))
+        hooks.maybe_apply_model_answer(model_router=model_router, question=question, answer=answer)
     quality_score = score_answer_quality(
         question=question,
         intent=answer.get("intent") or intent,
@@ -223,7 +292,11 @@ def generate_answer(
     )
     answer["quality_score"] = quality_score
     answer["quality_dimensions"] = quality_score["dimensions"]
-    if quality_score["level"] == "low" and bool(answer.get("needs_review", True)):
+    if (
+        quality_score["level"] == "low"
+        and bool(answer.get("needs_review", True))
+        and answer.get("intent") != "risk_boundary"
+    ):
         answer["answer"] = insufficient_answer(question, "当前召回资料没有形成足够稳定的权威结论")
         answer["answer_status"] = "资料不足"
         answer["confidence"] = "low"
@@ -239,7 +312,6 @@ def generate_answer(
         )
     hooks.attach_answer_pipeline(answer, role=pipeline_role)
     _apply_authority_contract(answer)
-    _apply_brand_constitution_boundary(answer, constitution_boundary)
     answer_id = repository.save_answer_run(answer)
     answer["answer_id"] = answer_id
     return answer

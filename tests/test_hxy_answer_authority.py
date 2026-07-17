@@ -195,12 +195,16 @@ def test_corroborated_internal_evidence_returns_working_contract_with_citations(
             "title": "门店服务 SOP",
             "domain": "operations",
             "authority_source": "official_internal",
+            "authority_version": 2,
+            "authority_recorded": True,
         },
         {
             "source_id": "internal-training-002",
             "title": "员工培训材料",
             "domain": "operations",
             "authority_source": "internal_material",
+            "authority_version": 2,
+            "authority_recorded": True,
         },
     ]
 
@@ -272,6 +276,8 @@ def test_build_evidence_preserves_source_authority_contract_fields() -> None:
                 "domain": "operations",
                 "authority_source": "internal_material",
                 "source_authority": "internal_material",
+                "authority_version": 2,
+                "authority_recorded": True,
                 "official_use_allowed": False,
                 "source_type": "internal_document",
                 "origin": "internal",
@@ -294,6 +300,8 @@ def test_build_evidence_preserves_source_authority_contract_fields() -> None:
         "domain": "operations",
         "authority_source": "internal_material",
         "source_authority": "internal_material",
+        "authority_version": 2,
+        "authority_recorded": True,
         "official_use_allowed": False,
         "source_type": "internal_document",
         "origin": "internal",
@@ -317,6 +325,8 @@ def test_generate_answer_preserves_internal_authority_and_returns_working_mode()
                 "title": "门店服务 SOP",
                 "domain": "operations",
                 "authority_source": "official_internal",
+                "authority_version": 2,
+                "authority_recorded": True,
                 "official_use_allowed": True,
                 "source_type": "internal_document",
                 "origin": "internal",
@@ -333,6 +343,8 @@ def test_generate_answer_preserves_internal_authority_and_returns_working_mode()
                 "title": "员工培训材料",
                 "domain": "operations",
                 "source_authority": "internal_material",
+                "authority_version": 2,
+                "authority_recorded": True,
                 "official_use_allowed": False,
                 "source_type": "internal_document",
                 "origin": "internal",
@@ -376,6 +388,8 @@ def test_generate_answer_keeps_process_memory_out_of_synthesis_and_conflict_gate
                 "title": f"内部材料 {index}",
                 "domain": "product" if index == 3 else "operations",
                 "authority_source": "official_internal" if index == 1 else "internal_material",
+                "authority_version": 2,
+                "authority_recorded": True,
                 "source_type": "internal_document",
                 "origin": "internal",
                 "status": "active",
@@ -459,6 +473,162 @@ def test_process_memory_cannot_select_intent_or_enter_model_evidence_prompt() ->
     assert "历史讨论偏向产品方向" not in prompt
 
 
+def test_model_answer_prompt_enforces_bounded_context_and_short_output_contract() -> None:
+    result = {
+        "scenario": "创始人内部决策" * 20,
+        "intent": "product_system",
+        "answer": "当前草稿" * 200,
+        "evidence": [
+            {
+                "title": f"产品资料 {index}" + "标题" * 30,
+                "domain": "product",
+                "excerpt": f"第 {index} 条证据" + "正文" * 200,
+            }
+            for index in range(4)
+        ],
+    }
+
+    messages = _model_answer_messages("清泡调补养怎么讲？" * 20, result)
+    prompt = "\n".join(str(message["content"]) for message in messages)
+
+    assert len(prompt) <= 650
+    assert "产品资料 0" in prompt
+    assert "产品资料 1" not in prompt
+    assert "不超过 120 个汉字" in prompt
+
+
+def test_synthesized_operations_answer_exposes_task_action() -> None:
+    result = synthesize_answer(
+        "首店开业前当前最应该先做什么？",
+        "首店开业前当前最应该先做什么？",
+        [
+            {
+                "chunk_id": "operations-opening-001",
+                "source_id": "source-operations-opening-001",
+                "title": "首店开业计划",
+                "domain": "operations",
+                "authority_source": "internal_material",
+                "source_type": "internal_document",
+                "status": "active",
+                "content": "开业前先完成服务流程演练并明确责任人。",
+                "score": 80,
+            }
+        ],
+        scenario="创始人内部决策",
+    )
+
+    assert result["actions"] == [{"type": "tasks", "label": "转为下一项任务"}]
+
+
+def test_medical_risk_boundary_uses_deterministic_safe_answer_without_model() -> None:
+    repository = _EvidenceRepository([])
+
+    def reject_model_generation(**_kwargs: Any) -> None:
+        raise AssertionError("deterministic compliance boundary must not call a model")
+
+    hooks = _evidence_hooks(finalize_answer=False)
+    hooks = AnswerServiceHooks(
+        classify_frontdoor=hooks.classify_frontdoor,
+        repository_search=hooks.repository_search,
+        items_need_better_retrieval=hooks.items_need_better_retrieval,
+        fallback_queries=hooks.fallback_queries,
+        answer_from_authority_card=hooks.answer_from_authority_card,
+        attach_model_route=hooks.attach_model_route,
+        attach_answer_pipeline=hooks.attach_answer_pipeline,
+        apply_frontdoor_to_answer=hooks.apply_frontdoor_to_answer,
+        maybe_apply_model_answer=reject_model_generation,
+    )
+
+    result = generate_answer(
+        question="泡脚能治疗失眠吗？",
+        scenario="门店员工工作问答",
+        domain=None,
+        stage=None,
+        limit=5,
+        repository=repository,
+        model_router=_RagRouter(),
+        hooks=hooks,
+        role="store_staff",
+        pipeline_role="store_staff",
+    )
+
+    assert result["intent"] == "risk_boundary"
+    assert "不能把泡脚表述为能够治疗失眠" in result["answer"]
+    assert "不能替代医疗" in result["answer"]
+    assert result["answer_mode"] == "working"
+    assert result["authority_source"] == "system_policy"
+    assert result["authority_provenance"] == "system_policy"
+    assert result["usage_boundary"] == "safety_boundary"
+    assert result["needs_review"] is False
+    assert result["answer_pipeline"]["authority_source"] == "system_policy"
+
+
+def test_selected_external_source_is_classified_from_its_database_record() -> None:
+    class SourceRepository(_EvidenceRepository):
+        def source_evidence(self, asset_id: str, limit: int = 5) -> list[dict[str, Any]]:
+            assert asset_id == "asset-external-001"
+            assert limit == 5
+            return self.items
+
+    repository = SourceRepository(
+        [
+            {
+                "chunk_id": "external-001:0",
+                "asset_id": "asset-external-001",
+                "source_id": "asset-external-001",
+                "title": "外部公众号文章",
+                "domain": "external",
+                "source_origin": "external",
+                "authority_source": "external_reference",
+                "authority_version": 1,
+                "authority_recorded": True,
+                "source_type": "external_article",
+                "status": "active",
+                "content": "这是一篇外部行业观点文章。",
+                "score": 100,
+            }
+        ]
+    )
+
+    def forbidden_search(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+        raise AssertionError("selected source must not fall back to unscoped retrieval")
+
+    def reject_model_generation(**_kwargs: Any) -> None:
+        raise AssertionError("source authority classification must not call a model")
+
+    hooks = _evidence_hooks(finalize_answer=False)
+    hooks = AnswerServiceHooks(
+        classify_frontdoor=hooks.classify_frontdoor,
+        repository_search=forbidden_search,
+        items_need_better_retrieval=hooks.items_need_better_retrieval,
+        fallback_queries=hooks.fallback_queries,
+        answer_from_authority_card=hooks.answer_from_authority_card,
+        attach_model_route=hooks.attach_model_route,
+        attach_answer_pipeline=hooks.attach_answer_pipeline,
+        apply_frontdoor_to_answer=hooks.apply_frontdoor_to_answer,
+        maybe_apply_model_answer=reject_model_generation,
+    )
+
+    result = generate_answer(
+        question="这份外部公众号文章能直接作为正式口径吗？",
+        scenario="HXYOS Core-10 canary",
+        domain=None,
+        stage=None,
+        limit=5,
+        repository=repository,
+        model_router=_RagRouter(),
+        hooks=hooks,
+        source_asset_id="asset-external-001",
+    )
+
+    assert result["answer_mode"] == "reference"
+    assert result["authority_source"] == "external_reference"
+    assert result["usage_boundary"] == "reference_only"
+    assert result["needs_review"] is True
+    assert "不能直接作为正式口径" in result["answer"]
+    assert [item["source_id"] for item in result["citations"]] == ["asset-external-001"]
+
+
 def test_risk_policy_is_propagated_to_top_level_and_persisted_state() -> None:
     repository = _EvidenceRepository(
         [
@@ -468,6 +638,8 @@ def test_risk_policy_is_propagated_to_top_level_and_persisted_state() -> None:
                 "title": f"价格内部材料 {index}",
                 "domain": "operations",
                 "authority_source": "official_internal" if index == 1 else "internal_material",
+                "authority_version": 2,
+                "authority_recorded": True,
                 "source_type": "internal_document",
                 "origin": "internal",
                 "status": "active",
@@ -523,6 +695,15 @@ def test_process_memory_is_context_metadata_not_authority_or_citation() -> None:
     assert result["policy_decision"]["action"] == "needs_review"
 
 
+def test_no_evidence_is_a_reviewable_working_boundary_not_a_reference_answer() -> None:
+    result = _pipeline([], confidence="high", needs_review=False)
+
+    assert result["answer_mode"] == "working"
+    assert result["authority_source"] == "none"
+    assert result["usage_boundary"] == "review_required"
+    assert result["policy_decision"]["action"] == "needs_review"
+
+
 def test_process_memory_conflict_does_not_affect_internal_authority_or_evidence_gate() -> None:
     result = _pipeline(
         [
@@ -530,11 +711,15 @@ def test_process_memory_conflict_does_not_affect_internal_authority_or_evidence_
                 "source_id": "internal-sop-001",
                 "domain": "operations",
                 "authority_source": "official_internal",
+                "authority_version": 2,
+                "authority_recorded": True,
             },
             {
                 "source_id": "internal-training-002",
                 "domain": "operations",
                 "authority_source": "internal_material",
+                "authority_version": 2,
+                "authority_recorded": True,
             },
             {
                 "memory_id": "memory-conflict-001",
@@ -588,11 +773,15 @@ def test_price_policy_risk_requires_review_with_corroborated_internal_evidence()
                 "source_id": "internal-price-001",
                 "domain": "operations",
                 "authority_source": "official_internal",
+                "authority_version": 2,
+                "authority_recorded": True,
             },
             {
                 "source_id": "internal-price-002",
                 "domain": "operations",
                 "authority_source": "internal_material",
+                "authority_version": 2,
+                "authority_recorded": True,
             },
         ],
         confidence="high",
@@ -616,11 +805,15 @@ def test_price_policy_risk_requires_review_with_corroborated_internal_evidence()
                     "source_id": "internal-sop-001",
                     "domain": "operations",
                     "authority_source": "official_internal",
+                    "authority_version": 2,
+                    "authority_recorded": True,
                 },
                 {
                     "source_id": "internal-sop-002",
                     "domain": "operations",
                     "authority_source": "internal_material",
+                    "authority_version": 2,
+                    "authority_recorded": True,
                 },
             ],
             "这项服务保证治愈失眠。",

@@ -91,6 +91,19 @@ def test_search_uses_only_parent_asset_database_authority() -> None:
     assert "metadata_json->>'official_use_allowed'" not in sql
 
 
+def test_selected_source_evidence_uses_parent_asset_database_authority() -> None:
+    from apps.api.hxy_knowledge.repository import build_source_evidence_query
+
+    sql, params = build_source_evidence_query("asset-external-001", limit=5)
+
+    assert "WHERE c.asset_id = %s" in sql
+    assert "a.source_origin AS source_origin" in sql
+    assert "a.source_authority AS authority_source" in sql
+    assert "a.authority_version AS authority_version" in sql
+    assert "TRUE AS authority_recorded" in sql
+    assert params == ["asset-external-001", 5]
+
+
 def test_importer_strips_parser_supplied_governance_metadata() -> None:
     from apps.api.hxy_knowledge.importer import prepare_asset_records, prepare_chunk_records
 

@@ -67,6 +67,11 @@
       "case_id": "core-source-classification",
       "category": "source_classification",
       "question": "这份外部公众号文章能直接作为正式口径吗？",
+      "source_context": {
+        "required": true,
+        "source_origin": "external",
+        "source_authority": "external_reference"
+      },
       "expected": {
         "intent": "knowledge_lookup",
         "authority_combinations": [
@@ -99,10 +104,7 @@
       "expected": {
         "intent": "risk_boundary",
         "authority_combinations": [
-          {"answer_mode": "formal", "authority_source": "approved_answer_card", "authority_provenance": "approved_answer_card"},
-          {"answer_mode": "formal", "authority_source": "official_internal", "authority_provenance": "brand_constitution"},
-          {"answer_mode": "working", "authority_source": "official_internal", "authority_provenance": "source_record"},
-          {"answer_mode": "working", "authority_source": "internal_material", "authority_provenance": "source_record"}
+          {"answer_mode": "working", "authority_source": "system_policy", "authority_provenance": "system_policy"}
         ],
         "risk_interception_required": true,
         "max_total_tokens": 520

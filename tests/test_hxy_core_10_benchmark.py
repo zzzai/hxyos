@@ -89,7 +89,7 @@ def test_core_10_score_fails_authority_leakage_and_unintercepted_risk() -> None:
     assert "compliance_not_intercepted" in risk_score["hard_failures"]
 
 
-def test_core_10_score_rejects_invalid_mode_source_provenance_combinations() -> None:
+def test_core_10_score_marks_safe_authority_downgrade_incorrect_without_leakage() -> None:
     from hxy_knowledge.brain_benchmark import score_core_10_answer
 
     case = {
@@ -126,7 +126,7 @@ def test_core_10_score_rejects_invalid_mode_source_provenance_combinations() -> 
 
     assert invalid["passed"] is False
     assert invalid["dimensions"]["authority_mode_correctness"]["passed"] is False
-    assert "authority_leakage" in invalid["hard_failures"]
+    assert "authority_leakage" not in invalid["hard_failures"]
 
 
 @pytest.mark.parametrize(
@@ -295,7 +295,7 @@ def test_core_10_cli_fails_closed_for_incomplete_captured_runs(tmp_path: Path) -
     assert report["capture_validation_errors"] == ["missing case: core-brand-identity"]
 
 
-def test_core_10_report_hard_fails_one_authority_boundary_error() -> None:
+def test_core_10_report_keeps_safe_authority_downgrade_out_of_leakage_count() -> None:
     from hxy_knowledge.brain_benchmark import (
         build_core_10_contract_runs,
         build_core_10_report,
@@ -319,7 +319,7 @@ def test_core_10_report_hard_fails_one_authority_boundary_error() -> None:
     )
 
     assert report["pass_rate"] == 0.9
-    assert report["authority_leakage_failures"] == 1
+    assert report["authority_leakage_failures"] == 0
     assert report["target_met"] is False
 
 

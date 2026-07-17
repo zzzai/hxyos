@@ -25,6 +25,7 @@ AUTHORITY_SOURCES = {
     "official_internal",
     "internal_material",
     "external_reference",
+    "system_policy",
 }
 REFERENCE_STATUSES = {
     "external",
@@ -120,27 +121,38 @@ def classify_answer_authority(
     if from_answer_card:
         answer_mode = "formal"
         authority_source = "approved_answer_card"
+        authority_provenance = "approved_answer_card"
         usage_boundary = "review_required" if requires_review else "team_standard"
+    elif "system_policy" in evidence_authorities:
+        answer_mode = "working"
+        authority_source = "system_policy"
+        authority_provenance = "system_policy"
+        usage_boundary = "safety_boundary"
     elif "official_internal" in evidence_authorities:
         answer_mode = "working"
         authority_source = "official_internal"
+        authority_provenance = "source_record"
         usage_boundary = "review_required" if requires_review else "internal_working"
     elif "internal_material" in evidence_authorities:
         answer_mode = "working"
         authority_source = "internal_material"
+        authority_provenance = "source_record"
         usage_boundary = "review_required" if requires_review else "internal_working"
     elif "external_reference" in evidence_authorities or "approved_answer_card" in evidence_authorities:
         answer_mode = "reference"
         authority_source = "external_reference"
+        authority_provenance = "source_record"
         usage_boundary = "reference_only"
     else:
-        answer_mode = "reference"
+        answer_mode = "working"
         authority_source = "none"
+        authority_provenance = "no_evidence"
         usage_boundary = "review_required"
 
     return {
         "answer_mode": answer_mode,
         "authority_source": authority_source,
+        "authority_provenance": authority_provenance,
         "usage_boundary": usage_boundary,
         "citations": citations,
         "context_metadata": {"process_memory": process_memory},
