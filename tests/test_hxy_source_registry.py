@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib
 import json
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -238,3 +240,86 @@ def test_registry_record_payload_is_deterministic(tmp_path: Path) -> None:
         ensure_ascii=False,
         sort_keys=True,
     )
+
+
+def test_registry_writer_creates_private_stable_json_and_safe_summary(
+    tmp_path: Path,
+) -> None:
+    module = importlib.import_module("apps.api.hxy_product.source_registry")
+    inbox = tmp_path / "inbox"
+    source = inbox / "荷小悦资料" / "06_融资商务" / "融资_股东合作协议.docx"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"secret agreement content")
+    registry = module.build_source_registry(inbox, as_of="2026-07-17")
+    output_dir = tmp_path / "data" / "private" / "source-registry"
+
+    paths = module.write_registry_reports(
+        registry,
+        output_dir,
+        report_date="2026-07-17",
+    )
+
+    assert paths == {
+        "json": output_dir / "2026-07-17-source-registry.json",
+        "markdown": output_dir / "2026-07-17-source-registry.md",
+    }
+    payload = json.loads(paths["json"].read_text(encoding="utf-8"))
+    assert payload == registry
+    summary = paths["markdown"].read_text(encoding="utf-8")
+    assert "HXY Source Registry V2" in summary
+    assert "founder_only" in summary
+    assert "融资_股东合作协议.docx" in summary
+    assert "secret agreement content" not in summary
+    assert not list(output_dir.glob("*.tmp"))
+    assert not (output_dir / "selection.json").exists()
+
+
+def test_registry_writer_replaces_previous_artifacts_atomically(tmp_path: Path) -> None:
+    module = importlib.import_module("apps.api.hxy_product.source_registry")
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    source = inbox / "first.txt"
+    source.write_text("first", encoding="utf-8")
+    output_dir = tmp_path / "private"
+
+    first = module.build_source_registry(inbox, as_of="2026-07-17")
+    module.write_registry_reports(first, output_dir, report_date="2026-07-17")
+    source.write_text("second", encoding="utf-8")
+    second = module.build_source_registry(inbox, as_of="2026-07-17")
+    module.write_registry_reports(second, output_dir, report_date="2026-07-17")
+
+    payload = json.loads(
+        (output_dir / "2026-07-17-source-registry.json").read_text(encoding="utf-8")
+    )
+    assert payload["path_records"][0]["source_hash"] == second["path_records"][0][
+        "source_hash"
+    ]
+
+
+def test_registry_cli_writes_only_requested_private_outputs(tmp_path: Path) -> None:
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    (inbox / "source.md").write_text("source", encoding="utf-8")
+    output_dir = tmp_path / "private"
+    script = Path(__file__).parents[1] / "scripts" / "build-hxy-source-registry.py"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--inbox",
+            str(inbox),
+            "--output-dir",
+            str(output_dir),
+            "--as-of",
+            "2026-07-17",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "source registry built: 1 paths, 1 content groups" in result.stdout
+    assert (output_dir / "2026-07-17-source-registry.json").is_file()
+    assert (output_dir / "2026-07-17-source-registry.md").is_file()
+    assert not (output_dir / "selection.json").exists()

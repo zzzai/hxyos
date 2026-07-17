@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import os
+import tempfile
 from collections import defaultdict
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -371,3 +374,82 @@ def build_source_registry(inbox: Path, *, as_of: str | None = None) -> dict[str,
         "path_records": records,
         "content_groups": content_groups,
     }
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary.write(content)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+            temporary_path = Path(temporary.name)
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path is not None and temporary_path.exists():
+            temporary_path.unlink()
+
+
+def _summary_markdown(registry: dict[str, Any]) -> str:
+    records = registry["path_records"]
+    material_counts: dict[str, int] = defaultdict(int)
+    sensitivity_counts: dict[str, int] = defaultdict(int)
+    for record in records:
+        material_counts[record["material_class"]] += 1
+        sensitivity_counts[record["sensitivity"]] += 1
+    lines = [
+        "# HXY Source Registry V2",
+        "",
+        "> Private, read-only source inventory. It does not approve or publish knowledge.",
+        "",
+        f"- As of: `{registry.get('as_of') or 'unspecified'}`",
+        f"- Path records: `{registry['counts']['path_records']}`",
+        f"- Content groups: `{registry['counts']['content_groups']}`",
+        f"- Duplicate paths: `{registry['counts']['duplicate_paths']}`",
+        f"- Error records: `{registry['counts']['error_records']}`",
+        f"- Approved sources: `{registry['counts']['approved_sources']}`",
+        "",
+        "## Material Classes",
+        "",
+    ]
+    for key in sorted(material_counts):
+        lines.append(f"- `{key}`: `{material_counts[key]}`")
+    lines.extend(["", "## Sensitivity", ""])
+    for key in sorted(sensitivity_counts):
+        lines.append(f"- `{key}`: `{sensitivity_counts[key]}`")
+    restricted_paths = [
+        record["source_path"]
+        for record in records
+        if record["sensitivity"] in {"restricted", "founder_only"}
+    ]
+    if restricted_paths:
+        lines.extend(["", "## Restricted Source Paths", ""])
+        lines.extend(f"- `{path}`" for path in restricted_paths)
+    return "\n".join(lines) + "\n"
+
+
+def write_registry_reports(
+    registry: dict[str, Any],
+    output_dir: Path,
+    *,
+    report_date: str,
+) -> dict[str, Path]:
+    json_path = output_dir / f"{report_date}-source-registry.json"
+    markdown_path = output_dir / f"{report_date}-source-registry.md"
+    json_content = json.dumps(
+        registry,
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+    ) + "\n"
+    _atomic_write(json_path, json_content)
+    _atomic_write(markdown_path, _summary_markdown(registry))
+    return {"json": json_path, "markdown": markdown_path}
