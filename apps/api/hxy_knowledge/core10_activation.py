@@ -152,12 +152,14 @@ def _constitution_evidence(
 
 def _reception_evidence(
     reception_draft: dict[str, Any] | None,
+    resolved_source_ids: set[str],
 ) -> list[dict[str, Any]]:
     if not isinstance(reception_draft, dict):
         return []
     return [
         {"asset_id": source_id}
         for source_id in _safe_reception_source_ids(reception_draft)
+        if source_id in resolved_source_ids
     ]
 
 
@@ -186,13 +188,52 @@ def _safe_reception_draft(
 
 def _reception_source_blockers(
     reception_draft: dict[str, Any],
+    resolved_source_ids: set[str],
 ) -> list[str]:
     source_ids = reception_draft.get("source_ids")
     if not isinstance(source_ids, list) or not source_ids:
         return ["missing_source_selection"]
-    if any(not _is_safe_public_asset_id(source_id) for source_id in source_ids):
-        return ["invalid_source_record"]
-    return []
+    blockers: list[str] = []
+    safe_source_ids = _safe_reception_source_ids(reception_draft)
+    if len(safe_source_ids) != len(source_ids):
+        blockers.append("invalid_source_record")
+    if any(source_id not in resolved_source_ids for source_id in safe_source_ids):
+        blockers.append("unresolved_source_evidence")
+    return blockers
+
+
+def _resolved_source_ids(
+    product_sources: list[dict[str, Any]],
+    operations_sources: list[dict[str, Any]],
+    constitution_draft: dict[str, Any] | None,
+) -> set[str]:
+    evidence = [
+        *_source_evidence(product_sources),
+        *_source_evidence(operations_sources),
+        *_constitution_evidence(constitution_draft),
+    ]
+    return {str(item["asset_id"]) for item in evidence}
+
+
+def _is_nonblank_string(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _is_valid_constitution_draft(
+    constitution_draft: dict[str, Any],
+) -> bool:
+    core_statements = constitution_draft.get("core_statements")
+    return (
+        _is_nonblank_string(constitution_draft.get("version"))
+        and isinstance(core_statements, dict)
+        and bool(core_statements)
+    )
+
+
+def _is_valid_reception_draft(reception_draft: dict[str, Any]) -> bool:
+    return _is_nonblank_string(
+        reception_draft.get("question")
+    ) and _is_nonblank_string(reception_draft.get("answer"))
 
 
 def _source_blockers(sources: list[dict[str, Any]]) -> list[str]:
@@ -289,7 +330,8 @@ def _approved_card_state(
     for card in existing_answer_cards:
         if not isinstance(card, dict) or card.get("status") != "approved":
             continue
-        if _normalized_text(card.get("question")) != question:
+        card_question = card.get("question_pattern") or card.get("question")
+        if _normalized_text(card_question) != question:
             continue
         if _normalized_text(card.get("answer")) == answer:
             matching += 1
@@ -317,6 +359,11 @@ def build_core10_activation_packet(
     approved_card_state = _approved_card_state(
         reception_draft,
         existing_answer_cards,
+    )
+    resolved_source_ids = _resolved_source_ids(
+        product_sources,
+        operations_sources,
+        constitution_draft,
     )
 
     group_values = {
@@ -373,7 +420,10 @@ def build_core10_activation_packet(
                 "authority": "approved_answer_card",
                 "draft": _safe_reception_draft(reception_draft),
             },
-            "source_evidence": _reception_evidence(reception_draft),
+            "source_evidence": _reception_evidence(
+                reception_draft,
+                resolved_source_ids,
+            ),
             "why_needed": "The reception case requires one approved standard answer.",
             "risk_if_approved": "Unsafe or conflicting wording could become formal guidance.",
             "risk_if_rejected": "The reception case remains without a formal cited answer.",
@@ -390,6 +440,8 @@ def build_core10_activation_packet(
         if affected_cases and group_id == "brand_constitution":
             if not isinstance(constitution_draft, dict) or not constitution_draft:
                 blockers.append("missing_constitution_draft")
+            elif not _is_valid_constitution_draft(constitution_draft):
+                blockers.append("invalid_constitution_draft")
             if not blockers:
                 payload = {
                     "operation": "activate_brand_constitution",
@@ -419,10 +471,16 @@ def build_core10_activation_packet(
             if not isinstance(reception_draft, dict) or not reception_draft:
                 blockers.append("missing_reception_draft")
             else:
-                blockers.extend(_reception_source_blockers(reception_draft))
-                if _answer_has_unsafe_wording(
-                    str(reception_draft.get("answer") or "")
-                ):
+                if not _is_valid_reception_draft(reception_draft):
+                    blockers.append("invalid_reception_draft")
+                blockers.extend(
+                    _reception_source_blockers(
+                        reception_draft,
+                        resolved_source_ids,
+                    )
+                )
+                answer = reception_draft.get("answer")
+                if isinstance(answer, str) and _answer_has_unsafe_wording(answer):
                     blockers.append("unsafe_answer_wording")
                 if approved_card_state["approved_conflict_count"]:
                     blockers.append("approved_answer_card_conflict")

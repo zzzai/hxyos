@@ -283,6 +283,49 @@ def test_conflicting_approved_reception_card_fails_closed() -> None:
     assert reception_item["current_state"]["approved_conflict_count"] == 1
 
 
+@pytest.mark.parametrize(
+    ("approved_answer", "expected_matches", "expected_conflicts"),
+    [
+        ("Fixture reception answer with a clear service boundary.", 1, 0),
+        ("A different approved fixture answer.", 0, 1),
+    ],
+)
+def test_approved_reception_card_uses_real_question_pattern_field(
+    approved_answer: str,
+    expected_matches: int,
+    expected_conflicts: int,
+) -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+    )
+
+    inputs = _packet_inputs()
+    inputs["existing_answer_cards"] = [
+        {
+            "card_id": "fixture-card-real-shape",
+            "status": "approved",
+            "question_pattern": "Fixture reception question?",
+            "answer": approved_answer,
+        }
+    ]
+
+    packet = build_core10_activation_packet(**inputs)
+    reception_item = next(
+        item
+        for item in packet["items"]
+        if item["group_id"] == "reception_standard_answer_card"
+    )
+
+    state = reception_item["current_state"]
+    assert state["approved_match_count"] == expected_matches
+    assert state["approved_conflict_count"] == expected_conflicts
+    if expected_conflicts:
+        assert "approved_answer_card_conflict" in reception_item["blockers"]
+    else:
+        assert "approved_answer_card_conflict" not in reception_item["blockers"]
+        assert reception_item["exact_write_intents"] == []
+
+
 def test_forbidden_claim_and_chunk_keys_are_removed_from_all_output_levels() -> None:
     from apps.api.hxy_knowledge.core10_activation import (
         build_core10_activation_packet,
@@ -587,3 +630,147 @@ def test_reception_card_requires_at_least_one_source_id() -> None:
 
     assert "missing_source_selection" in reception_item["blockers"]
     assert reception_item["exact_write_intents"] == []
+
+
+@pytest.mark.parametrize(
+    "invalid_draft",
+    [
+        {
+            "core_statements": {"brand_identity": "Fixture identity."},
+            "source_references": [{"source_id": "asset-brand-001"}],
+        },
+        {
+            "version": "   ",
+            "core_statements": {"brand_identity": "Fixture identity."},
+            "source_references": [{"source_id": "asset-brand-001"}],
+        },
+        {
+            "version": "fixture-constitution.v1",
+            "source_references": [{"source_id": "asset-brand-001"}],
+        },
+        {
+            "version": "fixture-constitution.v1",
+            "core_statements": {},
+            "source_references": [{"source_id": "asset-brand-001"}],
+        },
+        {
+            "version": "fixture-constitution.v1",
+            "core_statements": ["Fixture identity."],
+            "source_references": [{"source_id": "asset-brand-001"}],
+        },
+    ],
+)
+def test_nonempty_invalid_constitution_draft_fails_closed(
+    invalid_draft: dict[str, object],
+) -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+    )
+
+    inputs = _packet_inputs()
+    inputs["constitution_draft"] = invalid_draft
+
+    packet = build_core10_activation_packet(**inputs)
+    constitution_item = next(
+        item
+        for item in packet["items"]
+        if item["group_id"] == "brand_constitution"
+    )
+
+    assert "invalid_constitution_draft" in constitution_item["blockers"]
+    assert constitution_item["exact_write_intents"] == []
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid_value"),
+    [
+        ("question", None),
+        ("question", "   "),
+        ("question", 7),
+        ("answer", None),
+        ("answer", "   "),
+        ("answer", ["Fixture answer"]),
+    ],
+)
+def test_invalid_reception_draft_shape_fails_closed(
+    field: str,
+    invalid_value: object,
+) -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+    )
+
+    inputs = _packet_inputs()
+    reception_draft = dict(inputs["reception_draft"])
+    if invalid_value is None:
+        reception_draft.pop(field)
+    else:
+        reception_draft[field] = invalid_value
+    inputs["reception_draft"] = reception_draft
+
+    packet = build_core10_activation_packet(**inputs)
+    reception_item = next(
+        item
+        for item in packet["items"]
+        if item["group_id"] == "reception_standard_answer_card"
+    )
+
+    assert "invalid_reception_draft" in reception_item["blockers"]
+    assert reception_item["exact_write_intents"] == []
+
+
+def test_unresolved_reception_source_evidence_fails_closed() -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+    )
+
+    inputs = _packet_inputs()
+    inputs["reception_draft"] = {
+        "question": "Fixture reception question?",
+        "answer": "Fixture reception answer with a clear service boundary.",
+        "source_ids": ["asset-operations-001", "asset-unknown"],
+    }
+
+    packet = build_core10_activation_packet(**inputs)
+    reception_item = next(
+        item
+        for item in packet["items"]
+        if item["group_id"] == "reception_standard_answer_card"
+    )
+
+    assert "unresolved_source_evidence" in reception_item["blockers"]
+    assert reception_item["exact_write_intents"] == []
+    assert reception_item["source_evidence"] == [
+        {"asset_id": "asset-operations-001"}
+    ]
+
+
+@pytest.mark.parametrize(
+    "resolved_source_id",
+    ["asset-brand-001", "asset-product-001", "asset-operations-001"],
+)
+def test_reception_evidence_accepts_sources_resolved_by_current_packet(
+    resolved_source_id: str,
+) -> None:
+    from apps.api.hxy_knowledge.core10_activation import (
+        build_core10_activation_packet,
+    )
+
+    inputs = _packet_inputs()
+    inputs["reception_draft"] = {
+        "question": "Fixture reception question?",
+        "answer": "Fixture reception answer with a clear service boundary.",
+        "source_ids": [resolved_source_id],
+    }
+
+    packet = build_core10_activation_packet(**inputs)
+    reception_item = next(
+        item
+        for item in packet["items"]
+        if item["group_id"] == "reception_standard_answer_card"
+    )
+
+    assert "unresolved_source_evidence" not in reception_item["blockers"]
+    assert reception_item["source_evidence"] == [
+        {"asset_id": resolved_source_id}
+    ]
