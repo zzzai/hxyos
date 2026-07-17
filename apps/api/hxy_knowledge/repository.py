@@ -72,6 +72,10 @@ _BUSINESS_TOKEN_LEXICON = [
 _SOURCE_ORIGINS = {"internal", "external", "unknown"}
 _SOURCE_AUTHORITIES = {"official_internal", "internal_material", "external_reference"}
 _MAX_SOURCE_AUTHORITY_BATCH = 100
+_MAX_CORE10_ACTIVATION_ASSETS = 20
+_MAX_CORE10_EVIDENCE_PER_ASSET = 10
+_MAX_CORE10_EVIDENCE_EXCERPT_CHARS = 2000
+_MAX_CORE10_APPROVED_ANSWER_CARDS = 100
 
 
 def _normalized_source_classification(item: dict[str, Any]) -> dict[str, Any]:
@@ -581,6 +585,176 @@ class KnowledgeRepository:
         sql, params = build_search_query(query, domain=domain, stage=stage, limit=limit, domain_hint=domain_hint)
         with self.connect() as conn:
             return conn.execute(sql, params).fetchall()
+
+    def core10_activation_snapshot(
+        self,
+        *,
+        product_asset_ids: list[str],
+        operations_asset_ids: list[str],
+        evidence_limit_per_asset: int = 3,
+        excerpt_chars: int = 360,
+    ) -> dict[str, Any]:
+        for field_name, asset_ids in (
+            ("product_asset_ids", product_asset_ids),
+            ("operations_asset_ids", operations_asset_ids),
+        ):
+            if not isinstance(asset_ids, list):
+                raise ValueError(f"{field_name} must be a list of asset id strings")
+            if any(not isinstance(asset_id, str) for asset_id in asset_ids):
+                raise ValueError(f"{field_name} must contain only asset id strings")
+            if any(not asset_id.strip() for asset_id in asset_ids):
+                raise ValueError(f"{field_name} must contain non-empty asset ids")
+
+        selected_asset_ids = [*product_asset_ids, *operations_asset_ids]
+        if len(selected_asset_ids) > _MAX_CORE10_ACTIVATION_ASSETS:
+            raise ValueError("core10 activation snapshot accepts at most 20 asset ids")
+        if len(set(selected_asset_ids)) != len(selected_asset_ids):
+            raise ValueError("core10 activation snapshot contains duplicate asset ids")
+        if (
+            isinstance(evidence_limit_per_asset, bool)
+            or not isinstance(evidence_limit_per_asset, int)
+            or not (
+                1
+                <= evidence_limit_per_asset
+                <= _MAX_CORE10_EVIDENCE_PER_ASSET
+            )
+        ):
+            raise ValueError("evidence_limit_per_asset must be between 1 and 10")
+        if (
+            isinstance(excerpt_chars, bool)
+            or not isinstance(excerpt_chars, int)
+            or not (1 <= excerpt_chars <= _MAX_CORE10_EVIDENCE_EXCERPT_CHARS)
+        ):
+            raise ValueError("excerpt_chars must be between 1 and 2000")
+
+        source_fields = (
+            "asset_id",
+            "title",
+            "file_name",
+            "source_path",
+            "normalized_path",
+            "source_origin",
+            "source_authority",
+            "authority_version",
+            "status",
+            "domain",
+            "stage",
+        )
+        evidence_fields = (
+            "title",
+            "source_path",
+            "normalized_path",
+            "domain",
+            "stage",
+            "chunk_index",
+        )
+        answer_card_fields = (
+            "card_id",
+            "question_pattern",
+            "intent",
+            "audience",
+            "answer",
+            "status",
+        )
+
+        source_by_id: dict[str, dict[str, Any]] = {}
+        evidence_by_asset: dict[str, list[dict[str, Any]]] = {
+            asset_id: [] for asset_id in selected_asset_ids
+        }
+        with self.connect() as conn:
+            if selected_asset_ids:
+                asset_rows = conn.execute(
+                    """
+                    SELECT asset_id, title, file_name, source_path, normalized_path,
+                           source_origin, source_authority, authority_version,
+                           status, domain, stage
+                    FROM hxy_knowledge_assets
+                    WHERE asset_id = ANY(%s)
+                    """,
+                    (selected_asset_ids,),
+                ).fetchall()
+                source_by_id = {
+                    str(row["asset_id"]): {
+                        field: row.get(field) for field in source_fields
+                    }
+                    for row in asset_rows
+                }
+                unknown_asset_ids = [
+                    asset_id
+                    for asset_id in selected_asset_ids
+                    if asset_id not in source_by_id
+                ]
+                if unknown_asset_ids:
+                    raise LookupError(
+                        "unknown core10 activation asset ids: "
+                        + ", ".join(unknown_asset_ids)
+                    )
+
+                chunk_rows = conn.execute(
+                    """
+                    WITH selected_chunks AS (
+                        SELECT c.asset_id, c.title, c.source_path, c.normalized_path,
+                               c.domain, c.stage, c.chunk_index, c.content, c.updated_at
+                        FROM hxy_knowledge_chunks AS c
+                        WHERE c.asset_id = ANY(%s)
+                    ), ranked_chunks AS (
+                        SELECT asset_id, title, source_path, normalized_path,
+                               domain, stage, chunk_index,
+                               LEFT(content, %s) AS content,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY asset_id
+                                   ORDER BY chunk_index ASC, updated_at DESC
+                               ) AS evidence_rank
+                        FROM selected_chunks
+                    )
+                    SELECT asset_id, title, source_path, normalized_path,
+                           domain, stage, chunk_index, content
+                    FROM ranked_chunks
+                    WHERE evidence_rank <= %s
+                    ORDER BY asset_id, chunk_index
+                    """,
+                    (
+                        selected_asset_ids,
+                        excerpt_chars,
+                        evidence_limit_per_asset,
+                    ),
+                ).fetchall()
+                for row in chunk_rows:
+                    asset_id = str(row.get("asset_id") or "")
+                    evidence = evidence_by_asset.get(asset_id)
+                    if evidence is None or len(evidence) >= evidence_limit_per_asset:
+                        continue
+                    evidence.append(
+                        {
+                            **{field: row.get(field) for field in evidence_fields},
+                            "content": str(row.get("content") or "")[:excerpt_chars],
+                        }
+                    )
+
+            approved_answer_card_rows = conn.execute(
+                """
+                SELECT card_id::text, question_pattern, intent, audience, answer, status
+                FROM hxy_knowledge_answer_cards
+                WHERE status = %s
+                ORDER BY updated_at DESC
+                LIMIT %s
+                """,
+                ("approved", _MAX_CORE10_APPROVED_ANSWER_CARDS),
+            ).fetchall()
+
+        for asset_id, source in source_by_id.items():
+            source["evidence"] = evidence_by_asset[asset_id]
+        return {
+            "product_sources": [source_by_id[asset_id] for asset_id in product_asset_ids],
+            "operations_sources": [
+                source_by_id[asset_id] for asset_id in operations_asset_ids
+            ],
+            "approved_answer_cards": [
+                {field: row.get(field) for field in answer_card_fields}
+                for row in approved_answer_card_rows
+                if row.get("status") == "approved"
+            ],
+        }
 
     def classify_source_authority(
         self,
