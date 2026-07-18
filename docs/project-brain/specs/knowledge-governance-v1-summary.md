@@ -1,5 +1,7 @@
 # HXY 知识治理 v1 摘要
 
+> 治理提示：本文件记录早期候选与风险扫描，不是当前扩张战略。涉及“开放单店加盟”、加盟门槛和开店数量的内容已经被后续决策覆盖，只能作为历史参考，不能作为正式战略、招商承诺或系统默认配置。当前权威决策见 `docs/plans/2026-07-18-hxyos-mixed-operating-model-design.md`。
+
 生成来源：`knowledge/hxy/structured/claims.json`
 
 ## 规模

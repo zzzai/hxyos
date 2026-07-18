@@ -2,9 +2,9 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Build the Feishu-first store issue loop so a verified HXY user can report a real operating problem from Feishu or PWA, receive AI-assisted classification asynchronously, complete corrective work with evidence, pass risk-based acceptance, and produce auditable metrics.
+**Goal:** Build the direct-operated pilot store Feishu/PWA issue loop on a unified HXY data catalog so a verified user can report a real operating problem, receive asynchronous AI-assisted classification, complete corrective work with evidence, pass governed acceptance, and produce auditable metrics without blocking future mixed operating modes.
 
-**Architecture:** Feishu and PWA write an immutable `InboundEnvelope` and transactional `OutboxMessage` before any model call. A PostgreSQL worker creates an `AIProposal`; deterministic policy converts accepted proposals into `OperatingEvent`, `WorkflowInstance`, `Task`, `Evidence`, `StateTransition`, and `MetricFact` records. Feishu is the default collaboration channel, while PWA handles capture and evidence-heavy steps through authenticated deep links.
+**Architecture:** First establish organization-level `SourceAsset`, structured-data snapshots, store operating relationships, governance profiles, metric definitions, and asset lineage. Feishu and PWA then write an immutable `InboundEnvelope` and transactional `OutboxMessage` before any model call. A PostgreSQL worker creates an `AIProposal`; deterministic policy converts accepted proposals into governed operating records. Feishu is the default collaboration channel, while HXYOS PWA remains a first-class conversation, upload, task, evidence, and training surface.
 
 **Tech Stack:** Python 3, FastAPI, Pydantic 2, psycopg 3, PostgreSQL 16, pgvector only for governed knowledge, httpx, React 19, TypeScript, Vite, Vitest, Playwright, systemd, Nginx.
 
@@ -18,17 +18,157 @@
 4. Do not call an LLM inside the transaction that stores channel input.
 5. Do not let AI act as a state-transition actor or write `MetricFact` values.
 6. Do not ingest all Feishu communication. Only designated groups, `@HXYOS`, explicit actions, and authorized workflows enter HXYOS.
-7. Keep ordinary user surfaces limited to `对话 / 今日 / 我的`; admin and dead-letter operations use separate routes.
+7. Keep ordinary user surfaces limited to `对话 / 上传 / 今日 / 我的`; admin and dead-letter operations use separate routes.
 8. Use existing PostgreSQL lease/retry semantics from `material_repository.py`; do not add Celery, Redis, Temporal, or another queue in V1.
 9. Use Chinese package mirrors for any dependency installation.
 10. Commit after every task. Never combine schema, worker, Feishu, UI, and deployment into one commit.
+11. V1 operates only the 直营首店 path. Preserve `StoreOperatingRelationship` and `GovernanceProfile` boundaries, but do not build 加盟管理功能、招商、区域代理 or mixed-mode settlement.
+12. Evolve `hxy_product_materials` into the V1 `SourceAsset` implementation; do not create a second competing upload table.
+13. Treat external POS/member/payment/groupbuy systems as the initial system of record for transactions. HXYOS stores immutable snapshots, normalized facts, and lineage only.
 
 ## Phase A: Freeze The Business Facts
 
-### Task 1: Add the V1 operating schema migration
+### Task 1: Add the unified data catalog and operating relationship migration
 
 **Files:**
-- Create: `data/migrations/020_hxy_operating_loop.sql`
+- Create: `data/migrations/020_hxy_data_catalog.sql`
+- Create: `tests/test_hxy_data_catalog_migration.py`
+
+**Step 1: Write the failing migration contract test**
+
+The test must require the organization-level source asset evolution and the new catalog objects:
+
+```python
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+MIGRATION = ROOT / "data" / "migrations" / "020_hxy_data_catalog.sql"
+
+
+def test_data_catalog_separates_assets_datasets_facts_metrics_and_lineage():
+    sql = MIGRATION.read_text(encoding="utf-8")
+    normalized = " ".join(sql.split())
+    for table in (
+        "hxy_legal_entities",
+        "hxy_operating_mode_catalog",
+        "hxy_governance_profiles",
+        "hxy_store_operating_relationships",
+        "hxy_data_sources",
+        "hxy_data_connectors",
+        "hxy_dataset_snapshots",
+        "hxy_business_facts",
+        "hxy_metric_definitions",
+        "hxy_asset_bindings",
+    ):
+        assert f"CREATE TABLE IF NOT EXISTS {table}" in normalized
+    assert "ALTER TABLE hxy_product_materials" in normalized
+    assert "ADD COLUMN IF NOT EXISTS organization_id" in normalized
+    assert "ADD COLUMN IF NOT EXISTS store_id" in normalized
+    assert "CREATE TABLE IF NOT EXISTS hxy_source_assets" not in normalized
+    assert "htops" not in sql.lower()
+
+
+def test_catalog_keeps_relationships_and_snapshots_versioned():
+    sql = MIGRATION.read_text(encoding="utf-8")
+    normalized = " ".join(sql.split())
+    assert "relationship_version" in normalized
+    assert "profile_version" in normalized
+    assert "schema_version" in normalized
+    assert "normalization_version" in normalized
+    assert "metric_key" in normalized
+    assert "formula" in normalized
+    assert "configuration_ref" in normalized
+    assert "api_key" not in sql.lower()
+    assert "DROP TABLE" not in sql.upper()
+    assert "DELETE FROM" not in sql.upper()
+```
+
+**Step 2: Run the test to verify it fails**
+
+```bash
+.venv/bin/pytest tests/test_hxy_data_catalog_migration.py -q
+```
+
+Expected: FAIL because `020_hxy_data_catalog.sql` does not exist.
+
+**Step 3: Write the migration**
+
+Evolve `hxy_product_materials` into the V1 physical implementation of `SourceAsset` by adding and backfilling:
+
+```text
+organization_id
+store_id
+asset_kind
+visibility_scope
+retention_policy
+scan_status
+```
+
+Derive organization and store from the existing uploader assignment. Preserve `assignment_id` for compatibility; treat it as `uploaded_by_assignment_id` in domain code. Do not create a second upload table and do not delete existing material history.
+
+Create:
+
+```text
+hxy_legal_entities
+  organization-scoped owner/operator identity; no payment credentials
+
+hxy_operating_mode_catalog
+  versioned mode codes; direct_operated is the only V1 active mode
+
+hxy_governance_profiles
+  decision rights, approval policy refs, data access policy,
+  required metric definitions, audit policy, effective period
+
+hxy_store_operating_relationships
+  store, owner entity, operator entity, mode code, relationship version,
+  governance profile, agreement SourceAsset, effective period
+
+hxy_data_sources
+  source type, name, system-of-record flag, data classification, owner
+
+hxy_data_connectors
+  api|webhook|scheduled_sync|file_import, configuration_ref, cursor, status;
+  never store provider secrets in configuration JSON
+
+hxy_dataset_snapshots
+  immutable import/sync version, source, connector, period, hash,
+  schema version, record count, object key and ingestion status
+
+hxy_business_facts
+  source snapshot, source record key, fact type, dimensions, measures,
+  occurred_at and normalization version
+
+hxy_metric_definitions
+  governed metric key/version, allow-listed formula DSL or tested calculation_ref,
+  required fact types and effective period; arbitrary SQL/code execution forbidden
+
+hxy_asset_bindings
+  generic source/target/relation lineage with organization scope
+```
+
+Use append-only guards for dataset snapshots, business facts, relationship history, metric definitions after publication, and asset bindings. Use `btree_gist` plus an exclusion constraint on `(organization_id, store_id, tstzrange(effective_from, effective_to))` for active relationships so effective periods cannot overlap; a normal unique index is insufficient.
+
+Do not seed fictional franchise contracts, legal entities, stores, orders, members, or financial facts. Store bootstrap data is a separate authorized command.
+
+**Step 4: Run the migration tests**
+
+```bash
+.venv/bin/pytest tests/test_hxy_data_catalog_migration.py tests/test_hxy_product_materials.py tests/test_hxy_product_identity.py -q
+```
+
+Expected: PASS.
+
+**Step 5: Commit**
+
+```bash
+git add data/migrations/020_hxy_data_catalog.sql tests/test_hxy_data_catalog_migration.py
+git commit -m "feat: add HXY unified data catalog"
+```
+
+### Task 2: Add the V1 operating schema migration
+
+**Files:**
+- Create: `data/migrations/021_hxy_operating_loop.sql`
 - Create: `tests/test_hxy_operating_loop_migration.py`
 
 **Step 1: Write the failing migration contract test**
@@ -39,7 +179,7 @@ The test must assert the presence of these tables:
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-MIGRATION = ROOT / "data" / "migrations" / "020_hxy_operating_loop.sql"
+MIGRATION = ROOT / "data" / "migrations" / "021_hxy_operating_loop.sql"
 
 
 def test_operating_loop_migration_defines_channel_ai_work_and_evidence_objects():
@@ -85,7 +225,7 @@ Run:
 .venv/bin/pytest tests/test_hxy_operating_loop_migration.py -q
 ```
 
-Expected: FAIL because migration `020_hxy_operating_loop.sql` does not exist.
+Expected: FAIL because migration `021_hxy_operating_loop.sql` does not exist.
 
 **Step 3: Write the migration**
 
@@ -123,6 +263,7 @@ hxy_operating_events
   severity low|medium|high|critical
   status open|active|resolved|closed|cancelled
   source envelope and reporter assignment scoped by organization/store
+  store operating relationship and governance profile snapshots are required
 
 hxy_workflow_instances
   pending|running|waiting|completed|cancelled|failed
@@ -134,14 +275,15 @@ hxy_product_tasks extensions
   expand statuses to open|assigned|in_progress|submitted|accepted|rework|cancelled
 
 hxy_operating_evidence
-  immutable evidence with supersedes_evidence_id
-  file hash, object key, scan state, visibility scope
+  immutable evidence with supersedes_evidence_id and SourceAsset reference
+  evidence meaning is separate from file storage metadata
 
 hxy_state_transitions
   append-only, AI forbidden as actor by enum
 
 hxy_metric_facts
-  derived transition IDs, calculation version, no overwrite
+  MetricDefinition reference, derived transition/snapshot IDs,
+  calculation version, no overwrite
 ```
 
 Add append-only triggers for `hxy_outbox_attempts`, `hxy_operating_evidence`, `hxy_state_transitions`, and `hxy_metric_facts`, following the trigger pattern in `015_hxy_product_tasks.sql`.
@@ -159,11 +301,11 @@ Expected: PASS.
 **Step 5: Commit**
 
 ```bash
-git add data/migrations/020_hxy_operating_loop.sql tests/test_hxy_operating_loop_migration.py
+git add data/migrations/021_hxy_operating_loop.sql tests/test_hxy_operating_loop_migration.py
 git commit -m "feat: add HXY operating loop schema"
 ```
 
-### Task 2: Implement deterministic risk and auto-advance policy
+### Task 3: Implement deterministic risk and auto-advance policy
 
 **Files:**
 - Create: `apps/api/hxy_product/operating_policy.py`
@@ -285,7 +427,7 @@ git commit -m "feat: add deterministic operating risk policy"
 
 ## Phase B: Reliable Intake And AI Understanding
 
-### Task 3: Add atomic channel intake and identity bindings
+### Task 4: Add atomic channel intake and identity bindings
 
 **Files:**
 - Create: `apps/api/hxy_product/channel_schemas.py`
@@ -322,7 +464,7 @@ Required payload fields:
     "idempotency_key": "feishu:event-id",
     "raw_text": "前台灯闪烁",
     "raw_payload": {...},
-    "attachment_refs": [...],
+    "source_asset_ids": [...],
 }
 ```
 
@@ -342,8 +484,11 @@ Repository SQL order for mapped identities:
 
 ```text
 SELECT binding + active assignment FOR SHARE
+SELECT current StoreOperatingRelationship + GovernanceProfile FOR SHARE
+authorize linked SourceAssets in organization/store/visibility scope
 SELECT existing envelope by idempotency key
 INSERT hxy_inbound_envelopes
+INSERT hxy_asset_bindings for envelope/source assets
 INSERT hxy_outbox_messages
 UPDATE envelope status = queued
 COMMIT
@@ -366,7 +511,7 @@ git add apps/api/hxy_product/channel_schemas.py apps/api/hxy_product/channel_rep
 git commit -m "feat: add atomic HXY channel intake"
 ```
 
-### Task 4: Extract a generic PostgreSQL outbox runtime
+### Task 5: Extract a generic PostgreSQL outbox runtime
 
 **Files:**
 - Create: `apps/api/hxy_product/outbox_repository.py`
@@ -446,7 +591,7 @@ git add apps/api/hxy_product/outbox_repository.py apps/api/hxy_product/outbox_wo
 git commit -m "feat: add durable HXY outbox runtime"
 ```
 
-### Task 5: Add asynchronous multimodal issue-understanding proposals
+### Task 6: Add asynchronous multimodal issue-understanding proposals
 
 **Files:**
 - Create: `apps/api/hxy_product/issue_understanding.py`
@@ -535,7 +680,7 @@ git commit -m "feat: add asynchronous issue understanding"
 
 ## Phase C: Deterministic Operating Workflow
 
-### Task 6: Implement operating event commands and state transitions
+### Task 7: Implement operating event commands and state transitions
 
 **Files:**
 - Create: `apps/api/hxy_product/operating_schemas.py`
@@ -563,6 +708,7 @@ Required tests:
 
 ```text
 accepted requires an acceptance actor and valid evidence
+event creation snapshots the current StoreOperatingRelationship and GovernanceProfile
 submitted moves the operating event to resolved only when all active tasks are submitted/accepted
 low/medium event may be accepted by store manager
 high event requires founder or HQ operations
@@ -600,6 +746,7 @@ Every command must:
 ```text
 lock the aggregate FOR UPDATE
 validate tenant/store/role scope
+evaluate the snapshotted GovernanceProfile, not a browser-supplied mode
 validate current state
 write new business state
 append StateTransition with correlation_id
@@ -624,7 +771,7 @@ git add apps/api/hxy_product/operating_schemas.py apps/api/hxy_product/operating
 git commit -m "feat: add governed operating workflow"
 ```
 
-### Task 7: Add authenticated PWA issue and evidence APIs
+### Task 8: Add authenticated PWA issue and evidence APIs
 
 **Files:**
 - Create: `apps/api/hxy_product/operating_routes.py`
@@ -655,6 +802,8 @@ Test that:
 - the browser cannot choose another organization/store/reporter;
 - duplicate `client_intake_id` returns the existing receipt;
 - intake responds `202` with `received` or `understanding` without waiting for AI;
+- ordinary HXYOS upload can create a SourceAsset without creating an OperatingEvent;
+- a user may bind an authorized SourceAsset to an intake, task, training item, or evidence;
 - evidence upload validates size, extension, MIME, file hash, store scope, and task state;
 - employee cannot accept high-risk work;
 - returned payload never exposes internal storage paths, model prompts, or raw callback bodies.
@@ -679,12 +828,15 @@ Map them minimally by existing roles.
 
 Expected: FAIL.
 
-**Step 3: Implement routes and evidence storage**
+**Step 3: Implement routes and evidence binding**
 
-Use the path-safety and atomic-file techniques from `material_routes.py` and `material_worker.py`, but store evidence under:
+Reuse the organization-level `SourceAsset` upload path from `material_routes.py` and `material_worker.py`. An evidence submission creates an immutable `Evidence` record that references the authorized SourceAsset and adds an `AssetBinding`; do not write the same binary into a second evidence directory.
 
 ```text
-data/operating-evidence/{organization_id}/{store_id}/{event_id}/{task_id}/{evidence_id}/source.ext
+SourceAsset
+→ AssetBinding(relation_type=evidence_for)
+→ Evidence
+→ Task / OperatingEvent
 ```
 
 Only opaque signed URLs or authenticated streaming routes are public. Never return `object_key` or local paths to ordinary clients.
@@ -706,7 +858,7 @@ git add apps/api/hxy_product/operating_routes.py apps/api/hxy_product/evidence_r
 git commit -m "feat: expose governed operating APIs"
 ```
 
-### Task 8: Compute metric facts from transitions
+### Task 9: Compute metric facts from transitions
 
 **Files:**
 - Create: `apps/api/hxy_product/operating_metrics.py`
@@ -723,7 +875,7 @@ issue_rework_count = number of submitted -> rework transitions
 issue_acceptance_count = number of submitted -> accepted transitions
 ```
 
-The calculator input is records and timestamps, never free text or a model answer.
+The calculator input is records and timestamps, never free text or a model answer. Each output must reference a published `MetricDefinition` version.
 
 **Step 2: Verify failure**
 
@@ -741,7 +893,7 @@ Expose:
 CALCULATION_VERSION = "operating-metrics.v1"
 
 
-def calculate_closed_event_facts(event, transitions) -> list[MetricFactDraft]:
+def calculate_closed_event_facts(event, transitions, metric_definitions) -> list[MetricFactDraft]:
     ...
 ```
 
@@ -764,7 +916,7 @@ git commit -m "feat: derive operating metrics from audit facts"
 
 ## Phase D: Feishu As The Default Channel
 
-### Task 9: Implement Feishu callback verification and identity mapping
+### Task 10: Implement Feishu callback verification and identity mapping
 
 **Files:**
 - Create: `apps/api/hxy_product/feishu_gateway.py`
@@ -866,7 +1018,7 @@ git add apps/api/hxy_product/feishu_gateway.py apps/api/hxy_product/feishu_schem
 git commit -m "feat: add verified Feishu channel gateway"
 ```
 
-### Task 10: Add Feishu notifications, action cards, and authenticated deep links
+### Task 11: Add Feishu notifications, action cards, and authenticated deep links
 
 **Files:**
 - Create: `apps/api/hxy_product/feishu_client.py`
@@ -944,7 +1096,7 @@ git commit -m "feat: add Feishu operating cards and deep links"
 
 ## Phase E: Minimal PWA Work Surface
 
-### Task 11: Replace the current issue form with conversation-first capture
+### Task 12: Replace the current issue form with conversation-first capture
 
 **Files:**
 - Create: `apps/hxy-web/src/api/operating.ts`
@@ -952,6 +1104,8 @@ git commit -m "feat: add Feishu operating cards and deep links"
 - Create: `apps/hxy-web/src/features/operating/IssueCapture.test.tsx`
 - Create: `apps/hxy-web/src/features/operating/IssueDetail.tsx`
 - Create: `apps/hxy-web/src/features/operating/IssueDetail.test.tsx`
+- Create: `apps/hxy-web/src/features/materials/UploadSourceAsset.tsx`
+- Create: `apps/hxy-web/src/features/materials/UploadSourceAsset.test.tsx`
 - Modify: `apps/hxy-web/src/App.tsx`
 - Modify: `apps/hxy-web/src/styles/shell.css`
 - Modify: `apps/hxy-web/src/App.test.tsx`
@@ -979,12 +1133,20 @@ expect(screen.getByRole("button", { name: "拍照或添加图片" })).toBeEnable
 expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
 ```
 
+The upload view must also prove:
+
+```tsx
+expect(screen.getByRole("heading", { name: "上传资料" })).toBeVisible();
+expect(screen.getByLabelText("选择资料")).toBeEnabled();
+expect(screen.getByText("进入组织资料待处理区")).toBeVisible();
+```
+
 There must not be a required separate “问题标题” field. AI may propose a title after receipt.
 
 **Step 2: Verify failure**
 
 ```bash
-npm --prefix apps/hxy-web test -- --run src/features/operating/IssueCapture.test.tsx src/features/operating/IssueDetail.test.tsx
+npm --prefix apps/hxy-web test -- --run src/features/operating/IssueCapture.test.tsx src/features/operating/IssueDetail.test.tsx src/features/materials/UploadSourceAsset.test.tsx
 ```
 
 Expected: FAIL because components do not exist.
@@ -1011,17 +1173,18 @@ one valid next action for the current user
 
 Do not add dashboards, nested cards, claim review, AI trace, model names, or knowledge compiler internals.
 
-**Step 4: Wire into the existing three-view shell**
+**Step 4: Wire into the existing four-view shell**
 
 Keep:
 
 ```text
 对话
+上传
 今日
 我的
 ```
 
-Rename the current `tasks` label to `今日` in user-visible copy without adding a fourth primary navigation item. Preserve the main conversation box.
+Preserve the main conversation box. `上传` opens a minimal source-asset surface with file selection, optional note, current visibility, processing state, preview, and optional binding to a task/problem/training context. It must not expose review queues, claims, model traces, parser configuration, or governance internals.
 
 **Step 5: Verify pass and build**
 
@@ -1035,11 +1198,11 @@ Expected: all Vitest tests PASS and Vite build succeeds.
 **Step 6: Commit**
 
 ```bash
-git add apps/hxy-web/src/api/operating.ts apps/hxy-web/src/features/operating apps/hxy-web/src/App.tsx apps/hxy-web/src/styles/shell.css apps/hxy-web/src/App.test.tsx
+git add apps/hxy-web/src/api/operating.ts apps/hxy-web/src/features/operating apps/hxy-web/src/features/materials apps/hxy-web/src/App.tsx apps/hxy-web/src/styles/shell.css apps/hxy-web/src/App.test.tsx
 git commit -m "feat: add minimal operating capture experience"
 ```
 
-### Task 12: Add mobile and desktop Playwright coverage
+### Task 13: Add mobile and desktop Playwright coverage
 
 **Files:**
 - Create: `apps/hxy-web/tests/operating-loop.spec.ts`
@@ -1060,6 +1223,8 @@ Required journeys:
 ```text
 report text-only issue in <= 30 seconds of user interaction
 report issue with photo
+upload and preview a SourceAsset without creating an OperatingEvent
+bind an uploaded SourceAsset to an existing task as evidence
 leave page after received and later find it under 今日
 open task from Feishu-style deep link
 submit evidence
@@ -1107,7 +1272,7 @@ git commit -m "test: cover operating loop across viewports"
 
 ## Phase F: Operations And Production Safety
 
-### Task 13: Add a separate admin dead-letter and retry surface
+### Task 14: Add a separate admin dead-letter and retry surface
 
 **Files:**
 - Create: `apps/api/hxy_product/job_routes.py`
@@ -1162,7 +1327,7 @@ git add apps/api/hxy_product/job_routes.py apps/api/hxy_knowledge_api.py tests/t
 git commit -m "feat: add governed outbox recovery controls"
 ```
 
-### Task 14: Add systemd, environment, Nginx, and runbook configuration
+### Task 15: Add systemd, environment, Nginx, and runbook configuration
 
 **Files:**
 - Create: `ops/systemd/hxy-outbox-worker.service`
@@ -1241,7 +1406,7 @@ git commit -m "ops: add Feishu operating loop deployment"
 
 ## Phase G: End-To-End Acceptance
 
-### Task 15: Prove ten real-style operating scenarios
+### Task 16: Prove ten real-style operating scenarios
 
 **Files:**
 - Create: `tests/fixtures/operating-loop/store-issue-scenarios.json`
@@ -1338,12 +1503,15 @@ The vertical slice is complete only when all conditions are true:
 ```text
 Feishu callback verification is based on current official documentation
 Feishu and PWA intake are idempotent
+020 data catalog precedes 021 operating-loop migration
+HXYOS upload creates organization-scoped SourceAssets without automatic publication
 raw input survives model outage
 AI output remains an AIProposal until policy/user acceptance
 10 scenarios pass end to end
 closed events have owner, state history, and evidence
+events retain StoreOperatingRelationship and GovernanceProfile versions
 high/critical events require authorized human acceptance
-metrics are derived from transitions
+metrics reference published MetricDefinitions and are derived from transitions/facts
 ordinary UI contains no governance/compiler internals
 mobile and desktop Playwright tests pass
 HXY and htops remain fully isolated

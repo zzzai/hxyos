@@ -1,4 +1,6 @@
 # HXY 结构化知识资产 v1
+
+> 治理提示：本文件是历史自动抽取结果，不是当前战略权威源。其中“开放单店加盟”、扩张数量和时间表仅作为历史参考或待验证假设。当前正式决策以 `docs/plans/2026-07-18-hxyos-mixed-operating-model-design.md` 为准：先直营验证，再按证据开放混合经营模式。
 生成来源：`knowledge/hxy/index.json`
 
 ## 规模
