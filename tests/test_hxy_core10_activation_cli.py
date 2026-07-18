@@ -705,6 +705,55 @@ def test_cli_builds_packet_from_one_read_only_snapshot_without_leaking_content(
     assert (artifact_dirs[0] / "packet.json").is_file()
 
 
+def test_cli_reads_private_data_from_trusted_root_when_code_runs_from_release(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cli = _load_cli_module()
+    release_root = tmp_path / "releases" / "authority-answer" / "candidate"
+    trusted_root = tmp_path / "hxy"
+    release_root.mkdir(parents=True)
+    inputs = _write_cli_inputs(trusted_root)
+    _ReadOnlySnapshotRepository.created_with = []
+    _ReadOnlySnapshotRepository.snapshot_calls = []
+
+    class RecordingConstitutionAdapter(_MissingConstitutionAdapter):
+        created_with: list[Path] = []
+
+        def __init__(self, root: Path) -> None:
+            self.created_with.append(root)
+
+    monkeypatch.setattr(cli, "ROOT", release_root)
+    monkeypatch.setattr(cli, "KnowledgeRepository", _ReadOnlySnapshotRepository)
+    monkeypatch.setattr(cli, "BrandConstitutionAdapter", RecordingConstitutionAdapter)
+    monkeypatch.setenv("HXY_ROOT_DIR", str(trusted_root))
+    monkeypatch.setenv("HXY_TEST_DATABASE_URL", "postgresql://snapshot.test/hxy")
+
+    result = cli.main(
+        [
+            "--report",
+            str(inputs["report"]),
+            "--selection",
+            str(inputs["selection"]),
+            "--output-root",
+            "data/private/core10-activation",
+            "--database-url-env",
+            "HXY_TEST_DATABASE_URL",
+        ]
+    )
+
+    assert result == 0
+    assert RecordingConstitutionAdapter.created_with == [trusted_root]
+    output = capsys.readouterr()
+    assert output.err == ""
+    assert str(trusted_root) not in output.out
+    assert any(
+        path.is_dir() and path.name.startswith("core10-activation-")
+        for path in inputs["private_root"].iterdir()
+    )
+
+
 @pytest.mark.parametrize(
     "selection_overrides",
     [

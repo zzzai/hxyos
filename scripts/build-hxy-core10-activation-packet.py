@@ -59,10 +59,27 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _trusted_root() -> Path:
+    configured = os.environ.get("HXY_ROOT_DIR", "").strip()
+    candidate = Path(configured) if configured else ROOT
+    if not candidate.is_absolute():
+        raise PrivateInputError("trusted root must be absolute")
+    lexical = Path(os.path.abspath(candidate))
+    if lexical.is_symlink():
+        raise PrivateInputError("symlink trusted root is not allowed")
+    try:
+        resolved = lexical.resolve(strict=True)
+    except OSError as error:
+        raise PrivateInputError("trusted root is unavailable") from error
+    if not resolved.is_dir():
+        raise PrivateInputError("trusted root must be a directory")
+    return resolved
+
+
 def _lexical_path(value: str) -> Path:
     candidate = Path(value)
     if not candidate.is_absolute():
-        candidate = ROOT / candidate
+        candidate = _trusted_root() / candidate
     return Path(os.path.abspath(candidate))
 
 
@@ -85,7 +102,7 @@ def _is_below(path: Path, parent: Path) -> bool:
 
 
 def _private_root() -> Path:
-    return (ROOT / "data" / "private").resolve()
+    return (_trusted_root() / "data" / "private").resolve()
 
 
 def _resolve_input_file(
@@ -96,16 +113,19 @@ def _resolve_input_file(
     if not isinstance(value, str) or not value.strip():
         raise PrivateInputError("invalid input path")
     lexical = _lexical_path(value.strip())
-    project_root = ROOT.resolve()
-    if not _is_below(lexical, project_root):
-        raise PrivateInputError("input path is outside the project")
-    if _path_has_symlink(lexical, project_root):
+    resolved_roots = tuple(root.resolve() for root in allowed_roots)
+    lexical_root = next(
+        (root for root in resolved_roots if _is_below(lexical, root)),
+        None,
+    )
+    if lexical_root is None:
+        raise PrivateInputError("input path is outside its allowlist")
+    if _path_has_symlink(lexical, lexical_root):
         raise PrivateInputError("symlink input is not allowed")
     try:
         resolved = lexical.resolve(strict=True)
     except OSError as error:
         raise PrivateInputError("input file is unavailable") from error
-    resolved_roots = tuple(root.resolve() for root in allowed_roots)
     if not any(_is_below(resolved, root) for root in resolved_roots):
         raise PrivateInputError("input path is outside its allowlist")
     if not resolved.is_file() or resolved.is_symlink():
@@ -117,13 +137,13 @@ def _resolve_output_root(value: Any) -> Path:
     if not isinstance(value, str) or not value.strip():
         raise PrivateInputError("invalid output path")
     lexical = _lexical_path(value.strip())
-    project_root = ROOT.resolve()
-    if not _is_below(lexical, project_root):
-        raise PrivateInputError("output path is outside the project")
-    if _path_has_symlink(lexical, project_root):
+    private_root = _private_root()
+    if not _is_below(lexical, private_root):
+        raise PrivateInputError("output path is outside the private root")
+    if _path_has_symlink(lexical, private_root):
         raise PrivateInputError("symlink output is not allowed")
     resolved = lexical.resolve(strict=False)
-    expected = (ROOT / "data" / "private" / "core10-activation").resolve()
+    expected = (private_root / "core10-activation").resolve()
     if resolved != expected:
         raise PrivateInputError("output path must use the fixed private location")
     return resolved
@@ -204,7 +224,7 @@ def _timestamp() -> str:
 
 def _relative_artifact_path(path: Path) -> str:
     try:
-        return path.resolve().relative_to(ROOT.resolve()).as_posix()
+        return path.resolve().relative_to(_trusted_root()).as_posix()
     except ValueError as error:
         raise PrivateInputError("artifact escaped the project") from error
 
@@ -242,7 +262,7 @@ def main(argv: list[str] | None = None) -> int:
             args.report,
             allowed_roots=(
                 private_root,
-                ROOT / "data" / "releases" / "authority-answer",
+                _trusted_root() / "data" / "releases" / "authority-answer",
             ),
         )
         output_root = _resolve_output_root(args.output_root)
@@ -270,7 +290,7 @@ def main(argv: list[str] | None = None) -> int:
         packet = build_core10_activation_packet(
             report=report,
             constitution_state=_constitution_state(
-                BrandConstitutionAdapter(ROOT),
+                BrandConstitutionAdapter(_trusted_root()),
             ),
             constitution_draft=constitution_draft,
             product_sources=snapshot["product_sources"],
