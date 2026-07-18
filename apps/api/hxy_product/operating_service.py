@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from .operating_repository import OperatingWriteConflict
+from .operating_metrics import CALCULATION_VERSION
 from .operating_schemas import (
     AcceptTaskCommand,
     AssignTaskCommand,
@@ -618,6 +619,23 @@ class OperatingService:
                     actor_fields=actor_fields,
                     occurred_at=now,
                     completed_at=now,
+                )
+                event_id = _identifier(event["operating_event_id"])
+                transaction.insert_outbox_message(
+                    {
+                        "organization_id": organization_id,
+                        "topic": "metrics.operating_event.closed",
+                        "aggregate_type": "operating_event",
+                        "aggregate_id": event_id,
+                        "payload": {
+                            "organization_id": organization_id,
+                            "store_id": str(event["store_id"]),
+                            "operating_event_id": event_id,
+                            "calculation_version": CALCULATION_VERSION,
+                        },
+                        "idempotency_key": f"operating-event-closed:{event_id}:v1",
+                        "max_attempts": 5,
+                    }
                 )
             elif self._all_active_in(statuses, {"submitted", "accepted"}):
                 event = self._set_event_state(

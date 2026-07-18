@@ -399,6 +399,46 @@ class OperatingTransaction:
         assert row is not None
         return dict(row)
 
+    def insert_outbox_message(self, values: dict[str, Any]) -> dict[str, Any]:
+        row = self.connection.execute(
+            """
+            INSERT INTO hxy_outbox_messages (
+              organization_id,
+              topic,
+              aggregate_type,
+              aggregate_id,
+              payload,
+              idempotency_key,
+              max_attempts
+            )
+            VALUES (%s::uuid, %s, %s, %s::uuid, %s::jsonb, %s, %s)
+            ON CONFLICT (organization_id, topic, idempotency_key) DO UPDATE
+            SET idempotency_key = EXCLUDED.idempotency_key
+            RETURNING outbox_message_id::text,
+                      organization_id::text,
+                      topic,
+                      aggregate_type,
+                      aggregate_id::text,
+                      payload,
+                      idempotency_key,
+                      status,
+                      attempt_count,
+                      max_attempts,
+                      created_at
+            """,
+            (
+                values["organization_id"],
+                values["topic"],
+                values["aggregate_type"],
+                values["aggregate_id"],
+                json.dumps(values.get("payload") or {}, ensure_ascii=False),
+                values["idempotency_key"],
+                values.get("max_attempts", 5),
+            ),
+        ).fetchone()
+        assert row is not None
+        return dict(row)
+
     def load_command_receipt(
         self, organization_id: str, correlation_id: str
     ) -> dict[str, Any] | None:

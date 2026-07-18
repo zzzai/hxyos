@@ -513,7 +513,7 @@ def test_worker_fences_handler_side_effects_after_lease_loss() -> None:
     assert side_effects == []
 
 
-def test_cli_registers_the_issue_understanding_topic_handler() -> None:
+def test_cli_registers_issue_understanding_and_closed_event_metric_handlers() -> None:
     spec = importlib.util.spec_from_file_location("hxy_outbox_worker_cli", SCRIPT)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -524,10 +524,15 @@ def test_cli_registers_the_issue_understanding_topic_handler() -> None:
         channel_repository=object(),
         operating_repository=object(),
         model_router=object(),
+        metrics_repository=object(),
     )
 
-    assert set(handlers) == {"understand.inbound.issue"}
+    assert set(handlers) == {
+        "understand.inbound.issue",
+        "metrics.operating_event.closed",
+    }
     assert callable(handlers["understand.inbound.issue"])
+    assert callable(handlers["metrics.operating_event.closed"])
 
 
 def test_cli_fails_closed_with_json_when_database_is_not_configured() -> None:

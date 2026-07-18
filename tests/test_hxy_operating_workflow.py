@@ -131,6 +131,27 @@ class FakeOperatingTransaction:
         self.repository.transitions.append(row)
         return copy.deepcopy(row)
 
+    def insert_outbox_message(self, values: dict[str, Any]) -> dict[str, Any]:
+        existing = next(
+            (
+                item
+                for item in self.repository.outbox_messages
+                if item["organization_id"] == values["organization_id"]
+                and item["topic"] == values["topic"]
+                and item["idempotency_key"] == values["idempotency_key"]
+            ),
+            None,
+        )
+        if existing is not None:
+            return copy.deepcopy(existing)
+        row = {
+            **copy.deepcopy(values),
+            "outbox_message_id": f"outbox-{len(self.repository.outbox_messages) + 1}",
+            "status": "pending",
+        }
+        self.repository.outbox_messages.append(row)
+        return copy.deepcopy(row)
+
     def load_command_receipt(
         self, organization_id: str, correlation_id: str
     ) -> dict[str, Any] | None:
@@ -300,6 +321,7 @@ class FakeOperatingRepository:
         self.rollback_count = 0
         self.lock_calls: list[tuple[str, str]] = []
         self.metric_facts: list[dict[str, Any]] = []
+        self.outbox_messages: list[dict[str, Any]] = []
         self.transitions: list[dict[str, Any]] = []
         self.command_receipts: dict[tuple[str, str], dict[str, Any]] = {}
         self.assignments = {
@@ -367,6 +389,7 @@ class FakeOperatingRepository:
                 self.tasks,
                 self.transitions,
                 self.metric_facts,
+                self.outbox_messages,
                 self.command_receipts,
             )
         )
@@ -380,6 +403,7 @@ class FakeOperatingRepository:
                 self.tasks,
                 self.transitions,
                 self.metric_facts,
+                self.outbox_messages,
                 self.command_receipts,
             ) = before
             self.rollback_count += 1
@@ -574,6 +598,63 @@ def test_acceptance_requires_actor_and_valid_evidence() -> None:
     assert receipt.task_status == "accepted"
     assert receipt.event_status == "closed"
     assert repository.tasks[TASK_ID]["acceptance_assignment_id"] == MANAGER_ID
+
+
+def test_closing_event_enqueues_metrics_once_inside_the_command_transaction() -> None:
+    from apps.api.hxy_product.operating_schemas import AcceptTaskCommand
+
+    repository = FakeOperatingRepository()
+    _create_event(repository)
+    repository.tasks[TASK_ID]["status"] = "submitted"
+    repository.add_valid_evidence(TASK_ID)
+
+    receipt = _service(repository).accept_task(
+        AcceptTaskCommand(
+            organization_id=ORGANIZATION_ID,
+            task_id=TASK_ID,
+            actor_assignment_id=MANAGER_ID,
+            expected_updated_at=NOW,
+            reason="验收通过",
+        )
+    )
+
+    assert receipt.event_status == "closed"
+    messages = [
+        item
+        for item in repository.outbox_messages
+        if item["topic"] == "metrics.operating_event.closed"
+    ]
+    assert len(messages) == 1
+    assert messages[0]["aggregate_id"] == EVENT_ID
+    assert messages[0]["idempotency_key"] == f"operating-event-closed:{EVENT_ID}:v1"
+    assert messages[0]["payload"] == {
+        "organization_id": ORGANIZATION_ID,
+        "store_id": STORE_ID,
+        "operating_event_id": EVENT_ID,
+        "calculation_version": "operating-metrics.v1",
+    }
+
+
+def test_non_terminal_task_change_does_not_enqueue_metric_message() -> None:
+    from apps.api.hxy_product.operating_schemas import StartTaskCommand
+
+    repository = FakeOperatingRepository()
+    _create_event(repository)
+
+    _service(repository).start_task(
+        StartTaskCommand(
+            organization_id=ORGANIZATION_ID,
+            task_id=TASK_ID,
+            actor_assignment_id=EMPLOYEE_ID,
+            expected_updated_at=NOW,
+        )
+    )
+
+    assert not [
+        item
+        for item in repository.outbox_messages
+        if item["topic"] == "metrics.operating_event.closed"
+    ]
 
 
 def test_evidence_from_another_store_is_not_valid_for_acceptance() -> None:

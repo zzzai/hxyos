@@ -23,6 +23,10 @@ from hxy_product.issue_understanding import (  # noqa: E402
     build_issue_understanding_handler,
 )
 from hxy_product.operating_policy import evaluate_issue_proposal  # noqa: E402
+from hxy_product.operating_metrics import (  # noqa: E402
+    OperatingMetricsRepository,
+    build_closed_event_metrics_handler,
+)
 from hxy_knowledge.model_router import ModelRouter  # noqa: E402
 
 
@@ -32,17 +36,20 @@ def build_handlers(
     channel_repository=None,
     operating_repository=None,
     model_router=None,
+    metrics_repository=None,
 ) -> dict:
     channel = channel_repository or ChannelRepository(database_url)
     operating = operating_repository or IssueProposalRepository(database_url)
     router = model_router or ModelRouter()
+    metrics = metrics_repository or OperatingMetricsRepository(database_url)
     return {
         "understand.inbound.issue": build_issue_understanding_handler(
             channel,
             operating,
             router,
             evaluate_issue_proposal,
-        )
+        ),
+        "metrics.operating_event.closed": build_closed_event_metrics_handler(metrics),
     }
 
 
