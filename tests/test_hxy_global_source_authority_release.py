@@ -186,6 +186,21 @@ def test_preflight_requires_clean_pending_state() -> None:
     assert evaluate_release_snapshot(_applied_snapshot(), phase="preflight")["status"] == "failed"
 
 
+def test_preflight_ignores_constraints_that_predate_global_authority() -> None:
+    from apps.api.hxy_release.global_source_authority_release import evaluate_release_snapshot
+
+    pending = _pending_snapshot()
+    pending["constraints"] = [
+        ("hxy_knowledge_assets", "p", ("asset_id",)),
+        ("hxy_knowledge_assets", "f", ("run_name",)),
+    ]
+
+    result = evaluate_release_snapshot(pending, phase="preflight")
+
+    assert result["status"] == "passed"
+    assert result["migration_state"] == "pending"
+
+
 def test_postflight_requires_complete_semantic_contract_and_safe_baseline() -> None:
     from apps.api.hxy_release.global_source_authority_release import evaluate_release_snapshot
 

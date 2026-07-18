@@ -431,11 +431,11 @@ def _shape_complete(snapshot: dict[str, Any]) -> bool:
 
 
 def _migration_state(snapshot: dict[str, Any]) -> str:
+    # Base-table constraints predate 019 and are not evidence of a partial migration.
     no_objects = (
         not snapshot.get("authority_columns")
         and snapshot.get("event_table_present") is False
         and not snapshot.get("event_columns")
-        and not snapshot.get("constraints")
         and not snapshot.get("triggers")
         and not snapshot.get("indexes")
         and not snapshot.get("routines")
