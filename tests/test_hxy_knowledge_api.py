@@ -3443,6 +3443,13 @@ used_by:
         self.assertNotIn("44194 bytes", serialized)
         self.assertNotIn("chunk-noisy", serialized)
 
+    def test_first_store_opening_question_expands_to_store_operations_evidence(self):
+        module = importlib.import_module("apps.api.hxy_knowledge_api")
+
+        queries = module._fallback_queries("首店开业前当前最应该先做什么？")
+
+        self.assertIn("小店模型 门店 运营", queries)
+
     def test_operating_brain_source_brief_chooses_higher_quality_fallback_when_initial_hits_are_mixed_noise(self):
         noisy_content = (
             "file: Desktop.zip (44194 bytes) source_path: knowledge/raw/inbox/Desktop.zip "

@@ -1649,6 +1649,18 @@ class HxyKnowledgeServiceTest(unittest.TestCase):
         self.assertIn("CASE WHEN c.domain = %s THEN 40 ELSE 0 END", sql)
         self.assertIn("store_model", params)
 
+    def test_repository_search_query_boosts_recorded_internal_authority(self):
+        repo = load_module(
+            "hxy_knowledge_repository_authority_boost",
+            "apps/api/hxy_knowledge/repository.py",
+        )
+
+        sql, _params = repo.build_search_query("门店员工接待纠错", domain_hint="operations", limit=5)
+
+        self.assertIn("a.authority_version > 0", sql)
+        self.assertIn("a.source_authority = 'official_internal'", sql)
+        self.assertIn("a.source_authority = 'internal_material'", sql)
+
     def test_repository_normalizes_review_task_question(self):
         repo = load_module("hxy_knowledge_repository_review_normalize", "apps/api/hxy_knowledge/repository.py")
 

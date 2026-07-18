@@ -768,6 +768,8 @@ def _fallback_queries(question: str) -> list[str]:
     queries: list[str] = []
     for word in phrase_stop_words:
         compact = compact.replace(word, "")
+    if any(term in question for term in ("首店", "开业")):
+        queries.append("小店模型 门店 运营")
     image_question_terms = ["图片", "图", "视觉", "画面", "海报", "菜单图", "表达", "卖点"]
     if any(term in question for term in image_question_terms):
         image_query_parts = ["图片类型", "视觉摘要", "业务摘要"]

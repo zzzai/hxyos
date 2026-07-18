@@ -150,6 +150,12 @@ def build_search_query(
     if domain_hint:
         score_parts.append("CASE WHEN c.domain = %s THEN 40 ELSE 0 END")
         score_params.append(domain_hint)
+    score_parts.append(
+        "CASE "
+        "WHEN a.authority_version > 0 AND a.source_authority = 'official_internal' THEN 100 "
+        "WHEN a.authority_version > 0 AND a.source_authority = 'internal_material' THEN 80 "
+        "ELSE 0 END"
+    )
     for _token in tokens:
         score_parts.append("CASE WHEN c.content ILIKE %s THEN 10 ELSE 0 END")
     score_params.extend(token_patterns)
