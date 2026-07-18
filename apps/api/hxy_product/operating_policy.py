@@ -84,6 +84,7 @@ def evaluate_issue_proposal(
     proposal: Mapping[str, Any],
     published_event_types: Collection[str],
     assignment_is_active: bool,
+    suggested_owner_is_active: bool,
 ) -> PolicyDecision:
     event_type = _normalized_text(proposal.get("event_type"))
     risk_flags, risk_flags_are_valid = _risk_flags(proposal.get("risk_flags"))
@@ -106,6 +107,9 @@ def evaluate_issue_proposal(
         missing_fields.append("owner_assignment_id")
     if missing_fields:
         return PolicyDecision("request_missing", "low", tuple(missing_fields))
+
+    if not suggested_owner_is_active:
+        return PolicyDecision("require_confirmation", "medium", ())
 
     confidence = _confidence(proposal.get("confidence"))
     normalized_event_types = {

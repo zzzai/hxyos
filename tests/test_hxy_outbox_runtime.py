@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import json
 import os
 import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -158,6 +160,35 @@ def test_complete_rejects_a_worker_that_does_not_own_the_lease() -> None:
         raise AssertionError("OutboxLeaseLost was not raised")
 
 
+def test_renew_lease_requires_current_owner_and_extends_expiry() -> None:
+    module = importlib.import_module("apps.api.hxy_product.outbox_repository")
+    repository = module.OutboxRepository("postgresql://outbox.test/hxy")
+    calls: list[tuple[str, tuple[Any, ...]]] = []
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, sql: str, params: tuple[Any, ...]):
+            normalized = " ".join(sql.split())
+            calls.append((normalized, params))
+            return Result({"status": "leased"})
+
+    repository.connect = lambda: Connection()
+
+    status = repository.renew_lease(MESSAGE_ID, "worker-a", lease_seconds=120)
+
+    assert status == "leased"
+    sql, params = calls[0]
+    assert "lease_expires_at = NOW() + (%s * INTERVAL '1 second')" in sql
+    assert "lease_owner = %s" in sql
+    assert "lease_expires_at > NOW()" in sql
+    assert params == (120, MESSAGE_ID, "worker-a")
+
+
 def test_fail_uses_exponential_retry_delay_capped_at_one_hour() -> None:
     module = importlib.import_module("apps.api.hxy_product.outbox_repository")
     repository = module.OutboxRepository("postgresql://outbox.test/hxy")
@@ -222,6 +253,8 @@ def test_fail_dead_letters_after_attempt_budget_and_retains_history() -> None:
                 return Result({"attempt_id": ATTEMPT_ID})
             if "UPDATE hxy_outbox_messages" in normalized:
                 return Result({"status": "dead_letter"})
+            if "UPDATE hxy_inbound_envelopes" in normalized:
+                return Result({"envelope_id": AGGREGATE_ID})
             raise AssertionError(normalized)
 
     repository.connect = lambda: Connection()
@@ -237,6 +270,9 @@ def test_fail_dead_letters_after_attempt_budget_and_retains_history() -> None:
 
     assert status == "dead_letter"
     assert any("'dead_letter'" in sql for sql in calls)
+    attention_sql = next(sql for sql in calls if "UPDATE hxy_inbound_envelopes" in sql)
+    assert "status = 'needs_attention'" in attention_sql
+    assert "status IN ('received', 'queued', 'needs_attention')" in attention_sql
     assert not any("DELETE FROM hxy_outbox_attempts" in sql for sql in calls)
     assert not any("UPDATE hxy_outbox_attempts" in sql for sql in calls)
 
@@ -279,6 +315,7 @@ def test_reclaim_stale_leases_appends_final_attempts_and_requeues_or_dead_letter
     assert "retryable_failed" in statement
     assert "dead_letter" in statement
     assert "lease_expired" in statement
+    assert "UPDATE hxy_inbound_envelopes" in statement
     assert "UPDATE hxy_outbox_attempts" not in statement
 
 
@@ -342,7 +379,17 @@ def test_worker_dispatches_by_topic_and_completes_the_message() -> None:
     )
 
     assert result == {"status": "succeeded", "outbox_message_id": MESSAGE_ID}
-    assert seen_payloads == [{"envelope_id": AGGREGATE_ID}]
+    assert len(seen_payloads) == 1
+    assert seen_payloads[0]["envelope_id"] == AGGREGATE_ID
+    execution_scope = seen_payloads[0]["_hxy_outbox"]
+    assert execution_scope["outbox_message_id"] == MESSAGE_ID
+    assert execution_scope["organization_id"] == ORGANIZATION_ID
+    assert execution_scope["aggregate_type"] == "inbound_envelope"
+    assert execution_scope["aggregate_id"] == AGGREGATE_ID
+    assert execution_scope["attempt_number"] == 1
+    assert execution_scope["max_attempts"] == 5
+    assert execution_scope["worker_id"] == "worker-a"
+    assert callable(execution_scope["assert_lease"])
     assert repository.completed == (MESSAGE_ID, "worker-a", {"ok": True})
 
 
@@ -388,6 +435,99 @@ def test_worker_marks_retryable_handler_errors_without_losing_the_message() -> N
         "outbox_message_id": MESSAGE_ID,
         "error_code": "invalid_model_json",
     }
+
+
+def test_worker_renews_the_lease_while_a_long_handler_runs() -> None:
+    module = importlib.import_module("apps.api.hxy_product.outbox_worker")
+    message = _message_row(attempt_count=1) | {"attempt_number": 1}
+
+    class Repository:
+        def __init__(self):
+            self.renewals = 0
+
+        def reclaim_stale_leases(self, *, limit: int):
+            return 0
+
+        def claim_next(self, _worker_id: str, *, lease_seconds: int):
+            return message
+
+        def renew_lease(self, _message_id: str, _worker_id: str, *, lease_seconds: int):
+            self.renewals += 1
+            return "leased"
+
+        def complete(self, _message_id: str, _worker_id: str, *, result: dict[str, Any]):
+            return "succeeded"
+
+    repository = Repository()
+
+    def long_handler(_payload: dict[str, Any]) -> dict[str, Any]:
+        time.sleep(0.45)
+        return {"ok": True}
+
+    result = module.process_one_outbox_message(
+        repository,
+        {"understand.inbound.issue": long_handler},
+        worker_id="worker-a",
+        lease_seconds=1,
+        base_retry_seconds=15,
+    )
+
+    assert result["status"] == "succeeded"
+    assert repository.renewals >= 1
+
+
+def test_worker_fences_handler_side_effects_after_lease_loss() -> None:
+    worker_module = importlib.import_module("apps.api.hxy_product.outbox_worker")
+    repository_module = importlib.import_module("apps.api.hxy_product.outbox_repository")
+    message = _message_row(attempt_count=1) | {"attempt_number": 1}
+    side_effects: list[str] = []
+
+    class Repository:
+        def reclaim_stale_leases(self, *, limit: int):
+            return 0
+
+        def claim_next(self, _worker_id: str, *, lease_seconds: int):
+            return message
+
+        def renew_lease(self, _message_id: str, _worker_id: str, *, lease_seconds: int):
+            raise repository_module.OutboxLeaseLost("lease was reclaimed")
+
+        def complete(self, *_args, **_kwargs):
+            raise AssertionError("lost lease must not complete")
+
+    def fenced_handler(payload: dict[str, Any]) -> dict[str, Any]:
+        time.sleep(0.45)
+        payload["_hxy_outbox"]["assert_lease"]()
+        side_effects.append("persisted")
+        return {"ok": True}
+
+    result = worker_module.process_one_outbox_message(
+        Repository(),
+        {"understand.inbound.issue": fenced_handler},
+        worker_id="worker-a",
+        lease_seconds=1,
+        base_retry_seconds=15,
+    )
+
+    assert result == {"status": "lost_lease", "outbox_message_id": MESSAGE_ID}
+    assert side_effects == []
+
+
+def test_cli_registers_the_issue_understanding_topic_handler() -> None:
+    spec = importlib.util.spec_from_file_location("hxy_outbox_worker_cli", SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    handlers = module.build_handlers(
+        "postgresql://outbox.test/hxy",
+        channel_repository=object(),
+        operating_repository=object(),
+        model_router=object(),
+    )
+
+    assert set(handlers) == {"understand.inbound.issue"}
+    assert callable(handlers["understand.inbound.issue"])
 
 
 def test_cli_fails_closed_with_json_when_database_is_not_configured() -> None:

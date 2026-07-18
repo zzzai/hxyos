@@ -18,11 +18,17 @@ def proposal(**overrides: Any) -> dict[str, Any]:
     return value
 
 
-def evaluate(value: dict[str, Any], *, assignment_is_active: bool = True):
+def evaluate(
+    value: dict[str, Any],
+    *,
+    assignment_is_active: bool = True,
+    suggested_owner_is_active: bool = True,
+):
     return evaluate_issue_proposal(
         proposal=value,
         published_event_types={"facility_defect", "safety", "permit"},
         assignment_is_active=assignment_is_active,
+        suggested_owner_is_active=suggested_owner_is_active,
     )
 
 
@@ -87,6 +93,16 @@ def test_inactive_or_unmapped_assignment_requires_confirmation_before_questions(
     assert decision.action == "require_confirmation"
     assert decision.severity == "medium"
     assert decision.missing_fields == ()
+
+
+def test_inactive_or_out_of_scope_suggested_owner_requires_confirmation() -> None:
+    decision = evaluate(
+        proposal(),
+        suggested_owner_is_active=False,
+    )
+
+    assert decision.action == "require_confirmation"
+    assert decision.severity == "medium"
 
 
 def test_only_blocking_missing_fields_are_requested_in_stable_order() -> None:

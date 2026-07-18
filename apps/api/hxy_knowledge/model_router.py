@@ -19,6 +19,10 @@ _DEFAULT_ROUTES: dict[str, dict[str, Any]] = {
         "purpose": "资料分类、意图识别、角色识别、质检分级",
         "model_role": "default_model",
     },
+    "issue_understanding": {
+        "purpose": "把门店经营问题提取为受治理的结构化候选提案",
+        "model_role": "default_model",
+    },
     "vision": {
         "purpose": "图片理解、菜单图解析、流程图解析、报表截图解析",
         "model_role": "default_model",
@@ -337,6 +341,7 @@ class ModelRouter:
             for task_type in [
                 "reasoning",
                 "classification",
+                "issue_understanding",
                 "vision",
                 "embedding",
                 "speech",

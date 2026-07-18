@@ -5,6 +5,7 @@ import re
 from typing import Any
 
 from .channel_schemas import ChannelIntakePayload
+from .outbox_repository import OutboxLeaseLost, lock_outbox_execution_fence
 
 try:
     import psycopg
@@ -433,3 +434,198 @@ class ChannelRepository:
             ).fetchone()
 
         return _envelope_from_row(queued or row)
+
+    def load_issue_context(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        organization_id = str(payload.get("organization_id") or "").strip()
+        envelope_id = str(payload.get("envelope_id") or "").strip()
+        store_id = str(payload.get("store_id") or "").strip()
+        relationship_id = str(
+            payload.get("store_operating_relationship_id") or ""
+        ).strip()
+        governance_profile_id = str(payload.get("governance_profile_id") or "").strip()
+        if not all(
+            (
+                organization_id,
+                envelope_id,
+                store_id,
+                relationship_id,
+                governance_profile_id,
+            )
+        ):
+            raise ValueError("scoped issue context identifiers are required")
+
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT envelope.envelope_id::text,
+                       envelope.organization_id::text,
+                       envelope.store_id,
+                       envelope.sender_assignment_id::text,
+                       assignment.status AS assignment_status,
+                       envelope.raw_text,
+                       envelope.raw_payload,
+                       governance.decision_rights
+                FROM hxy_inbound_envelopes AS envelope
+                JOIN hxy_role_assignments AS assignment
+                  ON assignment.organization_id = envelope.organization_id
+                 AND assignment.assignment_id = envelope.sender_assignment_id
+                JOIN hxy_store_operating_relationships AS relationship
+                  ON relationship.organization_id = envelope.organization_id
+                 AND relationship.store_id = envelope.store_id
+                 AND relationship.relationship_id = %s::uuid
+                 AND relationship.relationship_version = %s
+                JOIN hxy_governance_profiles AS governance
+                  ON governance.organization_id = relationship.organization_id
+                 AND governance.profile_id = relationship.governance_profile_id
+                 AND governance.profile_id = %s::uuid
+                 AND governance.profile_version = %s
+                WHERE envelope.organization_id = %s::uuid
+                  AND envelope.envelope_id = %s::uuid
+                  AND envelope.store_id = %s
+                  AND envelope.status IN ('queued', 'processed')
+                FOR SHARE OF envelope, assignment, relationship, governance
+                """,
+                (
+                    relationship_id,
+                    int(payload.get("store_operating_relationship_version") or 0),
+                    governance_profile_id,
+                    int(payload.get("governance_profile_version") or 0),
+                    organization_id,
+                    envelope_id,
+                    store_id,
+                ),
+            ).fetchone()
+            if row is None:
+                return None
+
+            assets = connection.execute(
+                """
+                SELECT material.material_id::text AS source_asset_id,
+                       material.original_file_name AS file_name,
+                       material.extension,
+                       material.media_type,
+                       material.storage_key,
+                       material.status AS material_status,
+                       normalized.storage_key AS normalized_storage_key
+                FROM hxy_asset_bindings AS binding
+                JOIN hxy_product_materials AS material
+                  ON material.organization_id = binding.organization_id
+                 AND material.material_id = binding.source_id
+                LEFT JOIN LATERAL (
+                  SELECT artifact.storage_key
+                  FROM hxy_material_artifacts AS artifact
+                  WHERE artifact.assignment_id = material.assignment_id
+                    AND artifact.material_id = material.material_id
+                    AND artifact.artifact_type = 'normalized_markdown'
+                  ORDER BY artifact.created_at DESC, artifact.artifact_id DESC
+                  LIMIT 1
+                ) AS normalized ON TRUE
+                WHERE binding.organization_id = %s::uuid
+                  AND binding.source_type = 'source_asset'
+                  AND binding.target_type = 'inbound_envelope'
+                  AND binding.target_id = %s::uuid
+                  AND binding.relation_type = 'attached_to'
+                  AND material.status <> 'archived'
+                  AND material.scan_status <> 'blocked'
+                ORDER BY binding.created_at, binding.binding_id
+                """,
+                (organization_id, envelope_id),
+            ).fetchall()
+
+        decision_rights = _json_object(row.get("decision_rights"))
+        raw_event_types = decision_rights.get("issue_event_types")
+        published_event_types = []
+        if isinstance(raw_event_types, list):
+            published_event_types = [
+                str(value).strip()[:100]
+                for value in raw_event_types[:100]
+                if str(value).strip()
+            ]
+        return {
+            "organization_id": str(row["organization_id"]),
+            "envelope_id": str(row["envelope_id"]),
+            "store_id": str(row["store_id"]),
+            "sender_assignment_id": str(row["sender_assignment_id"]),
+            "assignment_is_active": str(row["assignment_status"]) == "active",
+            "raw_text": _sanitize_text(str(row.get("raw_text") or "")),
+            "raw_payload": _json_object(row.get("raw_payload")),
+            "attachments": [dict(asset) for asset in assets],
+            "published_event_types": published_event_types,
+        }
+
+    def mark_envelope_processed(
+        self,
+        organization_id: str,
+        envelope_id: str,
+        *,
+        execution_fence: dict[str, Any],
+    ) -> None:
+        if str(execution_fence.get("organization_id") or "") != organization_id:
+            raise OutboxLeaseLost("outbox fence organization does not match envelope")
+        with self.connect() as connection:
+            lock_outbox_execution_fence(connection, execution_fence)
+            updated = connection.execute(
+                """
+                UPDATE hxy_inbound_envelopes
+                SET status = 'processed',
+                    processed_at = COALESCE(processed_at, NOW()),
+                    updated_at = NOW()
+                WHERE organization_id = %s::uuid
+                  AND envelope_id = %s::uuid
+                  AND status IN ('queued', 'processed')
+                RETURNING envelope_id::text
+                """,
+                (organization_id, envelope_id),
+            ).fetchone()
+        if updated is None:
+            raise ValueError("queued inbound envelope was not found")
+
+    def issue_owner_is_active(
+        self,
+        organization_id: str,
+        store_id: str,
+        assignment_id: str,
+    ) -> bool:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT EXISTS (
+                  SELECT 1
+                  FROM hxy_role_assignments
+                  WHERE organization_id = %s::uuid
+                    AND assignment_id = %s::uuid
+                    AND status = 'active'
+                    AND (
+                      store_id = %s
+                      OR role IN ('founder', 'hq_operations', 'system_admin')
+                    )
+                ) AS is_active
+                """,
+                (organization_id, assignment_id, store_id),
+            ).fetchone()
+        return bool(row and row.get("is_active"))
+
+    def mark_envelope_needs_attention(
+        self,
+        organization_id: str,
+        envelope_id: str,
+        *,
+        reason: str,
+    ) -> None:
+        del reason  # Failure detail remains in immutable outbox attempts.
+        with self.connect() as connection:
+            updated = connection.execute(
+                """
+                UPDATE hxy_inbound_envelopes
+                SET status = 'needs_attention',
+                    processed_at = NULL,
+                    updated_at = NOW()
+                WHERE organization_id = %s::uuid
+                  AND envelope_id = %s::uuid
+                  AND status IN ('received', 'queued', 'needs_attention')
+                RETURNING envelope_id::text
+                """,
+                (organization_id, envelope_id),
+            ).fetchone()
+        if updated is None:
+            raise ValueError("inbound envelope was not available for attention")

@@ -627,6 +627,9 @@ CREATE INDEX IF NOT EXISTS idx_hxy_outbox_messages_claim
   ON hxy_outbox_messages (status, available_at, created_at, outbox_message_id)
   WHERE status IN ('pending', 'retryable_failed');
 
+CREATE UNIQUE INDEX IF NOT EXISTS uq_hxy_ai_proposals_input
+  ON hxy_ai_proposals (organization_id, source_envelope_id, proposal_type, input_hash);
+
 CREATE INDEX IF NOT EXISTS idx_hxy_outbox_messages_lease_expiry
   ON hxy_outbox_messages (lease_expires_at)
   WHERE status = 'leased';

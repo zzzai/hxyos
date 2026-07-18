@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from typing import Any
 
 try:
@@ -13,6 +14,40 @@ except Exception:  # pragma: no cover - deployment dependency may be installed l
 
 class OutboxLeaseLost(Exception):
     pass
+
+
+def lock_outbox_execution_fence(
+    connection: Any,
+    fence: Mapping[str, Any],
+) -> dict[str, Any]:
+    organization_id = str(fence.get("organization_id") or "").strip()
+    outbox_message_id = str(fence.get("outbox_message_id") or "").strip()
+    worker_id = str(fence.get("worker_id") or "").strip()
+    try:
+        attempt_number = int(fence.get("attempt_number") or 0)
+    except (TypeError, ValueError) as error:
+        raise OutboxLeaseLost("invalid outbox execution fence") from error
+    if not organization_id or not outbox_message_id or not worker_id or attempt_number < 1:
+        raise OutboxLeaseLost("invalid outbox execution fence")
+    row = connection.execute(
+        """
+        SELECT status,
+               attempt_count,
+               lease_owner
+        FROM hxy_outbox_messages
+        WHERE organization_id = %s::uuid
+          AND outbox_message_id = %s::uuid
+          AND status = 'leased'
+          AND lease_owner = %s
+          AND attempt_count = %s
+          AND lease_expires_at > NOW()
+        FOR UPDATE
+        """,
+        (organization_id, outbox_message_id, worker_id, attempt_number),
+    ).fetchone()
+    if row is None:
+        raise OutboxLeaseLost("outbox execution fence is no longer valid")
+    return dict(row)
 
 
 def _json_object(value: Any) -> dict[str, Any]:
@@ -154,6 +189,9 @@ class OutboxRepository:
             """
             SELECT outbox_message_id::text,
                    organization_id::text,
+                   topic,
+                   aggregate_type,
+                   aggregate_id::text,
                    attempt_count,
                    max_attempts,
                    lease_owner
@@ -169,6 +207,36 @@ class OutboxRepository:
         if row is None:
             raise OutboxLeaseLost("outbox message lease is no longer owned")
         return row
+
+    def renew_lease(
+        self,
+        outbox_message_id: str,
+        worker_id: str,
+        *,
+        lease_seconds: int,
+    ) -> str:
+        normalized_worker_id = worker_id.strip()
+        if not normalized_worker_id:
+            raise ValueError("worker_id is required")
+        if lease_seconds < 1:
+            raise ValueError("lease_seconds must be positive")
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                UPDATE hxy_outbox_messages
+                SET lease_expires_at = NOW() + (%s * INTERVAL '1 second'),
+                    updated_at = NOW()
+                WHERE outbox_message_id = %s::uuid
+                  AND status = 'leased'
+                  AND lease_owner = %s
+                  AND lease_expires_at > NOW()
+                RETURNING status
+                """,
+                (lease_seconds, outbox_message_id, normalized_worker_id),
+            ).fetchone()
+        if row is None:
+            raise OutboxLeaseLost("outbox message lease is no longer owned")
+        return str(row["status"])
 
     def complete(
         self,
@@ -321,6 +389,24 @@ class OutboxRepository:
                     outbox_message_id,
                 ),
             ).fetchone()
+            if (
+                outcome == "dead_letter"
+                and str(message["topic"]) == "understand.inbound.issue"
+                and str(message["aggregate_type"]) == "inbound_envelope"
+            ):
+                connection.execute(
+                    """
+                    UPDATE hxy_inbound_envelopes
+                    SET status = 'needs_attention',
+                        processed_at = NULL,
+                        updated_at = NOW()
+                    WHERE organization_id = %s::uuid
+                      AND envelope_id = %s::uuid
+                      AND status IN ('received', 'queued', 'needs_attention')
+                    RETURNING envelope_id::text
+                    """,
+                    (message["organization_id"], message["aggregate_id"]),
+                ).fetchone()
         return str(updated["status"])
 
     def reclaim_stale_leases(self, *, limit: int = 100) -> int:
@@ -332,6 +418,9 @@ class OutboxRepository:
                 WITH stale AS (
                   SELECT outbox_message_id,
                          organization_id,
+                         topic,
+                         aggregate_type,
+                         aggregate_id,
                          attempt_count,
                          max_attempts,
                          lease_owner
@@ -396,7 +485,25 @@ class OutboxRepository:
                   FROM stale
                   WHERE message.organization_id = stale.organization_id
                     AND message.outbox_message_id = stale.outbox_message_id
-                  RETURNING message.outbox_message_id::text, message.status
+                  RETURNING message.outbox_message_id::text,
+                            message.organization_id,
+                            message.topic,
+                            message.aggregate_type,
+                            message.aggregate_id,
+                            message.status
+                ), attention_envelopes AS (
+                  UPDATE hxy_inbound_envelopes AS envelope
+                  SET status = 'needs_attention',
+                      processed_at = NULL,
+                      updated_at = NOW()
+                  FROM updated_messages AS message
+                  WHERE message.status = 'dead_letter'
+                    AND message.topic = 'understand.inbound.issue'
+                    AND message.aggregate_type = 'inbound_envelope'
+                    AND envelope.organization_id = message.organization_id
+                    AND envelope.envelope_id = message.aggregate_id
+                    AND envelope.status IN ('received', 'queued', 'needs_attention')
+                  RETURNING envelope.envelope_id
                 )
                 SELECT outbox_message_id, status
                 FROM updated_messages

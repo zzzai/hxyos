@@ -17,11 +17,33 @@ if str(API_ROOT) not in sys.path:
 
 from hxy_product.outbox_repository import OutboxRepository  # noqa: E402
 from hxy_product.outbox_worker import process_one_outbox_message  # noqa: E402
+from hxy_product.channel_repository import ChannelRepository  # noqa: E402
+from hxy_product.issue_understanding import (  # noqa: E402
+    IssueProposalRepository,
+    build_issue_understanding_handler,
+)
+from hxy_product.operating_policy import evaluate_issue_proposal  # noqa: E402
+from hxy_knowledge.model_router import ModelRouter  # noqa: E402
 
 
-def build_handlers() -> dict:
-    # Topic handlers are registered by the owning business module.
-    return {}
+def build_handlers(
+    database_url: str,
+    *,
+    channel_repository=None,
+    operating_repository=None,
+    model_router=None,
+) -> dict:
+    channel = channel_repository or ChannelRepository(database_url)
+    operating = operating_repository or IssueProposalRepository(database_url)
+    router = model_router or ModelRouter()
+    return {
+        "understand.inbound.issue": build_issue_understanding_handler(
+            channel,
+            operating,
+            router,
+            evaluate_issue_proposal,
+        )
+    }
 
 
 def main() -> int:
@@ -39,7 +61,7 @@ def main() -> int:
         return 2
 
     repository = OutboxRepository(database_url)
-    handlers = build_handlers()
+    handlers = build_handlers(database_url)
     while True:
         result = process_one_outbox_message(
             repository,
