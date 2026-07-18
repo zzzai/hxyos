@@ -139,13 +139,18 @@ class FakeMaterialRepository:
         self,
         assignment_id: str,
         material_id: str,
+        *,
+        actor_assignment_id: str,
+        reason: str,
     ) -> dict[str, Any] | None:
         record = self.records.get((assignment_id, material_id))
         if record is None:
             return None
         record["status"] = "processing"
         record["updated_at"] = NOW
-        self.calls.append(("requeue", assignment_id))
+        self.calls.append(
+            ("requeue", assignment_id, actor_assignment_id, reason)
+        )
         return dict(record)
 
     def update_source_authority(
@@ -267,10 +272,10 @@ def test_upload_returns_receipt_original_link_and_preliminary_understanding(mate
     assert material["receipt"]["status"] == "已收到"
     assert material["original"]["url"] == f"/api/v1/materials/{material['id']}/content"
     assert material["original"]["can_preview"] is True
-    assert material["understanding"]["domain"] == "operations"
-    assert material["understanding"]["authority_level"] == "working_material"
+    assert material["understanding"]["domain"] == "general"
+    assert material["understanding"]["parse_status"] == "metadata_only"
     assert material["understanding"]["official_use_allowed"] is False
-    assert material["understanding"]["use_boundary"] == "可用于整理候选流程，不能直接作为正式 SOP。"
+    assert material["understanding"]["use_boundary"] == "可用于整理候选知识，未经核定不能作为荷小悦正式口径。"
     assert material["source_origin"] == "unknown"
     assert material["source_authority"] == "external_reference"
     assert material["authority_version"] == 1
@@ -279,8 +284,7 @@ def test_upload_returns_receipt_original_link_and_preliminary_understanding(mate
         assert forbidden not in serialized
     assert identity_repository.assignment_account_ids == [ACCOUNT_ID]
     assert repository.calls == [("create", ASSIGNMENT_ID)]
-    assert understanding_calls[0]["role"] == "store_manager"
-    assert understanding_calls[0]["note"] == "这是首店内部流程草稿"
+    assert understanding_calls == []
     saved_files = [path for path in (root / "data" / "product-materials").rglob("*") if path.is_file()]
     assert len(saved_files) == 1
     assert saved_files[0].read_text(encoding="utf-8") == "先问顾客状态，再介绍服务。"
@@ -400,7 +404,7 @@ def test_store_manager_cannot_change_source_authority(material_context) -> None:
     assert repository.authority_events == []
 
 
-def test_understanding_failure_keeps_original_and_returns_retriable_receipt(
+def test_upload_never_calls_understanding_before_safety_scan(
     tmp_path: Path,
 ) -> None:
     identity_repository = FakeIdentityRepository()
@@ -432,7 +436,7 @@ def test_understanding_failure_keeps_original_and_returns_retriable_receipt(
     assert material["status"] == "processing"
     assert material["understanding"]["official_use_allowed"] is False
     assert material["understanding"]["parse_status"] == "metadata_only"
-    assert any("后台处理" in item for item in material["understanding"]["warnings"])
+    assert material["understanding"]["warnings"] == []
     stored = [path for path in (tmp_path / "data" / "product-materials").rglob("*") if path.is_file()]
     assert len(stored) == 1
     assert stored[0].read_bytes() == "原始问题记录".encode()
@@ -459,7 +463,7 @@ def test_upload_retry_with_same_client_id_returns_one_material(material_context)
     assert first.status_code == replay.status_code == 201
     assert first.json()["material"]["id"] == replay.json()["material"]["id"]
     assert len(repository.records) == 1
-    assert len(understanding_calls) == 1
+    assert understanding_calls == []
     stored = [
         path
         for path in (root / "data" / "product-materials").rglob("*")
@@ -522,13 +526,18 @@ def test_failed_understanding_retry_requeues_without_parsing_in_the_request(
     assert retried.status_code == 200
     assert retried.json()["material"]["id"] == material_id
     assert retried.json()["material"]["status"] == "processing"
-    assert attempts == 1
-    assert ("requeue", ASSIGNMENT_ID) in material_repository.calls
+    assert attempts == 0
+    assert (
+        "requeue",
+        ASSIGNMENT_ID,
+        ASSIGNMENT_ID,
+        "manual_retry",
+    ) in material_repository.calls
     assert len(material_repository.records) == 1
 
 
 def test_uploaded_original_can_be_viewed_by_its_assignment(material_context) -> None:
-    client, _, _, _, _ = material_context
+    client, _, _, repository, _ = material_context
     uploaded = client.request(
         "POST",
         "/api/v1/materials",
@@ -538,18 +547,88 @@ def test_uploaded_original_can_be_viewed_by_its_assignment(material_context) -> 
     )
     material_id = uploaded.json()["material"]["id"]
 
+    quarantined = client.request(
+        "GET",
+        f"/api/v1/materials/{material_id}/content",
+        headers=bearer(),
+    )
+
+    repository.records[(ASSIGNMENT_ID, material_id)]["scan_status"] = "clean"
     response = client.request(
         "GET",
         f"/api/v1/materials/{material_id}/content",
         headers=bearer(),
     )
 
+    assert quarantined.status_code == 423
+    assert quarantined.json() == {"detail": "Material is not available"}
     assert response.status_code == 200
     assert response.content == "原始内容".encode()
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["cache-control"] == "private, no-store"
     assert quote("门店说明.txt", safe="") in response.headers["content-disposition"]
     assert response.headers["content-security-policy"] == "sandbox; default-src 'none'"
+
+
+def test_clean_material_download_rejects_source_integrity_mismatch(
+    material_context,
+) -> None:
+    client, root, _, repository, _ = material_context
+    original_bytes = b"original"
+    uploaded = client.request(
+        "POST",
+        "/api/v1/materials",
+        headers=bearer(),
+        data=upload_form(),
+        files={"file": ("门店说明.txt", original_bytes, "text/plain")},
+    )
+    material_id = uploaded.json()["material"]["id"]
+    record = repository.records[(ASSIGNMENT_ID, material_id)]
+    record["scan_status"] = "clean"
+    stored = root / "data" / "product-materials" / record["storage_key"]
+    replacement = stored.with_name("replacement.txt")
+    replacement.write_bytes(b"replaced-after-clean-scan")
+    replacement.replace(stored)
+
+    response = client.request(
+        "GET",
+        f"/api/v1/materials/{material_id}/content",
+        headers=bearer(),
+    )
+
+    assert response.status_code == 423
+    assert response.json() == {"detail": "Material is not available"}
+    assert original_bytes not in response.content
+    assert b"replaced-after-clean-scan" not in response.content
+    assert str(stored).encode() not in response.content
+    assert str(record["sha256"]).encode() not in response.content
+
+
+def test_clean_material_download_preserves_single_byte_range_support(
+    material_context,
+) -> None:
+    client, _, _, repository, _ = material_context
+    uploaded = client.request(
+        "POST",
+        "/api/v1/materials",
+        headers=bearer(),
+        data=upload_form(),
+        files={"file": ("门店说明.txt", b"0123456789", "text/plain")},
+    )
+    material_id = uploaded.json()["material"]["id"]
+    repository.records[(ASSIGNMENT_ID, material_id)]["scan_status"] = "clean"
+
+    response = client.request(
+        "GET",
+        f"/api/v1/materials/{material_id}/content",
+        headers={**bearer(), "Range": "bytes=2-5"},
+    )
+
+    assert response.status_code == 206
+    assert response.content == b"2345"
+    assert response.headers["content-range"] == "bytes 2-5/10"
+    assert response.headers["content-length"] == "4"
+    assert response.headers["accept-ranges"] == "bytes"
 
 
 def test_original_rejects_multi_range_requests_before_file_response(

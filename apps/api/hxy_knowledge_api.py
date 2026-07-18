@@ -93,11 +93,16 @@ from hxy_product.knowledge_context import AssignmentKnowledgeRepository
 from hxy_product.journey_routes import create_journey_router
 from hxy_product.conversation_repository import ConversationRepository
 from hxy_product.conversation_routes import create_conversation_router
+from hxy_product.channel_repository import ChannelRepository
+from hxy_product.evidence_repository import EvidenceRepository
+from hxy_product.evidence_routes import create_evidence_router
 from hxy_product.material_repository import MaterialRepository
 from hxy_product.material_routes import create_material_router
-from hxy_product.material_understanding import build_material_understanding
 from hxy_product.onboarding_repository import OnboardingRepository
 from hxy_product.onboarding_routes import create_onboarding_router, validate_public_app_url
+from hxy_product.operating_repository import OperatingRepository
+from hxy_product.operating_routes import create_operating_router
+from hxy_product.operating_service import OperatingService
 from hxy_product.repository import IdentityRepository
 from hxy_product.routes import assignment_for_principal, create_identity_router
 from hxy_product.task_repository import TaskRepository
@@ -736,6 +741,40 @@ def _default_task_repository_factory(database_url: str) -> RepositoryFactory:
         if not database_url:
             raise HTTPException(status_code=503, detail="HXY_DATABASE_URL is not configured")
         return TaskRepository(database_url)
+
+    return make_repository
+
+
+def _default_channel_repository_factory(database_url: str) -> RepositoryFactory:
+    def make_repository() -> ChannelRepository:
+        if not database_url:
+            raise HTTPException(status_code=503, detail="HXY_DATABASE_URL is not configured")
+        return ChannelRepository(database_url)
+
+    return make_repository
+
+
+def _default_operating_repository_factory(database_url: str) -> RepositoryFactory:
+    def make_repository() -> OperatingRepository:
+        if not database_url:
+            raise HTTPException(status_code=503, detail="HXY_DATABASE_URL is not configured")
+        return OperatingRepository(database_url)
+
+    return make_repository
+
+
+def _default_evidence_repository_factory(
+    database_url: str,
+    *,
+    max_evidence_bytes: int,
+) -> RepositoryFactory:
+    def make_repository() -> EvidenceRepository:
+        if not database_url:
+            raise HTTPException(status_code=503, detail="HXY_DATABASE_URL is not configured")
+        return EvidenceRepository(
+            database_url,
+            max_evidence_bytes=max_evidence_bytes,
+        )
 
     return make_repository
 
@@ -3982,6 +4021,10 @@ def create_app(
     conversation_repository_factory: RepositoryFactory | None = None,
     material_repository_factory: RepositoryFactory | None = None,
     task_repository_factory: RepositoryFactory | None = None,
+    channel_repository_factory: RepositoryFactory | None = None,
+    operating_repository_factory: RepositoryFactory | None = None,
+    evidence_repository_factory: RepositoryFactory | None = None,
+    operating_service_builder: Callable[[Any], Any] | None = None,
     product_training_repository_factory: RepositoryFactory | None = None,
     journey_training_evaluator: Callable[..., dict[str, Any]] | None = None,
     material_understanding_builder: Callable[..., dict[str, Any]] | None = None,
@@ -4032,13 +4075,27 @@ def create_app(
     make_task_repository = (
         task_repository_factory or _default_task_repository_factory(settings.database_url)
     )
+    make_channel_repository = (
+        channel_repository_factory
+        or _default_channel_repository_factory(settings.database_url)
+    )
+    make_operating_repository = (
+        operating_repository_factory
+        or _default_operating_repository_factory(settings.database_url)
+    )
+    make_evidence_repository = (
+        evidence_repository_factory
+        or _default_evidence_repository_factory(
+            settings.database_url,
+            max_evidence_bytes=settings.max_upload_bytes,
+        )
+    )
+    build_operating_service = operating_service_builder or OperatingService
     make_product_training_repository = (
         product_training_repository_factory
         or _default_product_training_repository_factory(settings.database_url)
     )
-    build_product_material_understanding = (
-        material_understanding_builder or build_material_understanding
-    )
+    del material_understanding_builder
     resolved_product_auth_settings = product_auth_settings or ProductAuthSettings.from_environment()
     model_router = model_router or ModelRouter()
     brand_constitution = BrandConstitutionAdapter(resolved_root)
@@ -4206,13 +4263,26 @@ def create_app(
             max_assignment_storage_bytes=settings.max_material_storage_bytes,
             min_material_free_bytes=settings.min_material_free_bytes,
             allowed_extensions=allowed_upload_extensions,
-            understanding_builder=build_product_material_understanding,
         )
     )
     app.include_router(
         create_task_router(
             make_product_identity_repository,
             make_task_repository,
+        )
+    )
+    app.include_router(
+        create_operating_router(
+            make_product_identity_repository,
+            make_channel_repository,
+            make_operating_repository,
+            service_builder=build_operating_service,
+        )
+    )
+    app.include_router(
+        create_evidence_router(
+            make_product_identity_repository,
+            make_evidence_repository,
         )
     )
     app.include_router(

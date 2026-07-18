@@ -6,6 +6,9 @@ The material worker processes private HXY uploads only.
 
 ```text
 original
+-> durable safety scan job
+-> ClamAV sidecar
+-> scan_status=clean
 -> durable parser job
 -> normalized Markdown
 -> Source Card
@@ -14,6 +17,9 @@ original
 -> bounded answer Trace
 ```
 
+上传请求只保存原文件和元数据，不在 API 请求内读取正文、调用 OCR 或调用模型。只有
+`scan_status=clean` 的资料才会进入 MarkItDown、MinerU、OCR 或视觉理解。感染或扫描失败的资料不得进入解析/OCR。
+
 所有上传资料和衍生产物都保持 `working_context/reference` 与
 `official_use_allowed=false`。它们可以在所属岗位身份的对话中作为上下文提醒并附带可授权访问的
 资料引用，但不得自动进入正式知识、返回 `已批准`、写入长期记忆或替代 approved answer card。
@@ -21,9 +27,20 @@ original
 ## Prerequisites
 
 1. Install API dependencies in `/root/hxy/.venv`.
-2. Configure `HXY_DATABASE_URL` in `/root/hxy/ops/env/hxy-knowledge-api.env`.
-3. Apply migrations through `014_hxy_knowledge_activation.sql`.
-4. Ensure `/root/hxy/data/product-materials` exists and is owned by the service account.
+2. Configure `HXY_DATABASE_URL` and `HXY_CLAMAV_HOST` in `/root/hxy/ops/env/hxy-knowledge-api.env`.
+3. Start the HXY-owned ClamAV sidecar and wait for current signature data.
+4. Apply migrations through `014_hxy_knowledge_activation.sql` plus the later governed migrations, including `023_hxy_material_safety_scan.sql`.
+5. Ensure `/root/hxy/data/product-materials` exists and is owned by the service account.
+
+Start the scanner:
+
+```bash
+cd /root/hxy
+docker compose -f ops/docker/hxy-clamav-compose.yml up -d
+docker compose -f ops/docker/hxy-clamav-compose.yml ps
+```
+
+ClamAV must bind to loopback only. HXYOS owns scan jobs, result states and audit records; ClamAV only provides the replaceable scanning engine.
 
 Apply migrations:
 
@@ -45,7 +62,7 @@ cd /root/hxy
 bash ops/hxy-material-worker.sh --once
 ```
 
-Expected output is one JSON line with `idle`, `succeeded`, `retryable_failed`, or `permanent_failed`. It must not include source paths or stack traces.
+Expected output is one JSON line with `idle`, `scan_clean`, `scan_blocked`, `succeeded`, `retryable_failed`, or `permanent_failed`. It must not include source paths or stack traces.
 
 成功完成后，normalized Markdown 的分块与解析产物在同一数据库事务中落库。资料只有在状态为
 `ready` 时才可检索；检索必须始终携带服务端解析出的 `assignment_id`，不得接受客户端传入的
@@ -86,15 +103,16 @@ journalctl -u hxy-material-worker -n 100 --no-pager
 
 ## Recovery
 
-The worker claims work with a lease. If the process exits, the next worker cycle reclaims the expired lease and retries within the stored attempt budget.
+The worker claims both scan and parse work with a lease. If the process exits, the next worker cycle reclaims the expired lease and retries within the stored attempt budget. Scanner timeouts fail closed: the original remains stored, `scan_status` never becomes `clean`, and parsing does not start.
 
 For repeated failures:
 
 1. keep the original file unchanged;
 2. inspect `last_error_code`, not raw parser output;
-3. verify MarkItDown in the project virtual environment;
-4. run one `--once` cycle;
-5. use the existing product retry action only after the dependency or file issue is fixed.
+3. check `docker compose -f ops/docker/hxy-clamav-compose.yml ps` and current signature updates;
+4. verify MarkItDown in the project virtual environment;
+5. run one `--once` cycle;
+6. use the existing product retry action only after the dependency or file issue is fixed.
 
 Do not edit queue rows manually to mark them `succeeded`. Do not copy any HXY material into `/root/htops`.
 

@@ -16,6 +16,7 @@ if str(API_ROOT) not in sys.path:
     sys.path.insert(0, str(API_ROOT))
 
 from hxy_product.material_repository import MaterialRepository  # noqa: E402
+from hxy_product.material_scanner import scanner_from_environment  # noqa: E402
 from hxy_product.material_worker import process_one_material_job  # noqa: E402
 
 
@@ -35,6 +36,7 @@ def main() -> int:
     root_dir = Path(os.getenv("HXY_ROOT_DIR", str(ROOT))).resolve()
     material_root = root_dir / "data" / "product-materials"
     repository = MaterialRepository(database_url)
+    scanner = scanner_from_environment()
 
     while True:
         result = process_one_material_job(
@@ -43,6 +45,7 @@ def main() -> int:
             worker_id=args.worker_id,
             lease_seconds=max(args.lease_seconds, 1),
             base_retry_seconds=max(args.base_retry_seconds, 1),
+            scanner=scanner.scan,
         )
         print(json.dumps(result, ensure_ascii=False), flush=True)
         if args.once:

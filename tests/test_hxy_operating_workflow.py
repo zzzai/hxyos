@@ -25,6 +25,7 @@ WORKFLOW_ID = "82000000-0000-0000-0000-000000000001"
 TASK_ID = "83000000-0000-0000-0000-000000000001"
 SECOND_TASK_ID = "83000000-0000-0000-0000-000000000002"
 EVIDENCE_ID = "84000000-0000-0000-0000-000000000001"
+CORRELATION_ID = "85000000-0000-0000-0000-000000000001"
 NOW = datetime(2026, 7, 18, 10, 0, tzinfo=timezone.utc)
 DECIDED_AT = NOW - timedelta(minutes=15)
 OTHER_EVENT_ID = "81000000-0000-0000-0000-000000000099"
@@ -128,6 +129,26 @@ class FakeOperatingTransaction:
         assert values["actor_type"] != "ai"
         row = {**copy.deepcopy(values), "transition_id": f"t-{len(self.repository.transitions) + 1}"}
         self.repository.transitions.append(row)
+        return copy.deepcopy(row)
+
+    def load_command_receipt(
+        self, organization_id: str, correlation_id: str
+    ) -> dict[str, Any] | None:
+        receipt = self.repository.command_receipts.get(
+            (organization_id, correlation_id)
+        )
+        return copy.deepcopy(receipt) if receipt is not None else None
+
+    def insert_command_receipt(self, values: dict[str, Any]) -> dict[str, Any]:
+        key = (values["organization_id"], values["correlation_id"])
+        if key in self.repository.command_receipts:
+            raise RuntimeError("duplicate command receipt")
+        row = {
+            **copy.deepcopy(values),
+            "command_receipt_id": f"receipt-{len(self.repository.command_receipts) + 1}",
+            "created_at": NOW,
+        }
+        self.repository.command_receipts[key] = row
         return copy.deepcopy(row)
 
     def lock_task_aggregate(
@@ -280,6 +301,7 @@ class FakeOperatingRepository:
         self.lock_calls: list[tuple[str, str]] = []
         self.metric_facts: list[dict[str, Any]] = []
         self.transitions: list[dict[str, Any]] = []
+        self.command_receipts: dict[tuple[str, str], dict[str, Any]] = {}
         self.assignments = {
             REPORTER_ID: _assignment(REPORTER_ID, "store_employee", STORE_ID),
             MANAGER_ID: _assignment(MANAGER_ID, "store_manager", STORE_ID),
@@ -345,6 +367,7 @@ class FakeOperatingRepository:
                 self.tasks,
                 self.transitions,
                 self.metric_facts,
+                self.command_receipts,
             )
         )
         try:
@@ -357,6 +380,7 @@ class FakeOperatingRepository:
                 self.tasks,
                 self.transitions,
                 self.metric_facts,
+                self.command_receipts,
             ) = before
             self.rollback_count += 1
             raise
@@ -707,6 +731,226 @@ def test_stale_command_raises_409_style_conflict_without_partial_write() -> None
     assert repository.tasks[TASK_ID]["status"] == "assigned"
     assert len(repository.transitions) == transition_count
     assert repository.rollback_count == 1
+
+
+def test_start_task_replay_returns_stored_receipt_without_duplicate_writes() -> None:
+    from apps.api.hxy_product.operating_schemas import StartTaskCommand
+
+    repository = FakeOperatingRepository()
+    _create_event(repository)
+    command = StartTaskCommand(
+        organization_id=ORGANIZATION_ID,
+        correlation_id=CORRELATION_ID,
+        task_id=TASK_ID,
+        actor_assignment_id=EMPLOYEE_ID,
+        expected_updated_at=NOW,
+    )
+    service = _service(repository)
+
+    first = service.start_task(command)
+    transition_count = len(repository.transitions)
+    aggregate_lock_count = repository.lock_calls.count(("task_aggregate", TASK_ID))
+    second = service.start_task(command)
+
+    assert second == first
+    assert repository.tasks[TASK_ID]["status"] == "in_progress"
+    assert len(repository.transitions) == transition_count
+    assert repository.lock_calls.count(("task_aggregate", TASK_ID)) == aggregate_lock_count
+    assert len(repository.command_receipts) == 1
+
+
+def test_reused_correlation_id_with_changed_command_conflicts_before_mutation() -> None:
+    from apps.api.hxy_product.operating_schemas import StartTaskCommand
+    from apps.api.hxy_product.operating_service import OperatingConflict
+
+    repository = FakeOperatingRepository()
+    _create_event(repository)
+    service = _service(repository)
+    service.start_task(
+        StartTaskCommand(
+            organization_id=ORGANIZATION_ID,
+            correlation_id=CORRELATION_ID,
+            task_id=TASK_ID,
+            actor_assignment_id=EMPLOYEE_ID,
+            expected_updated_at=NOW,
+        )
+    )
+    transition_count = len(repository.transitions)
+    aggregate_lock_count = repository.lock_calls.count(("task_aggregate", TASK_ID))
+
+    with pytest.raises(OperatingConflict, match="correlation"):
+        service.start_task(
+            StartTaskCommand(
+                organization_id=ORGANIZATION_ID,
+                correlation_id=CORRELATION_ID,
+                task_id=TASK_ID,
+                actor_assignment_id=MANAGER_ID,
+                expected_updated_at=NOW,
+            )
+        )
+
+    assert repository.tasks[TASK_ID]["status"] == "in_progress"
+    assert len(repository.transitions) == transition_count
+    assert repository.lock_calls.count(("task_aggregate", TASK_ID)) == aggregate_lock_count
+    assert len(repository.command_receipts) == 1
+
+
+def test_all_guarded_operating_commands_replay_their_stored_receipt() -> None:
+    from apps.api.hxy_product.operating_schemas import (
+        AcceptTaskCommand,
+        EscalateEventCommand,
+        ReturnForReworkCommand,
+        SubmitTaskCommand,
+    )
+
+    scenarios: list[tuple[str, FakeOperatingRepository, Any]] = []
+
+    submit_repository = FakeOperatingRepository()
+    _create_event(submit_repository)
+    submit_repository.tasks[TASK_ID]["status"] = "in_progress"
+    submit_repository.add_valid_evidence(TASK_ID)
+    scenarios.append(
+        (
+            "submit_task",
+            submit_repository,
+            SubmitTaskCommand(
+                organization_id=ORGANIZATION_ID,
+                correlation_id=CORRELATION_ID,
+                task_id=TASK_ID,
+                actor_assignment_id=EMPLOYEE_ID,
+                expected_updated_at=NOW,
+                evidence_ids=[EVIDENCE_ID],
+                result="已完成并提交复核",
+            ),
+        )
+    )
+
+    accept_repository = FakeOperatingRepository()
+    _create_event(accept_repository)
+    accept_repository.tasks[TASK_ID]["status"] = "submitted"
+    accept_repository.add_valid_evidence(TASK_ID)
+    scenarios.append(
+        (
+            "accept_task",
+            accept_repository,
+            AcceptTaskCommand(
+                organization_id=ORGANIZATION_ID,
+                correlation_id=CORRELATION_ID,
+                task_id=TASK_ID,
+                actor_assignment_id=MANAGER_ID,
+                expected_updated_at=NOW,
+                reason="验收通过",
+            ),
+        )
+    )
+
+    rework_repository = FakeOperatingRepository()
+    _create_event(rework_repository)
+    rework_repository.tasks[TASK_ID]["status"] = "submitted"
+    scenarios.append(
+        (
+            "return_for_rework",
+            rework_repository,
+            ReturnForReworkCommand(
+                organization_id=ORGANIZATION_ID,
+                correlation_id=CORRELATION_ID,
+                task_id=TASK_ID,
+                actor_assignment_id=MANAGER_ID,
+                expected_updated_at=NOW,
+                reason="整改证据不足",
+            ),
+        )
+    )
+
+    escalate_repository = FakeOperatingRepository()
+    _create_event(escalate_repository)
+    scenarios.append(
+        (
+            "escalate_event",
+            escalate_repository,
+            EscalateEventCommand(
+                organization_id=ORGANIZATION_ID,
+                correlation_id=CORRELATION_ID,
+                event_id=EVENT_ID,
+                actor_assignment_id=MANAGER_ID,
+                expected_updated_at=NOW,
+                severity="medium",
+                reason="影响范围扩大",
+            ),
+        )
+    )
+
+    for method_name, repository, command in scenarios:
+        service = _service(repository)
+        first = getattr(service, method_name)(command)
+        transition_count = len(repository.transitions)
+
+        second = getattr(service, method_name)(command)
+
+        assert second == first
+        assert len(repository.transitions) == transition_count
+        assert len(repository.command_receipts) == 1
+        stored = next(iter(repository.command_receipts.values()))
+        assert stored["command_type"] == method_name
+
+
+def test_reused_correlation_id_with_different_command_type_conflicts() -> None:
+    from apps.api.hxy_product.operating_schemas import (
+        EscalateEventCommand,
+        StartTaskCommand,
+    )
+    from apps.api.hxy_product.operating_service import OperatingConflict
+
+    repository = FakeOperatingRepository()
+    _create_event(repository)
+    service = _service(repository)
+    service.start_task(
+        StartTaskCommand(
+            organization_id=ORGANIZATION_ID,
+            correlation_id=CORRELATION_ID,
+            task_id=TASK_ID,
+            actor_assignment_id=EMPLOYEE_ID,
+            expected_updated_at=NOW,
+        )
+    )
+    transition_count = len(repository.transitions)
+
+    with pytest.raises(OperatingConflict, match="correlation"):
+        service.escalate_event(
+            EscalateEventCommand(
+                organization_id=ORGANIZATION_ID,
+                correlation_id=CORRELATION_ID,
+                event_id=EVENT_ID,
+                actor_assignment_id=MANAGER_ID,
+                expected_updated_at=repository.events[EVENT_ID]["updated_at"],
+                severity="medium",
+                reason="影响范围扩大",
+            )
+        )
+
+    assert len(repository.transitions) == transition_count
+    assert len(repository.command_receipts) == 1
+
+
+def test_cross_store_actor_cannot_probe_task_version_or_state() -> None:
+    from apps.api.hxy_product.operating_schemas import StartTaskCommand
+    from apps.api.hxy_product.operating_service import OperatingNotFound
+
+    repository = FakeOperatingRepository()
+    _create_event(repository)
+    repository.assignments[EMPLOYEE_ID]["store_id"] = "another-store"
+
+    with pytest.raises(OperatingNotFound):
+        _service(repository).start_task(
+            StartTaskCommand(
+                organization_id=ORGANIZATION_ID,
+                task_id=TASK_ID,
+                actor_assignment_id=EMPLOYEE_ID,
+                expected_updated_at=NOW - timedelta(days=1),
+            )
+        )
+
+    assert repository.tasks[TASK_ID]["status"] == "assigned"
 
 
 def test_assignment_and_start_validate_actor_scope_and_append_transitions() -> None:

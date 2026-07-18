@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Iterator
@@ -398,6 +399,75 @@ class OperatingTransaction:
         assert row is not None
         return dict(row)
 
+    def load_command_receipt(
+        self, organization_id: str, correlation_id: str
+    ) -> dict[str, Any] | None:
+        lock_key = f"{organization_id}:{correlation_id}"
+        self.connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (lock_key,),
+        )
+        row = self.connection.execute(
+            """
+            SELECT command_receipt_id::text,
+                   organization_id::text,
+                   correlation_id::text,
+                   actor_assignment_id::text,
+                   command_type,
+                   aggregate_type,
+                   aggregate_id::text,
+                   request_fingerprint,
+                   receipt_json,
+                   created_at
+            FROM hxy_operating_command_receipts
+            WHERE organization_id = %s::uuid
+              AND correlation_id = %s::uuid
+            """,
+            (organization_id, correlation_id),
+        ).fetchone()
+        return _dict_row(row)
+
+    def insert_command_receipt(self, values: dict[str, Any]) -> dict[str, Any]:
+        row = self.connection.execute(
+            """
+            INSERT INTO hxy_operating_command_receipts (
+              organization_id,
+              correlation_id,
+              actor_assignment_id,
+              command_type,
+              aggregate_type,
+              aggregate_id,
+              request_fingerprint,
+              receipt_json
+            )
+            VALUES (
+              %s::uuid, %s::uuid, %s::uuid, %s, %s, %s::uuid, %s, %s::jsonb
+            )
+            RETURNING command_receipt_id::text,
+                      organization_id::text,
+                      correlation_id::text,
+                      actor_assignment_id::text,
+                      command_type,
+                      aggregate_type,
+                      aggregate_id::text,
+                      request_fingerprint,
+                      receipt_json,
+                      created_at
+            """,
+            (
+                values["organization_id"],
+                values["correlation_id"],
+                values["actor_assignment_id"],
+                values["command_type"],
+                values["aggregate_type"],
+                values["aggregate_id"],
+                values["request_fingerprint"],
+                json.dumps(values["receipt_json"], ensure_ascii=False),
+            ),
+        ).fetchone()
+        assert row is not None
+        return dict(row)
+
     def lock_task_aggregate(
         self, organization_id: str, task_id: str
     ) -> dict[str, Any] | None:
@@ -770,6 +840,228 @@ class OperatingRepository:
 
     def connect(self):
         return psycopg.connect(self.database_url, row_factory=dict_row)
+
+    @staticmethod
+    def _read_scope(
+        role: str,
+        store_id: str | None,
+        assignment_id: str,
+    ) -> tuple[str, tuple[Any, ...]] | None:
+        if role in {"founder", "hq_operations"}:
+            return "", ()
+        if role == "store_manager" and store_id:
+            return " AND event.store_id = %s", (store_id,)
+        if role == "store_employee" and store_id and assignment_id:
+            return (
+                """
+                AND event.store_id = %s
+                AND (
+                  event.reporter_assignment_id = %s::uuid
+                  OR event.owner_assignment_id = %s::uuid
+                  OR EXISTS (
+                    SELECT 1
+                    FROM hxy_product_tasks AS visible_task
+                    WHERE visible_task.organization_id = event.organization_id
+                      AND visible_task.store_id = event.store_id
+                      AND visible_task.operating_event_id = event.operating_event_id
+                      AND (
+                        visible_task.assignee_assignment_id = %s::uuid
+                        OR visible_task.visibility = 'store'
+                      )
+                  )
+                )
+                """,
+                (store_id, assignment_id, assignment_id, assignment_id),
+            )
+        return None
+
+    def list_events(
+        self,
+        *,
+        organization_id: str,
+        store_id: str | None,
+        assignment_id: str,
+        role: str,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        scope = self._read_scope(role, store_id, assignment_id)
+        if scope is None:
+            return []
+        scope_sql, scope_params = scope
+        sql = (
+            """
+            SELECT event.operating_event_id::text,
+                   event.store_id,
+                   event.event_type,
+                   event.title,
+                   event.description,
+                   event.location,
+                   event.impact,
+                   event.acceptance_criteria,
+                   event.reporter_assignment_id::text,
+                   event.owner_assignment_id::text,
+                   event.severity,
+                   event.status,
+                   event.occurred_at,
+                   event.due_at,
+                   event.closed_at,
+                   event.created_at,
+                   event.updated_at
+            FROM hxy_operating_events AS event
+            WHERE event.organization_id = %s::uuid
+            """
+            + scope_sql
+            + " ORDER BY event.updated_at DESC, event.operating_event_id DESC LIMIT %s"
+        )
+        with self.connect() as connection:
+            rows = connection.execute(
+                sql,
+                (organization_id, *scope_params, max(1, min(int(limit), 100))),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_event(
+        self,
+        *,
+        organization_id: str,
+        event_id: str,
+        store_id: str | None,
+        assignment_id: str,
+        role: str,
+    ) -> dict[str, Any] | None:
+        scope = self._read_scope(role, store_id, assignment_id)
+        if scope is None:
+            return None
+        scope_sql, scope_params = scope
+        task_scope_sql = ""
+        task_scope_params: tuple[Any, ...] = ()
+        evidence_scope_sql = ""
+        evidence_scope_params: tuple[Any, ...] = ()
+        if role == "store_employee":
+            task_scope_sql = """
+                AND (
+                  task.assignee_assignment_id = %s::uuid
+                  OR task.visibility = 'store'
+                )
+            """
+            task_scope_params = (assignment_id,)
+            evidence_scope_sql = """
+                AND (
+                  evidence.created_by_assignment_id = %s::uuid
+                  OR (
+                    evidence.visibility_scope @> '{"task_assignee": true}'::jsonb
+                    AND EXISTS (
+                      SELECT 1
+                      FROM hxy_product_tasks AS evidence_task
+                      WHERE evidence_task.organization_id = evidence.organization_id
+                        AND evidence_task.store_id = evidence.store_id
+                        AND evidence_task.task_id = evidence.task_id
+                        AND evidence_task.assignee_assignment_id = %s::uuid
+                    )
+                  )
+                  OR (
+                    evidence.visibility_scope @> '{"store_employee": true}'::jsonb
+                    AND EXISTS (
+                      SELECT 1
+                      FROM hxy_product_tasks AS evidence_task
+                      WHERE evidence_task.organization_id = evidence.organization_id
+                        AND evidence_task.store_id = evidence.store_id
+                        AND evidence_task.task_id = evidence.task_id
+                        AND evidence_task.visibility = 'store'
+                    )
+                  )
+                )
+            """
+            evidence_scope_params = (assignment_id, assignment_id)
+        with self.connect() as connection:
+            event = connection.execute(
+                """
+                SELECT event.operating_event_id::text,
+                       event.store_id,
+                       event.event_type,
+                       event.title,
+                       event.description,
+                       event.location,
+                       event.impact,
+                       event.acceptance_criteria,
+                       event.reporter_assignment_id::text,
+                       event.owner_assignment_id::text,
+                       event.severity,
+                       event.status,
+                       event.occurred_at,
+                       event.due_at,
+                       event.closed_at,
+                       event.created_at,
+                       event.updated_at
+                FROM hxy_operating_events AS event
+                WHERE event.organization_id = %s::uuid
+                  AND event.operating_event_id = %s::uuid
+                """
+                + scope_sql,
+                (organization_id, event_id, *scope_params),
+            ).fetchone()
+            if event is None:
+                return None
+            workflows = connection.execute(
+                """
+                SELECT workflow_instance_id::text,
+                       status,
+                       current_state,
+                       created_at,
+                       updated_at
+                FROM hxy_workflow_instances
+                WHERE organization_id = %s::uuid
+                  AND operating_event_id = %s::uuid
+                ORDER BY created_at, workflow_instance_id
+                """,
+                (organization_id, event_id),
+            ).fetchall()
+            tasks = connection.execute(
+                """
+                SELECT task.task_id::text,
+                       task.operating_event_id::text,
+                       task.workflow_instance_id::text,
+                       task.title,
+                       task.details,
+                       task.priority,
+                       task.status,
+                       task.assignee_assignment_id::text,
+                       task.result,
+                       task.due_at,
+                       task.submitted_at,
+                       task.accepted_at,
+                       task.created_at,
+                       task.updated_at
+                FROM hxy_product_tasks AS task
+                WHERE task.organization_id = %s::uuid
+                  AND task.operating_event_id = %s::uuid
+                """
+                + task_scope_sql
+                + " ORDER BY task.created_at, task.task_id",
+                (organization_id, event_id, *task_scope_params),
+            ).fetchall()
+            evidence = connection.execute(
+                """
+                SELECT evidence.evidence_id::text,
+                       evidence.evidence_type,
+                       evidence.statement,
+                       evidence.source_asset_id::text,
+                       evidence.created_by_assignment_id::text,
+                       evidence.created_at
+                FROM hxy_operating_evidence AS evidence
+                WHERE evidence.organization_id = %s::uuid
+                  AND evidence.operating_event_id = %s::uuid
+                """
+                + evidence_scope_sql
+                + " ORDER BY evidence.created_at, evidence.evidence_id",
+                (organization_id, event_id, *evidence_scope_params),
+            ).fetchall()
+        return {
+            "event": dict(event),
+            "workflow": dict(workflows[0]) if len(workflows) == 1 else None,
+            "tasks": [dict(row) for row in tasks],
+            "evidence": [dict(row) for row in evidence],
+        }
 
     @contextmanager
     def transaction(self) -> Iterator[OperatingTransaction]:

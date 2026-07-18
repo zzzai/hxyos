@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import re
 from typing import Any
@@ -19,12 +21,52 @@ class SourceAssetAccessDenied(Exception):
     pass
 
 
+class AuthenticatedIntakeScopeDenied(Exception):
+    pass
+
+
+class IntakeIdempotencyConflict(Exception):
+    pass
+
+
 _CONTROL_CHARACTERS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _HQ_ROLES = frozenset({"founder", "hq_operations", "system_admin"})
 
 
 def _sanitize_text(value: str) -> str:
     return _CONTROL_CHARACTERS.sub("", value).strip()[:20000]
+
+
+def _fingerprint_component(value: Any) -> str:
+    return str(value or "").encode("utf-8").hex()
+
+
+def _intake_request_fingerprint(
+    intake: ChannelIntakePayload,
+    *,
+    assignment_id: str | None,
+    store_id: str | None,
+) -> str:
+    source_asset_ids = ",".join(
+        sorted({str(value) for value in intake.source_asset_ids})
+    )
+    fields = (
+        str(intake.organization_id),
+        intake.channel,
+        intake.channel_tenant_id,
+        intake.channel_message_id,
+        intake.channel_thread_id,
+        intake.channel_user_id,
+        assignment_id,
+        store_id,
+        intake.intent_hint,
+        _sanitize_text(intake.raw_text),
+        source_asset_ids,
+    )
+    canonical = "\n".join(
+        ("hxy-intake-v1", *(_fingerprint_component(value) for value in fields))
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _json_object(value: Any) -> dict[str, Any]:
@@ -53,6 +95,16 @@ def _envelope_from_row(row: dict[str, Any]) -> dict[str, Any]:
         "status": str(row["status"]),
         "received_at": row["received_at"],
     }
+
+
+def _replay_or_raise(
+    existing: dict[str, Any],
+    request_fingerprint: str,
+) -> dict[str, Any]:
+    stored_fingerprint = str(existing.get("request_fingerprint") or "")
+    if not hmac.compare_digest(stored_fingerprint, request_fingerprint):
+        raise IntakeIdempotencyConflict("idempotency key was used for another request")
+    return _envelope_from_row(existing)
 
 
 def _asset_is_visible(asset: dict[str, Any], assignment: dict[str, Any]) -> bool:
@@ -99,6 +151,7 @@ class ChannelRepository:
                    sender_assignment_id::text,
                    store_id,
                    status,
+                   request_fingerprint,
                    received_at,
                    created_at,
                    updated_at
@@ -124,6 +177,7 @@ class ChannelRepository:
         store_id: str | None,
         raw_payload: dict[str, Any],
         raw_text: str,
+        request_fingerprint: str,
         visibility_scope: dict[str, Any],
         status: str,
     ) -> dict[str, Any] | None:
@@ -142,12 +196,13 @@ class ChannelRepository:
               raw_payload,
               raw_text,
               idempotency_key,
+              request_fingerprint,
               visibility_scope,
               status
             )
             VALUES (
               %s::uuid, %s, %s, %s, %s, %s, %s::uuid, %s,
-              %s, %s::jsonb, %s, %s, %s::jsonb, %s
+              %s, %s::jsonb, %s, %s, %s, %s::jsonb, %s
             )
             ON CONFLICT (organization_id, channel, idempotency_key) DO NOTHING
             RETURNING envelope_id::text,
@@ -156,6 +211,7 @@ class ChannelRepository:
                       sender_assignment_id::text,
                       store_id,
                       status,
+                      request_fingerprint,
                       received_at,
                       created_at,
                       updated_at
@@ -173,10 +229,20 @@ class ChannelRepository:
                 json.dumps(raw_payload, ensure_ascii=False),
                 raw_text,
                 intake.idempotency_key,
+                request_fingerprint,
                 json.dumps(visibility_scope, ensure_ascii=False),
                 status,
             ),
         ).fetchone()
+
+    def _find_existing_authenticated(
+        self,
+        connection: Any,
+        intake: ChannelIntakePayload,
+        assignment_id: str,
+    ) -> dict[str, Any] | None:
+        del assignment_id
+        return self._find_existing(connection, intake)
 
     def _accept_attention_envelope(
         self,
@@ -187,9 +253,14 @@ class ChannelRepository:
         store_id: str | None = None,
         reason: str,
     ) -> dict[str, Any]:
+        request_fingerprint = _intake_request_fingerprint(
+            intake,
+            assignment_id=assignment_id,
+            store_id=store_id,
+        )
         existing = self._find_existing(connection, intake)
         if existing is not None:
-            return _envelope_from_row(existing)
+            return _replay_or_raise(existing, request_fingerprint)
 
         row = self._insert_envelope(
             connection,
@@ -201,6 +272,7 @@ class ChannelRepository:
                 "attention_reason": reason,
             },
             raw_text=_sanitize_text(intake.raw_text),
+            request_fingerprint=request_fingerprint,
             visibility_scope={"system_admin": True},
             status="needs_attention",
         )
@@ -208,7 +280,9 @@ class ChannelRepository:
             row = self._find_existing(connection, intake)
         if row is None:  # pragma: no cover - database invariant
             raise RuntimeError("idempotent inbound envelope could not be loaded")
-        return _envelope_from_row(row)
+        return _replay_or_raise(row, request_fingerprint) if row.get(
+            "request_fingerprint"
+        ) else _envelope_from_row(row)
 
     def accept_inbound(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Persist raw input and enqueue understanding atomically."""
@@ -293,11 +367,13 @@ class ChannelRepository:
                 )
 
             source_asset_ids = tuple(dict.fromkeys(str(value) for value in intake.source_asset_ids))
+            assets: list[dict[str, Any]] = []
             if source_asset_ids:
                 assets = connection.execute(
                     """
                     SELECT material.material_id::text,
                            material.assignment_id::text,
+                           material.scan_status,
                            material.visibility_scope
                     FROM hxy_product_materials AS material
                     WHERE material.organization_id = %s::uuid
@@ -317,11 +393,26 @@ class ChannelRepository:
                 if authorized_ids != set(source_asset_ids):
                     raise SourceAssetAccessDenied("source asset is outside the intake scope")
 
-            existing = self._find_existing(connection, intake)
-            if existing is not None:
-                return _envelope_from_row(existing)
+            attachments_ready = all(
+                str(asset.get("scan_status") or "legacy_unscanned") == "clean"
+                for asset in assets
+            )
+            attachments_failed = any(
+                str(asset.get("scan_status") or "legacy_unscanned") == "failed"
+                for asset in assets
+            )
 
             assignment_id = str(assignment["assignment_id"])
+            request_fingerprint = _intake_request_fingerprint(
+                intake,
+                assignment_id=assignment_id,
+                store_id=store_id,
+            )
+
+            existing = self._find_existing(connection, intake)
+            if existing is not None:
+                return _replay_or_raise(existing, request_fingerprint)
+
             row = self._insert_envelope(
                 connection,
                 intake,
@@ -329,18 +420,19 @@ class ChannelRepository:
                 store_id=store_id,
                 raw_payload=intake.raw_payload,
                 raw_text=_sanitize_text(intake.raw_text),
+                request_fingerprint=request_fingerprint,
                 visibility_scope={
                     "assignment_id": assignment_id,
                     "store_id": store_id,
                     "hq": True,
                 },
-                status="received",
+                status="needs_attention" if attachments_failed else "received",
             )
             if row is None:
                 existing = self._find_existing(connection, intake)
                 if existing is None:  # pragma: no cover - database invariant
                     raise RuntimeError("idempotent inbound envelope could not be loaded")
-                return _envelope_from_row(existing)
+                return _replay_or_raise(existing, request_fingerprint)
 
             envelope_id = str(row["envelope_id"])
             for source_asset_id in source_asset_ids:
@@ -392,7 +484,8 @@ class ChannelRepository:
                   aggregate_type,
                   aggregate_id,
                   payload,
-                  idempotency_key
+                  idempotency_key,
+                  available_at
                 )
                 VALUES (
                   %s::uuid,
@@ -400,7 +493,8 @@ class ChannelRepository:
                   'inbound_envelope',
                   %s::uuid,
                   %s::jsonb,
-                  %s
+                  %s,
+                  CASE WHEN %s THEN NOW() ELSE 'infinity'::timestamptz END
                 )
                 ON CONFLICT (organization_id, topic, idempotency_key) DO NOTHING
                 RETURNING outbox_message_id::text
@@ -410,28 +504,266 @@ class ChannelRepository:
                     envelope_id,
                     json.dumps(outbox_payload, ensure_ascii=False),
                     f"{intake.channel}:{intake.idempotency_key}",
+                    attachments_ready,
                 ),
             ).fetchone()
-            queued = connection.execute(
+            queued = None
+            if attachments_ready:
+                queued = connection.execute(
+                    """
+                    UPDATE hxy_inbound_envelopes
+                    SET status = 'queued',
+                        updated_at = NOW()
+                    WHERE organization_id = %s::uuid
+                      AND envelope_id = %s::uuid
+                      AND status = 'received'
+                    RETURNING envelope_id::text,
+                              organization_id::text,
+                              channel,
+                              sender_assignment_id::text,
+                              store_id,
+                              status,
+                              received_at,
+                              created_at,
+                              updated_at
+                    """,
+                    (str(intake.organization_id), envelope_id),
+                ).fetchone()
+
+        return _envelope_from_row(queued or row)
+
+    def accept_authenticated_inbound(
+        self,
+        payload: dict[str, Any],
+        *,
+        assignment: Any,
+    ) -> dict[str, Any]:
+        """Accept a PWA intake using server-resolved identity and store scope."""
+        intake = ChannelIntakePayload.model_validate(payload)
+        if intake.channel != "pwa":
+            raise AuthenticatedIntakeScopeDenied("authenticated intake must use pwa channel")
+
+        def assignment_value(key: str) -> str:
+            if isinstance(assignment, dict):
+                value = assignment.get(key)
+            else:
+                value = getattr(assignment, key, None)
+            return str(value or "")
+
+        assignment_id = assignment_value("assignment_id")
+        organization_id = assignment_value("organization_id")
+        expected_store_id = assignment_value("store_id")
+        if (
+            not assignment_id
+            or not organization_id
+            or not expected_store_id
+            or str(intake.organization_id) != organization_id
+        ):
+            raise AuthenticatedIntakeScopeDenied("authenticated intake scope is invalid")
+
+        request_fingerprint = _intake_request_fingerprint(
+            intake,
+            assignment_id=assignment_id,
+            store_id=expected_store_id,
+        )
+
+        with self.connect() as connection:
+            active_assignment = connection.execute(
                 """
-                UPDATE hxy_inbound_envelopes
-                SET status = 'queued',
-                    updated_at = NOW()
-                WHERE organization_id = %s::uuid
-                  AND envelope_id = %s::uuid
-                  AND status = 'received'
-                RETURNING envelope_id::text,
-                          organization_id::text,
-                          channel,
-                          sender_assignment_id::text,
-                          store_id,
-                          status,
-                          received_at,
-                          created_at,
-                          updated_at
+                SELECT assignment.assignment_id::text,
+                       assignment.organization_id::text,
+                       assignment.store_id,
+                       assignment.role
+                FROM hxy_role_assignments AS assignment
+                JOIN hxy_organizations AS organization
+                  ON organization.organization_id = assignment.organization_id
+                WHERE assignment.organization_id = %s::uuid
+                  AND assignment.assignment_id = %s::uuid
+                  AND assignment.store_id = %s
+                  AND assignment.status = 'active'
+                  AND organization.status = 'active'
+                FOR SHARE OF assignment
                 """,
-                (str(intake.organization_id), envelope_id),
+                (organization_id, assignment_id, expected_store_id),
             ).fetchone()
+            if active_assignment is None:
+                raise AuthenticatedIntakeScopeDenied("authenticated assignment is no longer active")
+
+            existing = self._find_existing_authenticated(
+                connection,
+                intake,
+                assignment_id,
+            )
+            if existing is not None:
+                return _replay_or_raise(existing, request_fingerprint)
+
+            relationship = connection.execute(
+                """
+                SELECT relationship.relationship_id::text,
+                       relationship.relationship_version,
+                       relationship.governance_profile_id::text,
+                       governance.profile_version AS governance_profile_version
+                FROM hxy_store_operating_relationships AS relationship
+                JOIN hxy_governance_profiles AS governance
+                  ON governance.organization_id = relationship.organization_id
+                 AND governance.profile_id = relationship.governance_profile_id
+                WHERE relationship.organization_id = %s::uuid
+                  AND relationship.store_id = %s
+                  AND relationship.status = 'active'
+                  AND relationship.effective_from <= NOW()
+                  AND (relationship.effective_to IS NULL OR relationship.effective_to > NOW())
+                  AND governance.status = 'published'
+                  AND governance.effective_from <= NOW()
+                  AND (governance.effective_to IS NULL OR governance.effective_to > NOW())
+                FOR SHARE OF relationship, governance
+                """,
+                (organization_id, expected_store_id),
+            ).fetchone()
+            if relationship is None:
+                return self._accept_attention_envelope(
+                    connection,
+                    intake,
+                    assignment_id=assignment_id,
+                    store_id=expected_store_id,
+                    reason="governance_scope_unavailable",
+                )
+
+            source_asset_ids = tuple(
+                dict.fromkeys(str(value) for value in intake.source_asset_ids)
+            )
+            assets: list[dict[str, Any]] = []
+            if source_asset_ids:
+                assets = connection.execute(
+                    """
+                    SELECT material.material_id::text,
+                           material.assignment_id::text,
+                           material.scan_status,
+                           material.visibility_scope
+                    FROM hxy_product_materials AS material
+                    WHERE material.organization_id = %s::uuid
+                      AND material.material_id = ANY(%s::uuid[])
+                      AND (material.store_id IS NULL OR material.store_id = %s)
+                      AND material.status <> 'archived'
+                      AND material.scan_status <> 'blocked'
+                    FOR SHARE OF material
+                    """,
+                    (organization_id, list(source_asset_ids), expected_store_id),
+                ).fetchall()
+                authorized_ids = {
+                    str(asset["material_id"])
+                    for asset in assets
+                    if _asset_is_visible(asset, active_assignment)
+                }
+                if authorized_ids != set(source_asset_ids):
+                    raise SourceAssetAccessDenied("source asset is outside the intake scope")
+
+            attachments_ready = all(
+                str(asset.get("scan_status") or "legacy_unscanned") == "clean"
+                for asset in assets
+            )
+            attachments_failed = any(
+                str(asset.get("scan_status") or "legacy_unscanned") == "failed"
+                for asset in assets
+            )
+
+            row = self._insert_envelope(
+                connection,
+                intake,
+                assignment_id=assignment_id,
+                store_id=expected_store_id,
+                raw_payload={},
+                raw_text=_sanitize_text(intake.raw_text),
+                request_fingerprint=request_fingerprint,
+                visibility_scope={
+                    "assignment_id": assignment_id,
+                    "store_id": expected_store_id,
+                    "hq": True,
+                },
+                status="needs_attention" if attachments_failed else "received",
+            )
+            if row is None:
+                existing = self._find_existing_authenticated(
+                    connection,
+                    intake,
+                    assignment_id,
+                )
+                if existing is None:  # pragma: no cover - database invariant
+                    raise RuntimeError("idempotent inbound envelope could not be loaded")
+                return _replay_or_raise(existing, request_fingerprint)
+
+            envelope_id = str(row["envelope_id"])
+            for source_asset_id in source_asset_ids:
+                connection.execute(
+                    """
+                    INSERT INTO hxy_asset_bindings (
+                      organization_id, source_type, source_id, target_type,
+                      target_id, relation_type, created_by_assignment_id
+                    )
+                    VALUES (
+                      %s::uuid, 'source_asset', %s::uuid, 'inbound_envelope',
+                      %s::uuid, 'attached_to', %s::uuid
+                    )
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (organization_id, source_asset_id, envelope_id, assignment_id),
+                )
+
+            outbox_payload = {
+                "organization_id": organization_id,
+                "envelope_id": envelope_id,
+                "store_id": expected_store_id,
+                "source_asset_ids": list(source_asset_ids),
+                "store_operating_relationship_id": str(relationship["relationship_id"]),
+                "store_operating_relationship_version": int(
+                    relationship["relationship_version"]
+                ),
+                "governance_profile_id": str(relationship["governance_profile_id"]),
+                "governance_profile_version": int(
+                    relationship["governance_profile_version"]
+                ),
+            }
+            connection.execute(
+                """
+                INSERT INTO hxy_outbox_messages (
+                  organization_id, topic, aggregate_type, aggregate_id,
+                  payload, idempotency_key, available_at
+                )
+                VALUES (
+                  %s::uuid, 'understand.inbound.issue', 'inbound_envelope',
+                  %s::uuid, %s::jsonb, %s,
+                  CASE WHEN %s THEN NOW() ELSE 'infinity'::timestamptz END
+                )
+                ON CONFLICT (organization_id, topic, idempotency_key) DO NOTHING
+                """,
+                (
+                    organization_id,
+                    envelope_id,
+                    json.dumps(outbox_payload, ensure_ascii=False),
+                    f"pwa:{intake.idempotency_key}",
+                    attachments_ready,
+                ),
+            )
+            queued = None
+            if attachments_ready:
+                queued = connection.execute(
+                    """
+                    UPDATE hxy_inbound_envelopes
+                    SET status = 'queued', updated_at = NOW()
+                    WHERE organization_id = %s::uuid
+                      AND envelope_id = %s::uuid
+                      AND status = 'received'
+                    RETURNING envelope_id::text,
+                              organization_id::text,
+                              channel,
+                              sender_assignment_id::text,
+                              store_id,
+                              status,
+                              received_at,
+                              created_at,
+                              updated_at
+                    """,
+                    (organization_id, envelope_id),
+                ).fetchone()
 
         return _envelope_from_row(queued or row)
 
@@ -526,7 +858,7 @@ class ChannelRepository:
                   AND binding.target_id = %s::uuid
                   AND binding.relation_type = 'attached_to'
                   AND material.status <> 'archived'
-                  AND material.scan_status <> 'blocked'
+                  AND material.scan_status = 'clean'
                 ORDER BY binding.created_at, binding.binding_id
                 """,
                 (organization_id, envelope_id),

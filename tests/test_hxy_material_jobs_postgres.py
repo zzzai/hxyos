@@ -77,17 +77,24 @@ def test_postgres_source_authority_rejects_unauthorized_or_cross_org_events() ->
         )
         connection.execute(
             """
-            INSERT INTO hxy_product_materials (
-              material_id, assignment_id, client_upload_id, original_file_name,
-              extension, media_type, size_bytes, sha256, storage_key, status,
-              source_origin, source_authority
-            ) VALUES (
-              %s, %s, %s, '权威边界.md', '.md', 'text/markdown', 64,
-              %s, %s, 'understood', 'internal', 'internal_material'
-            )
-            """,
-            (material_id, owner_assignment_id, str(uuid4()), "a" * 64, f"authority/{material_id}.md"),
-        )
+              INSERT INTO hxy_product_materials (
+                material_id, assignment_id, organization_id, client_upload_id, original_file_name,
+                extension, media_type, size_bytes, sha256, storage_key, status,
+                source_origin, source_authority
+              ) VALUES (
+                %s, %s, %s, %s, '权威边界.md', '.md', 'text/markdown', 64,
+                %s, %s, 'understood', 'internal', 'internal_material'
+              )
+              """,
+              (
+                  material_id,
+                  owner_assignment_id,
+                  organization_id,
+                  str(uuid4()),
+                  "a" * 64,
+                  f"authority/{material_id}.md",
+              ),
+          )
 
         def insert_change_event(actor_assignment_id: str) -> None:
             connection.execute(
@@ -239,6 +246,7 @@ def test_postgres_material_queue_lease_reclaim_and_completion() -> None:
         assert len(claimed) == 1
 
         first = claimed[0]
+        assert first["job_type"] == "scan"
         with psycopg.connect(DATABASE_URL) as connection:
             connection.execute(
                 """
@@ -255,17 +263,35 @@ def test_postgres_material_queue_lease_reclaim_and_completion() -> None:
         assert second["job_id"] == first["job_id"]
         assert second["attempt_number"] == 2
 
-        normalized_artifact_id = str(uuid4())
-        completed = repository.complete_job(
+        scanned = repository.complete_scan_job(
             second["job_id"],
             "worker-c",
+            result_status="clean",
+            engine="clamav",
+            engine_version="1.4.2",
+            signature=None,
+            source_sha256=second["sha256"],
+            source_size_bytes=second["size_bytes"],
+        )
+        assert scanned["scan_status"] == "clean"
+
+        parse_job = repository.claim_next_job("worker-parser", lease_seconds=30)
+        assert parse_job is not None
+        assert parse_job["job_type"] == "parse"
+        assert parse_job["scan_status"] == "clean"
+        assert parse_job["attempt_number"] == 1
+
+        normalized_artifact_id = str(uuid4())
+        completed = repository.complete_job(
+            parse_job["job_id"],
+            "worker-parser",
             artifacts=[
                 {
                     "artifact_id": normalized_artifact_id,
                     "artifact_type": "normalized_markdown",
                     "storage_key": (
                         f"{assignment_id}/{material_id}/derived/"
-                        f"{second['job_id']}/normalized.md"
+                        f"{parse_job['job_id']}/normalized.md"
                     ),
                     "sha256": "b" * 64,
                     "size_bytes": 12,
@@ -276,7 +302,7 @@ def test_postgres_material_queue_lease_reclaim_and_completion() -> None:
                     "artifact_type": "source_card",
                     "storage_key": (
                         f"{assignment_id}/{material_id}/derived/"
-                        f"{second['job_id']}/source-card.json"
+                        f"{parse_job['job_id']}/source-card.json"
                     ),
                     "sha256": "c" * 64,
                     "size_bytes": 16,
@@ -301,14 +327,29 @@ def test_postgres_material_queue_lease_reclaim_and_completion() -> None:
             },
             parser_name="markitdown",
             parser_version="0.1.6",
+            source_sha256=parse_job["sha256"],
+            source_size_bytes=parse_job["size_bytes"],
         )
         assert completed["status"] == "ready"
 
         with psycopg.connect(DATABASE_URL) as connection:
             job_status = connection.execute(
                 "SELECT status FROM hxy_material_parser_jobs WHERE job_id = %s",
-                (second["job_id"],),
+                (parse_job["job_id"],),
             ).fetchone()[0]
+            scan_results = connection.execute(
+                """
+                SELECT result_status,
+                       engine,
+                       engine_version,
+                       signature,
+                       source_sha256,
+                       source_size_bytes
+                FROM hxy_material_scan_results
+                WHERE material_id = %s
+                """,
+                (material_id,),
+            ).fetchall()
             artifacts = connection.execute(
                 """
                 SELECT artifact_type, official_use_allowed
@@ -327,6 +368,16 @@ def test_postgres_material_queue_lease_reclaim_and_completion() -> None:
                 (material_id,),
             ).fetchall()
         assert job_status == "succeeded"
+        assert scan_results == [
+            (
+                "clean",
+                "clamav",
+                "1.4.2",
+                None,
+                second["sha256"],
+                second["size_bytes"],
+            )
+        ]
         assert artifacts == [
             ("normalized_markdown", False),
             ("source_card", False),

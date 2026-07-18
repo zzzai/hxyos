@@ -21,6 +21,10 @@ class SourceAuthorityUpdate(StrictMaterialModel):
     reason: str = Field(min_length=4, max_length=500)
 
 
+class MaterialRequeueRequest(StrictMaterialModel):
+    reason: str = Field(min_length=4, max_length=500)
+
+
 class MaterialReceipt(StrictMaterialModel):
     status: Literal["已收到"]
     message: str

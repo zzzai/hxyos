@@ -5,8 +5,9 @@ import mimetypes
 import os
 import re
 import shutil
+import tempfile
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, BinaryIO, Callable, Iterator
 from urllib.parse import quote
 from uuid import UUID, uuid4
 
@@ -21,12 +22,19 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
+from starlette.background import BackgroundTask
 
 from .auth import Principal, build_principal_resolver
+from .material_integrity import (
+    MaterialSourceIntegrityMismatch,
+    MaterialSourceUnavailable,
+    copy_verified_source,
+)
 from .material_schemas import (
     ListMaterialsResponse,
     MaterialDetailResponse,
+    MaterialRequeueRequest,
     SourceAuthorityUpdate,
     UploadMaterialResponse,
 )
@@ -35,7 +43,6 @@ from .routes import ROLE_CAPABILITIES, assignment_for_principal
 
 
 RepositoryFactory = Callable[[], Any]
-UnderstandingBuilder = Callable[..., dict[str, Any]]
 
 PREVIEW_EXTENSIONS = frozenset({".jpeg", ".jpg", ".md", ".pdf", ".png", ".txt", ".webp"})
 TEXT_EXTENSIONS = frozenset({".csv", ".json", ".md", ".txt"})
@@ -87,6 +94,88 @@ def _storage_path(material_root: Path, storage_key: str) -> Path | None:
     root = material_root.resolve()
     candidate = (root / storage_key).resolve()
     return candidate if candidate.is_relative_to(root) else None
+
+
+def _download_unavailable() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_423_LOCKED,
+        detail="Material is not available",
+    )
+
+
+def _verified_download_snapshot(
+    source: Path,
+    record: dict[str, Any],
+) -> BinaryIO:
+    snapshot = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024, mode="w+b")
+    try:
+        copy_verified_source(
+            source,
+            snapshot,
+            expected_size=int(record.get("size_bytes") or -1),
+            expected_sha256=str(record.get("sha256") or ""),
+        )
+        snapshot.seek(0)
+        return snapshot
+    except MaterialSourceUnavailable:
+        snapshot.close()
+        raise _not_found() from None
+    except MaterialSourceIntegrityMismatch:
+        snapshot.close()
+        raise _download_unavailable() from None
+
+
+def _single_range(
+    range_header: str | None,
+    size: int,
+) -> tuple[int, int, bool]:
+    if not range_header:
+        return 0, size, False
+    if not range_header.startswith("bytes="):
+        raise HTTPException(status_code=416, detail="Range Not Satisfiable")
+
+    value = range_header.removeprefix("bytes=").strip()
+    start_text, separator, end_text = value.partition("-")
+    try:
+        if separator != "-" or (not start_text and not end_text):
+            raise ValueError
+        if not start_text:
+            suffix_size = int(end_text)
+            if suffix_size <= 0:
+                raise ValueError
+            start = max(size - suffix_size, 0)
+            end = size
+        else:
+            start = int(start_text)
+            end = min(int(end_text) + 1, size) if end_text else size
+            if start < 0 or start >= size or end <= start:
+                raise ValueError
+    except ValueError:
+        raise HTTPException(
+            status_code=416,
+            detail="Range Not Satisfiable",
+            headers={"Content-Range": f"bytes */{size}"},
+        ) from None
+    return start, end, True
+
+
+def _stream_snapshot(
+    snapshot: BinaryIO,
+    *,
+    start: int,
+    length: int,
+) -> Iterator[bytes]:
+    remaining = length
+    snapshot.seek(start)
+    try:
+        while remaining > 0:
+            chunk = snapshot.read(min(1024 * 1024, remaining))
+            if not chunk:
+                break
+            remaining -= len(chunk)
+            yield chunk
+    finally:
+        snapshot.close()
 
 
 def _existing_storage_parent(path: Path) -> Path:
@@ -170,7 +259,7 @@ def _public_material(record: dict[str, Any]) -> dict[str, Any]:
         }.get(str(record.get("status") or ""), "processing"),
         "receipt": {
             "status": "已收到",
-            "message": "资料已安全保存，当前不会自动变成正式知识。",
+            "message": "资料已收到，正在安全检查和后台理解，当前不会自动变成正式知识。",
         },
         "original": {
             "url": f"/api/v1/materials/{material_id}/content",
@@ -194,7 +283,6 @@ def create_material_router(
     max_assignment_storage_bytes: int,
     min_material_free_bytes: int,
     allowed_extensions: set[str],
-    understanding_builder: UnderstandingBuilder,
 ) -> APIRouter:
     router = APIRouter()
     material_root = material_root.resolve()
@@ -303,25 +391,14 @@ def create_material_router(
 
         media_type = _derived_media_type(file_name)
         material_status = "processing"
-        try:
-            understanding = _safe_understanding(
-                understanding_builder(
-                    path=destination,
-                    file_name=file_name,
-                    media_type=media_type,
-                    note=note.strip(),
-                    role=assignment.role,
-                )
-            )
-        except Exception:
-            understanding = _safe_understanding(
-                {
-                    "summary": f"已安全保存《{Path(file_name).stem}》，系统将在后台继续理解。",
-                    "parse_status": "metadata_only",
-                    "warnings": ["初步理解暂未完成，原文件已保留并进入后台处理。"],
-                    "official_use_allowed": False,
-                }
-            )
+        understanding = _safe_understanding(
+            {
+                "summary": f"已收到《{Path(file_name).stem}》，等待安全检查和后台理解。",
+                "source_origin": declared_source_origin,
+                "parse_status": "metadata_only",
+                "official_use_allowed": False,
+            }
+        )
 
         try:
             record = repository.create_material(
@@ -403,6 +480,7 @@ def create_material_router(
     )
     def retry_material_understanding(
         material_id: UUID,
+        request: MaterialRequeueRequest | None = None,
         assignment: Any = Depends(resolve_material_creator),
         repository: Any = Depends(get_material_repository),
     ) -> dict[str, Any]:
@@ -413,10 +491,15 @@ def create_material_router(
         if path is None or not path.is_file():
             raise _not_found()
 
-        updated = repository.requeue_material(
-            assignment.assignment_id,
-            str(material_id),
-        )
+        try:
+            updated = repository.requeue_material(
+                assignment.assignment_id,
+                str(material_id),
+                actor_assignment_id=assignment.assignment_id,
+                reason=request.reason if request is not None else "manual_retry",
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
         if updated is None:
             raise _not_found()
         return {"material": _public_material(updated)}
@@ -450,30 +533,43 @@ def create_material_router(
         range_header: str | None = Header(default=None, alias="Range"),
         assignment: Any = Depends(resolve_material_reader),
         repository: Any = Depends(get_material_repository),
-    ) -> FileResponse:
+    ) -> StreamingResponse:
         if range_header and (len(range_header) > 128 or "," in range_header):
             raise HTTPException(status_code=416, detail="Range Not Satisfiable")
         record = repository.get_material(assignment.assignment_id, str(material_id))
         if record is None:
             raise _not_found()
+        if str(record.get("scan_status") or "legacy_unscanned") != "clean":
+            raise _download_unavailable()
         path = _storage_path(material_root, str(record.get("storage_key") or ""))
         if path is None or not path.is_file():
             raise _not_found()
+        snapshot = _verified_download_snapshot(path, record)
+        size = int(record.get("size_bytes") or 0)
+        try:
+            start, end, partial = _single_range(range_header, size)
+        except HTTPException:
+            snapshot.close()
+            raise
         extension = str(record.get("extension") or "").lower()
         disposition = "inline" if extension in PREVIEW_EXTENSIONS else "attachment"
         encoded_name = quote(str(record.get("file_name") or "material"), safe="")
-        response = FileResponse(
-            path,
+        headers = {
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": f"{disposition}; filename*=utf-8''{encoded_name}",
+            "Content-Length": str(end - start),
+            "Content-Security-Policy": "sandbox; default-src 'none'",
+            "X-Content-Type-Options": "nosniff",
+        }
+        if partial:
+            headers["Content-Range"] = f"bytes {start}-{end - 1}/{size}"
+        return StreamingResponse(
+            _stream_snapshot(snapshot, start=start, length=end - start),
+            status_code=206 if partial else 200,
             media_type=str(record.get("media_type") or "application/octet-stream"),
-            content_disposition_type=disposition,
-            filename=str(record.get("file_name") or "material"),
+            headers=headers,
+            background=BackgroundTask(snapshot.close),
         )
-        response.headers["Cache-Control"] = "private, no-store"
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Content-Security-Policy"] = "sandbox; default-src 'none'"
-        response.headers["Content-Disposition"] = (
-            f"{disposition}; filename*=utf-8''{encoded_name}"
-        )
-        return response
 
     return router

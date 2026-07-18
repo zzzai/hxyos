@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -352,8 +353,6 @@ class OperatingService:
                 transaction, organization_id, _identifier(command.task_id)
             )
             task, event, workflow = self._aggregate_rows(aggregate)
-            self._require_expected(command.expected_updated_at, task["updated_at"])
-            self._require_transition(task, "assigned")
             actor = self._require_actor(
                 transaction,
                 organization_id=organization_id,
@@ -365,6 +364,8 @@ class OperatingService:
                     _MANAGEMENT_ROLES,
                 ),
             )
+            self._require_expected(command.expected_updated_at, task["updated_at"])
+            self._require_transition(task, "assigned")
             assignee_id = (
                 _identifier(command.assignee_assignment_id)
                 if command.assignee_assignment_id is not None
@@ -415,12 +416,15 @@ class OperatingService:
     def start_task(self, command: StartTaskCommand) -> OperatingCommandReceipt:
         organization_id = _identifier(command.organization_id)
         with self.repository.transaction() as transaction:
+            replay, request_fingerprint = self._begin_idempotent_command(
+                transaction, command
+            )
+            if replay is not None:
+                return replay
             aggregate = self._require_task_aggregate(
                 transaction, organization_id, _identifier(command.task_id)
             )
             task, event, workflow = self._aggregate_rows(aggregate)
-            self._require_expected(command.expected_updated_at, task["updated_at"])
-            self._require_transition(task, "in_progress")
             actor = self._require_actor(
                 transaction,
                 organization_id=organization_id,
@@ -428,6 +432,8 @@ class OperatingService:
                 store_id=str(event["store_id"]),
             )
             self._require_task_executor(actor, task)
+            self._require_expected(command.expected_updated_at, task["updated_at"])
+            self._require_transition(task, "in_progress")
             updated_task = self._update_task(
                 transaction,
                 organization_id=organization_id,
@@ -445,17 +451,29 @@ class OperatingService:
             workflow = self._advance_workflow_to_running(
                 transaction, command, workflow, actor_fields, now, "task_in_progress"
             )
-            return self._receipt(event, task=updated_task, workflow=workflow)
+            receipt = self._receipt(event, task=updated_task, workflow=workflow)
+            self._store_command_receipt(
+                transaction,
+                command,
+                aggregate_type="task",
+                aggregate_id=_identifier(task["task_id"]),
+                request_fingerprint=request_fingerprint,
+                receipt=receipt,
+            )
+            return receipt
 
     def submit_task(self, command: SubmitTaskCommand) -> OperatingCommandReceipt:
         organization_id = _identifier(command.organization_id)
         with self.repository.transaction() as transaction:
+            replay, request_fingerprint = self._begin_idempotent_command(
+                transaction, command
+            )
+            if replay is not None:
+                return replay
             aggregate = self._require_task_aggregate(
                 transaction, organization_id, _identifier(command.task_id)
             )
             task, event, workflow = self._aggregate_rows(aggregate)
-            self._require_expected(command.expected_updated_at, task["updated_at"])
-            self._require_transition(task, "submitted")
             actor = self._require_actor(
                 transaction,
                 organization_id=organization_id,
@@ -463,6 +481,8 @@ class OperatingService:
                 store_id=str(event["store_id"]),
             )
             self._require_task_executor(actor, task)
+            self._require_expected(command.expected_updated_at, task["updated_at"])
+            self._require_transition(task, "submitted")
             evidence_ids = [_identifier(value) for value in command.evidence_ids]
             if not transaction.evidence_ids_are_valid_for_task(
                 organization_id=organization_id,
@@ -519,17 +539,29 @@ class OperatingService:
                 workflow = self._advance_workflow_to_running(
                     transaction, command, workflow, actor_fields, now, "task_in_progress"
                 )
-            return self._receipt(event, task=updated_task, workflow=workflow)
+            receipt = self._receipt(event, task=updated_task, workflow=workflow)
+            self._store_command_receipt(
+                transaction,
+                command,
+                aggregate_type="task",
+                aggregate_id=_identifier(task["task_id"]),
+                request_fingerprint=request_fingerprint,
+                receipt=receipt,
+            )
+            return receipt
 
     def accept_task(self, command: AcceptTaskCommand) -> OperatingCommandReceipt:
         organization_id = _identifier(command.organization_id)
         with self.repository.transaction() as transaction:
+            replay, request_fingerprint = self._begin_idempotent_command(
+                transaction, command
+            )
+            if replay is not None:
+                return replay
             aggregate = self._require_task_aggregate(
                 transaction, organization_id, _identifier(command.task_id)
             )
             task, event, workflow = self._aggregate_rows(aggregate)
-            self._require_expected(command.expected_updated_at, task["updated_at"])
-            self._require_transition(task, "accepted")
             allowed_roles = self._acceptance_roles(
                 aggregate["governance"], str(event["severity"])
             )
@@ -540,6 +572,8 @@ class OperatingService:
                 store_id=str(event["store_id"]),
                 allowed_roles=allowed_roles,
             )
+            self._require_expected(command.expected_updated_at, task["updated_at"])
+            self._require_transition(task, "accepted")
             if not transaction.task_has_valid_evidence(
                 organization_id=organization_id,
                 store_id=str(event["store_id"]),
@@ -605,19 +639,31 @@ class OperatingService:
                     occurred_at=now,
                     completed_at=None,
                 )
-            return self._receipt(event, task=updated_task, workflow=workflow)
+            receipt = self._receipt(event, task=updated_task, workflow=workflow)
+            self._store_command_receipt(
+                transaction,
+                command,
+                aggregate_type="task",
+                aggregate_id=_identifier(task["task_id"]),
+                request_fingerprint=request_fingerprint,
+                receipt=receipt,
+            )
+            return receipt
 
     def return_for_rework(
         self, command: ReturnForReworkCommand
     ) -> OperatingCommandReceipt:
         organization_id = _identifier(command.organization_id)
         with self.repository.transaction() as transaction:
+            replay, request_fingerprint = self._begin_idempotent_command(
+                transaction, command
+            )
+            if replay is not None:
+                return replay
             aggregate = self._require_task_aggregate(
                 transaction, organization_id, _identifier(command.task_id)
             )
             task, event, workflow = self._aggregate_rows(aggregate)
-            self._require_expected(command.expected_updated_at, task["updated_at"])
-            self._require_transition(task, "rework")
             actor = self._require_actor(
                 transaction,
                 organization_id=organization_id,
@@ -629,6 +675,8 @@ class OperatingService:
                     _MANAGEMENT_ROLES,
                 ),
             )
+            self._require_expected(command.expected_updated_at, task["updated_at"])
+            self._require_transition(task, "rework")
             now = self._now()
             updated_task = self._update_task(
                 transaction,
@@ -656,11 +704,25 @@ class OperatingService:
             workflow = self._advance_workflow_to_running(
                 transaction, command, workflow, actor_fields, now, "rework"
             )
-            return self._receipt(event, task=updated_task, workflow=workflow)
+            receipt = self._receipt(event, task=updated_task, workflow=workflow)
+            self._store_command_receipt(
+                transaction,
+                command,
+                aggregate_type="task",
+                aggregate_id=_identifier(task["task_id"]),
+                request_fingerprint=request_fingerprint,
+                receipt=receipt,
+            )
+            return receipt
 
     def escalate_event(self, command: EscalateEventCommand) -> OperatingCommandReceipt:
         organization_id = _identifier(command.organization_id)
         with self.repository.transaction() as transaction:
+            replay, request_fingerprint = self._begin_idempotent_command(
+                transaction, command
+            )
+            if replay is not None:
+                return replay
             aggregate = transaction.lock_event_aggregate(
                 organization_id, _identifier(command.event_id)
             )
@@ -669,9 +731,6 @@ class OperatingService:
             self._validate_event_aggregate(aggregate)
             event = aggregate["event"]
             workflow = aggregate.get("workflow")
-            self._require_expected(command.expected_updated_at, event["updated_at"])
-            if str(event["status"]) in {"closed", "cancelled"}:
-                raise OperatingConflict("closed operating event cannot be escalated")
             actor = self._require_actor(
                 transaction,
                 organization_id=organization_id,
@@ -683,6 +742,9 @@ class OperatingService:
                     _MANAGEMENT_ROLES,
                 ),
             )
+            self._require_expected(command.expected_updated_at, event["updated_at"])
+            if str(event["status"]) in {"closed", "cancelled"}:
+                raise OperatingConflict("closed operating event cannot be escalated")
             from_severity = str(event["severity"])
             if _SEVERITY_ORDER[command.severity] <= _SEVERITY_ORDER[from_severity]:
                 raise OperatingRuleViolation("event escalation must increase severity")
@@ -709,7 +771,16 @@ class OperatingService:
                 occurred_at=now,
             )
             task = aggregate["tasks"][0] if aggregate.get("tasks") else None
-            return self._receipt(updated_event, task=task, workflow=workflow)
+            receipt = self._receipt(updated_event, task=task, workflow=workflow)
+            self._store_command_receipt(
+                transaction,
+                command,
+                aggregate_type="operating_event",
+                aggregate_id=_identifier(event["operating_event_id"]),
+                request_fingerprint=request_fingerprint,
+                receipt=receipt,
+            )
+            return receipt
 
     def cancel_event(self, command: CancelEventCommand) -> OperatingCommandReceipt:
         organization_id = _identifier(command.organization_id)
@@ -722,9 +793,6 @@ class OperatingService:
             self._validate_event_aggregate(aggregate)
             event = aggregate["event"]
             workflow = aggregate.get("workflow")
-            self._require_expected(command.expected_updated_at, event["updated_at"])
-            if str(event["status"]) in {"closed", "cancelled"}:
-                raise OperatingConflict("operating event is already terminal")
             actor = self._require_actor(
                 transaction,
                 organization_id=organization_id,
@@ -738,6 +806,9 @@ class OperatingService:
                     ),
                 ),
             )
+            self._require_expected(command.expected_updated_at, event["updated_at"])
+            if str(event["status"]) in {"closed", "cancelled"}:
+                raise OperatingConflict("operating event is already terminal")
             if any(str(task["status"]) == "submitted" for task in aggregate["tasks"]):
                 raise OperatingRuleViolation(
                     "submitted task must be returned for rework before cancellation"
@@ -951,7 +1022,7 @@ class OperatingService:
             raise OperatingPermissionDenied("actor role is not authorized")
         actor_store = str(actor.get("store_id") or "")
         if role in _STORE_ROLES and actor_store != store_id:
-            raise OperatingPermissionDenied("actor is outside the event store scope")
+            raise OperatingNotFound("operating resource was not found")
         if role not in _STORE_ROLES and role not in {
             "founder",
             "hq_operations",
@@ -1313,6 +1384,66 @@ class OperatingService:
     def _all_active_in(statuses: list[str], allowed: set[str]) -> bool:
         active = [status for status in statuses if status != "cancelled"]
         return bool(active) and all(status in allowed for status in active)
+
+    def _begin_idempotent_command(
+        self, transaction: Any, command: Any
+    ) -> tuple[OperatingCommandReceipt | None, str]:
+        command_type = self._command_name(command)
+        fingerprint = self._command_request_fingerprint(command_type, command)
+        existing = transaction.load_command_receipt(
+            _identifier(command.organization_id),
+            _identifier(command.correlation_id),
+        )
+        if existing is None:
+            return None, fingerprint
+        if (
+            str(existing.get("command_type") or "") != command_type
+            or str(existing.get("request_fingerprint") or "") != fingerprint
+        ):
+            raise OperatingConflict(
+                "correlation id was used for a different operating command"
+            )
+        return (
+            OperatingCommandReceipt.model_validate(existing.get("receipt_json")),
+            fingerprint,
+        )
+
+    def _store_command_receipt(
+        self,
+        transaction: Any,
+        command: Any,
+        *,
+        aggregate_type: str,
+        aggregate_id: str,
+        request_fingerprint: str,
+        receipt: OperatingCommandReceipt,
+    ) -> None:
+        transaction.insert_command_receipt(
+            {
+                "organization_id": _identifier(command.organization_id),
+                "correlation_id": _identifier(command.correlation_id),
+                "actor_assignment_id": _identifier(command.actor_assignment_id),
+                "command_type": self._command_name(command),
+                "aggregate_type": aggregate_type,
+                "aggregate_id": aggregate_id,
+                "request_fingerprint": request_fingerprint,
+                "receipt_json": receipt.model_dump(mode="json"),
+            }
+        )
+
+    @staticmethod
+    def _command_request_fingerprint(command_type: str, command: Any) -> str:
+        canonical_request = json.dumps(
+            {
+                "version": "hxy-operating-command-v1",
+                "command_type": command_type,
+                "command": command.model_dump(mode="json"),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(canonical_request.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _command_name(command: Any) -> str:

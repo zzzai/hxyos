@@ -83,6 +83,7 @@
 | `samples/pilot-feedback-intake.md` | 样板店试跑反馈采集表 |
 | `decisions/ADR-001-project-boundary.md` | 项目边界架构决策 |
 | `decisions/ADR-002-hxyos-v1-architecture.md` | HXYOS V1 总体架构、数据权威边界、飞书/PWA协同和混合扩张约束 |
+| `decisions/ADR-003-open-source-adoption-matrix.md` | 开源与成熟产品采用矩阵，明确 adopt/embed/sidecar/reference/build/reject 边界和退出条件 |
 | `contracts/hxyos-core-data-contract-v1.md` | 资料、数据集、经营事实、工作流、证据、指标和经营关系的核心数据契约 |
 | `../plans/2026-07-18-hxyos-mixed-operating-model-design.md` | 直营验证后开放加盟、联营、托管等混合模式的阶段与治理设计 |
 | `../plans/2026-07-18-store-issue-vertical-slice-design.md` | 直营首店问题上报、整改、证据和验收闭环设计 |

@@ -589,9 +589,13 @@ def test_channel_repository_loads_tenant_scoped_context_and_authorized_assets() 
     context_sql = next(
         sql for sql, _params in calls if "FROM hxy_inbound_envelopes AS envelope" in sql
     )
+    attachment_sql = next(
+        sql for sql, _params in calls if "FROM hxy_asset_bindings AS binding" in sql
+    )
     assert "governance.profile_version = %s" in context_sql
     assert "relationship.status = 'active'" not in context_sql
     assert "governance.status = 'published'" not in context_sql
+    assert "material.scan_status = 'clean'" in attachment_sql
 
 
 def test_channel_repository_validates_issue_owner_in_tenant_and_store_scope() -> None:

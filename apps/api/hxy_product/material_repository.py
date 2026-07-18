@@ -57,6 +57,13 @@ _DEICTIC_MATERIAL_TERMS = (
 )
 
 
+def _validate_source_identity(source_sha256: str, source_size_bytes: int) -> None:
+    if not re.fullmatch(r"[0-9a-f]{64}", source_sha256):
+        raise ValueError("invalid material source digest")
+    if source_size_bytes < 0:
+        raise ValueError("invalid material source size")
+
+
 def derive_source_authority(source_origin: str) -> str:
     return "internal_material" if source_origin == "internal" else "external_reference"
 
@@ -100,6 +107,10 @@ def _material_from_row(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": str(row.get("material_id") or row.get("id")),
         "assignment_id": str(row["assignment_id"]),
+        "organization_id": (
+            str(row["organization_id"]) if row.get("organization_id") is not None else None
+        ),
+        "store_id": str(row["store_id"]) if row.get("store_id") is not None else None,
         "client_upload_id": str(row["client_upload_id"]),
         "file_name": str(row["original_file_name"]),
         "extension": str(row["extension"]),
@@ -109,6 +120,7 @@ def _material_from_row(row: dict[str, Any]) -> dict[str, Any]:
         "storage_key": str(row["storage_key"]),
         "note": str(row.get("note") or ""),
         "status": str(row["status"]),
+        "scan_status": str(row.get("scan_status") or "legacy_unscanned"),
         "understanding": understanding,
         "source_origin": source_origin,
         "source_authority": _safe_source_authority(source_origin, row.get("source_authority")),
@@ -169,6 +181,8 @@ def _material_chunk_from_row(row: dict[str, Any]) -> dict[str, Any]:
 _MATERIAL_SELECT = """
     SELECT material_id::text,
            assignment_id::text,
+           organization_id::text,
+           store_id,
            client_upload_id::text,
            original_file_name,
            extension,
@@ -178,6 +192,7 @@ _MATERIAL_SELECT = """
            storage_key,
            note,
            status,
+           scan_status,
            understanding_json,
            source_origin,
            source_authority,
@@ -200,11 +215,106 @@ class MaterialRepository:
     def connect(self):
         return psycopg.connect(self.database_url, row_factory=dict_row)
 
+    @staticmethod
+    def _release_waiting_issue_envelopes(connection: Any, material_id: str) -> None:
+        connection.execute(
+            """
+            WITH released AS (
+              UPDATE hxy_outbox_messages AS message
+              SET available_at = NOW(),
+                  last_error_code = NULL,
+                  last_error_summary = NULL,
+                  updated_at = NOW()
+              WHERE message.topic = 'understand.inbound.issue'
+                AND message.aggregate_type = 'inbound_envelope'
+                AND message.status = 'pending'
+                AND message.available_at = 'infinity'::timestamptz
+                AND EXISTS (
+                  SELECT 1
+                  FROM hxy_asset_bindings AS current_binding
+                  WHERE current_binding.organization_id = message.organization_id
+                    AND current_binding.source_type = 'source_asset'
+                    AND current_binding.source_id = %s::uuid
+                    AND current_binding.target_type = 'inbound_envelope'
+                    AND current_binding.target_id = message.aggregate_id
+                    AND current_binding.relation_type = 'attached_to'
+                )
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM hxy_asset_bindings AS pending_binding
+                  JOIN hxy_product_materials AS pending_material
+                    ON pending_material.organization_id = pending_binding.organization_id
+                   AND pending_material.material_id = pending_binding.source_id
+                  WHERE pending_binding.organization_id = message.organization_id
+                    AND pending_binding.source_type = 'source_asset'
+                    AND pending_binding.target_type = 'inbound_envelope'
+                    AND pending_binding.target_id = message.aggregate_id
+                    AND pending_binding.relation_type = 'attached_to'
+                    AND pending_material.scan_status <> 'clean'
+                )
+              RETURNING message.organization_id, message.aggregate_id
+            )
+            UPDATE hxy_inbound_envelopes AS envelope
+            SET status = 'queued',
+                processed_at = NULL,
+                updated_at = NOW()
+            FROM released
+            WHERE envelope.organization_id = released.organization_id
+              AND envelope.envelope_id = released.aggregate_id
+              AND envelope.status IN ('received', 'needs_attention')
+            """,
+            (material_id,),
+        )
+
+    @staticmethod
+    def _hold_waiting_issue_envelopes(
+        connection: Any,
+        material_id: str,
+        *,
+        error_code: str,
+    ) -> None:
+        connection.execute(
+            """
+            WITH deferred AS (
+              UPDATE hxy_outbox_messages AS message
+              SET available_at = 'infinity'::timestamptz,
+                  last_error_code = %s,
+                  last_error_summary = 'an attached material needs attention',
+                  updated_at = NOW()
+              WHERE message.topic = 'understand.inbound.issue'
+                AND message.aggregate_type = 'inbound_envelope'
+                AND message.status = 'pending'
+                AND EXISTS (
+                  SELECT 1
+                  FROM hxy_asset_bindings AS binding
+                  WHERE binding.organization_id = message.organization_id
+                    AND binding.source_type = 'source_asset'
+                    AND binding.source_id = %s::uuid
+                    AND binding.target_type = 'inbound_envelope'
+                    AND binding.target_id = message.aggregate_id
+                    AND binding.relation_type = 'attached_to'
+                )
+              RETURNING message.organization_id, message.aggregate_id
+            )
+            UPDATE hxy_inbound_envelopes AS envelope
+            SET status = 'needs_attention',
+                processed_at = NULL,
+                updated_at = NOW()
+            FROM deferred
+            WHERE envelope.organization_id = deferred.organization_id
+              AND envelope.envelope_id = deferred.aggregate_id
+              AND envelope.status = 'received'
+            """,
+            (error_code[:100], material_id),
+        )
+
     def create_material(self, payload: dict[str, Any]) -> dict[str, Any]:
         with self.connect() as connection:
             assignment = connection.execute(
                 """
-                SELECT assignment_id::text
+                SELECT assignment_id::text,
+                       organization_id::text,
+                       store_id
                 FROM hxy_role_assignments
                 WHERE assignment_id = %s::uuid
                   AND status = 'active'
@@ -249,6 +359,8 @@ class MaterialRepository:
                 INSERT INTO hxy_product_materials (
                   material_id,
                   assignment_id,
+                  organization_id,
+                  store_id,
                   client_upload_id,
                   original_file_name,
                   extension,
@@ -258,6 +370,7 @@ class MaterialRepository:
                   storage_key,
                   note,
                   status,
+                  scan_status,
                   understanding_json,
                   source_origin,
                   source_authority,
@@ -267,6 +380,9 @@ class MaterialRepository:
                   %s::uuid,
                   %s::uuid,
                   %s::uuid,
+                  %s,
+                  %s::uuid,
+                  %s,
                   %s,
                   %s,
                   %s,
@@ -282,6 +398,8 @@ class MaterialRepository:
                 )
                 RETURNING material_id::text,
                           assignment_id::text,
+                          organization_id::text,
+                          store_id,
                           client_upload_id::text,
                           original_file_name,
                           extension,
@@ -291,6 +409,7 @@ class MaterialRepository:
                           storage_key,
                           note,
                           status,
+                          scan_status,
                           understanding_json,
                           source_origin,
                           source_authority,
@@ -302,6 +421,8 @@ class MaterialRepository:
                 (
                     payload["material_id"],
                     payload["assignment_id"],
+                    str(assignment["organization_id"]),
+                    assignment.get("store_id"),
                     payload["client_upload_id"],
                     payload["file_name"],
                     payload["extension"],
@@ -311,6 +432,7 @@ class MaterialRepository:
                     payload["storage_key"],
                     payload.get("note") or "",
                     payload.get("status") or "understood",
+                    payload.get("scan_status") or "pending",
                     json.dumps(payload.get("understanding") or {}, ensure_ascii=False),
                     _normalized_source_origin(payload.get("source_origin")),
                     _validated_source_authority(
@@ -327,11 +449,12 @@ class MaterialRepository:
                 INSERT INTO hxy_material_parser_jobs (
                   material_id,
                   assignment_id,
+                  job_type,
                   parser_strategy,
                   status,
                   max_attempts
                 )
-                VALUES (%s::uuid, %s::uuid, 'markitdown', 'queued', %s)
+                VALUES (%s::uuid, %s::uuid, 'scan', 'clamav', 'queued', %s)
                 RETURNING job_id::text
                 """,
                 (
@@ -358,6 +481,7 @@ class MaterialRepository:
                 SELECT job.job_id::text,
                        job.assignment_id::text,
                        job.material_id::text,
+                       job.job_type,
                        job.parser_strategy,
                        job.status AS job_status,
                        job.attempt_count,
@@ -369,6 +493,7 @@ class MaterialRepository:
                        material.sha256,
                        material.storage_key,
                        material.note,
+                       material.scan_status,
                        material.understanding_json
                 FROM hxy_material_parser_jobs AS job
                 JOIN hxy_product_materials AS material
@@ -377,7 +502,14 @@ class MaterialRepository:
                 WHERE job.status IN ('queued', 'retryable_failed')
                   AND job.available_at <= NOW()
                   AND material.status <> 'archived'
-                ORDER BY job.available_at, job.created_at, job.job_id
+                  AND (
+                    (job.job_type = 'scan' AND material.scan_status = 'pending')
+                    OR (job.job_type = 'parse' AND material.scan_status = 'clean')
+                  )
+                ORDER BY CASE job.job_type WHEN 'scan' THEN 0 ELSE 1 END,
+                         job.available_at,
+                         job.created_at,
+                         job.job_id
                 FOR UPDATE OF job SKIP LOCKED
                 LIMIT 1
                 """,
@@ -422,6 +554,7 @@ class MaterialRepository:
             "job_id": str(row["job_id"]),
             "assignment_id": str(row["assignment_id"]),
             "material_id": str(row["material_id"]),
+            "job_type": str(row["job_type"]),
             "parser_strategy": str(row["parser_strategy"]),
             "attempt_id": str(attempt["attempt_id"]),
             "attempt_number": attempt_number,
@@ -433,6 +566,7 @@ class MaterialRepository:
             "sha256": str(row["sha256"]),
             "storage_key": str(row["storage_key"]),
             "note": str(row.get("note") or ""),
+            "scan_status": str(row.get("scan_status") or "legacy_unscanned"),
             "understanding": _json_object(row.get("understanding_json")),
         }
 
@@ -444,19 +578,55 @@ class MaterialRepository:
     ) -> dict[str, Any]:
         row = connection.execute(
             """
-            SELECT job_id::text,
-                   assignment_id::text,
-                   material_id::text,
-                   attempt_count,
-                   max_attempts
-            FROM hxy_material_parser_jobs
-            WHERE job_id = %s::uuid
-              AND status = 'running'
-              AND lease_owner = %s
-              AND lease_expires_at > NOW()
-            FOR UPDATE
+            SELECT job.job_id::text,
+                   job.assignment_id::text,
+                   job.material_id::text,
+                   job.job_type,
+                   job.attempt_count,
+                   job.max_attempts
+            FROM hxy_material_parser_jobs AS job
+            WHERE job.job_id = %s::uuid
+              AND job.status = 'running'
+              AND job.lease_owner = %s
+              AND job.lease_expires_at > NOW()
+            FOR UPDATE OF job
             """,
             (job_id, worker_id),
+        ).fetchone()
+        if row is None:
+            raise MaterialJobLeaseLost("material parser job lease is no longer owned")
+        return row
+
+    def _lock_owned_job_for_source(
+        self,
+        connection: Any,
+        job_id: str,
+        worker_id: str,
+        *,
+        source_sha256: str,
+        source_size_bytes: int,
+    ) -> dict[str, Any]:
+        row = connection.execute(
+            """
+            SELECT job.job_id::text,
+                   job.assignment_id::text,
+                   job.material_id::text,
+                   job.job_type,
+                   job.attempt_count,
+                   job.max_attempts
+            FROM hxy_material_parser_jobs AS job
+            JOIN hxy_product_materials AS material
+              ON material.assignment_id = job.assignment_id
+             AND material.material_id = job.material_id
+            WHERE job.job_id = %s::uuid
+              AND job.status = 'running'
+              AND job.lease_owner = %s
+              AND job.lease_expires_at > NOW()
+              AND material.sha256 = %s
+              AND material.size_bytes = %s
+            FOR UPDATE OF job, material
+            """,
+            (job_id, worker_id, source_sha256, source_size_bytes),
         ).fetchone()
         if row is None:
             raise MaterialJobLeaseLost("material parser job lease is no longer owned")
@@ -472,9 +642,20 @@ class MaterialRepository:
         understanding: dict[str, Any],
         parser_name: str,
         parser_version: str,
+        source_sha256: str,
+        source_size_bytes: int,
     ) -> dict[str, Any]:
+        _validate_source_identity(source_sha256, source_size_bytes)
         with self.connect() as connection:
-            job = self._lock_owned_job(connection, job_id, worker_id)
+            job = self._lock_owned_job_for_source(
+                connection,
+                job_id,
+                worker_id,
+                source_sha256=source_sha256,
+                source_size_bytes=source_size_bytes,
+            )
+            if str(job.get("job_type") or "parse") != "parse":
+                raise MaterialJobLeaseLost("material parser job lease is no longer owned")
             for artifact in artifacts:
                 connection.execute(
                     """
@@ -564,12 +745,21 @@ class MaterialRepository:
                 SET outcome = 'succeeded',
                     parser_name = %s,
                     parser_version = %s,
+                    source_sha256 = %s,
+                    source_size_bytes = %s,
                     completed_at = NOW()
                 WHERE job_id = %s::uuid
                   AND attempt_number = %s
                   AND outcome = 'running'
                 """,
-                (parser_name, parser_version, job_id, job["attempt_count"]),
+                (
+                    parser_name,
+                    parser_version,
+                    source_sha256,
+                    source_size_bytes,
+                    job_id,
+                    job["attempt_count"],
+                ),
             )
             connection.execute(
                 """
@@ -591,9 +781,13 @@ class MaterialRepository:
                     updated_at = NOW()
                 WHERE assignment_id = %s::uuid
                   AND material_id = %s::uuid
+                  AND sha256 = %s
+                  AND size_bytes = %s
                   AND status <> 'archived'
                 RETURNING material_id::text,
                           assignment_id::text,
+                          organization_id::text,
+                          store_id,
                           client_upload_id::text,
                           original_file_name,
                           extension,
@@ -603,6 +797,7 @@ class MaterialRepository:
                           storage_key,
                           note,
                           status,
+                          scan_status,
                           understanding_json,
                           source_origin,
                           source_authority,
@@ -615,10 +810,244 @@ class MaterialRepository:
                     json.dumps(understanding, ensure_ascii=False),
                     job["assignment_id"],
                     job["material_id"],
+                    source_sha256,
+                    source_size_bytes,
                 ),
             ).fetchone()
         if row is None:
             raise MaterialJobLeaseLost("material was archived while parser job was running")
+        return _material_from_row(row)
+
+    def complete_scan_job(
+        self,
+        job_id: str,
+        worker_id: str,
+        *,
+        result_status: str,
+        engine: str,
+        engine_version: str,
+        signature: str | None,
+        source_sha256: str,
+        source_size_bytes: int,
+    ) -> dict[str, Any]:
+        if result_status not in {"clean", "blocked"}:
+            raise ValueError("unsupported material scan result")
+        bounded_engine = engine.strip()[:80]
+        bounded_version = engine_version.strip()[:80]
+        bounded_signature = (signature or "").strip()[:160] or None
+        if not bounded_engine or not bounded_version:
+            raise ValueError("scanner engine and version are required")
+        if (result_status == "clean") != (bounded_signature is None):
+            raise ValueError("scan signature does not match result")
+        _validate_source_identity(source_sha256, source_size_bytes)
+
+        with self.connect() as connection:
+            job = self._lock_owned_job_for_source(
+                connection,
+                job_id,
+                worker_id,
+                source_sha256=source_sha256,
+                source_size_bytes=source_size_bytes,
+            )
+            if str(job.get("job_type") or "") != "scan":
+                raise MaterialJobLeaseLost("material scan job lease is no longer owned")
+            connection.execute(
+                """
+                INSERT INTO hxy_material_scan_results (
+                  assignment_id,
+                  material_id,
+                  job_id,
+                  attempt_number,
+                  result_status,
+                  engine,
+                  engine_version,
+                  signature,
+                  source_sha256,
+                  source_size_bytes
+                )
+                VALUES (
+                  %s::uuid, %s::uuid, %s::uuid, %s, %s, %s, %s, %s, %s, %s
+                )
+                RETURNING scan_result_id::text
+                """,
+                (
+                    job["assignment_id"],
+                    job["material_id"],
+                    job_id,
+                    job["attempt_count"],
+                    result_status,
+                    bounded_engine,
+                    bounded_version,
+                    bounded_signature,
+                    source_sha256,
+                    source_size_bytes,
+                ),
+            ).fetchone()
+            connection.execute(
+                """
+                UPDATE hxy_material_job_attempts
+                SET outcome = 'succeeded',
+                    parser_name = %s,
+                    parser_version = %s,
+                    source_sha256 = %s,
+                    source_size_bytes = %s,
+                    completed_at = NOW()
+                WHERE job_id = %s::uuid
+                  AND attempt_number = %s
+                  AND outcome = 'running'
+                """,
+                (
+                    bounded_engine,
+                    bounded_version,
+                    source_sha256,
+                    source_size_bytes,
+                    job_id,
+                    job["attempt_count"],
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE hxy_material_parser_jobs
+                SET status = 'succeeded',
+                    lease_owner = NULL,
+                    lease_expires_at = NULL,
+                    completed_at = NOW(),
+                    updated_at = NOW()
+                WHERE job_id = %s::uuid
+                """,
+                (job_id,),
+            )
+            row = connection.execute(
+                """
+                UPDATE hxy_product_materials
+                SET scan_status = %s,
+                    status = CASE
+                      WHEN %s = 'blocked' THEN 'needs_attention'
+                      WHEN EXISTS (
+                        SELECT 1
+                        FROM hxy_material_parser_jobs AS parse_job
+                        WHERE parse_job.assignment_id = hxy_product_materials.assignment_id
+                          AND parse_job.material_id = hxy_product_materials.material_id
+                          AND parse_job.job_type = 'parse'
+                          AND parse_job.status = 'succeeded'
+                      ) THEN 'ready'
+                      ELSE 'processing'
+                    END,
+                    updated_at = NOW()
+                WHERE assignment_id = %s::uuid
+                  AND material_id = %s::uuid
+                  AND sha256 = %s
+                  AND size_bytes = %s
+                  AND status <> 'archived'
+                RETURNING material_id::text,
+                          assignment_id::text,
+                          organization_id::text,
+                          store_id,
+                          client_upload_id::text,
+                          original_file_name,
+                          extension,
+                          media_type,
+                          size_bytes,
+                          sha256,
+                          storage_key,
+                          note,
+                          status,
+                          scan_status,
+                          understanding_json,
+                          source_origin,
+                          source_authority,
+                          authority_version,
+                          official_use_allowed,
+                          created_at,
+                          updated_at
+                """,
+                (
+                    result_status,
+                    result_status,
+                    job["assignment_id"],
+                    job["material_id"],
+                    source_sha256,
+                    source_size_bytes,
+                ),
+            ).fetchone()
+            if row is None:
+                raise MaterialJobLeaseLost(
+                    "material was archived while scan job was running"
+                )
+            if result_status == "clean":
+                connection.execute(
+                    """
+                    INSERT INTO hxy_material_parser_jobs (
+                      assignment_id,
+                      material_id,
+                      job_type,
+                      parser_strategy,
+                      status,
+                      max_attempts
+                    )
+                    VALUES (%s::uuid, %s::uuid, 'parse', 'markitdown', 'queued', 3)
+                    ON CONFLICT (material_id, job_type) DO UPDATE
+                    SET status = CASE
+                          WHEN hxy_material_parser_jobs.status = 'succeeded'
+                            THEN 'succeeded'
+                          ELSE 'queued'
+                        END,
+                        max_attempts = CASE
+                          WHEN hxy_material_parser_jobs.status = 'succeeded'
+                            THEN hxy_material_parser_jobs.max_attempts
+                          ELSE LEAST(
+                            GREATEST(
+                              hxy_material_parser_jobs.max_attempts,
+                              hxy_material_parser_jobs.attempt_count + 3
+                            ),
+                            100
+                          )
+                        END,
+                        available_at = CASE
+                          WHEN hxy_material_parser_jobs.status = 'succeeded'
+                            THEN hxy_material_parser_jobs.available_at
+                          ELSE NOW()
+                        END,
+                        lease_owner = CASE
+                          WHEN hxy_material_parser_jobs.status = 'succeeded'
+                            THEN hxy_material_parser_jobs.lease_owner
+                          ELSE NULL
+                        END,
+                        lease_expires_at = CASE
+                          WHEN hxy_material_parser_jobs.status = 'succeeded'
+                            THEN hxy_material_parser_jobs.lease_expires_at
+                          ELSE NULL
+                        END,
+                        last_error_code = CASE
+                          WHEN hxy_material_parser_jobs.status = 'succeeded'
+                            THEN hxy_material_parser_jobs.last_error_code
+                          ELSE NULL
+                        END,
+                        last_error_summary = CASE
+                          WHEN hxy_material_parser_jobs.status = 'succeeded'
+                            THEN hxy_material_parser_jobs.last_error_summary
+                          ELSE NULL
+                        END,
+                        completed_at = CASE
+                          WHEN hxy_material_parser_jobs.status = 'succeeded'
+                            THEN hxy_material_parser_jobs.completed_at
+                          ELSE NULL
+                        END,
+                        updated_at = NOW()
+                    RETURNING job_id::text
+                    """,
+                    (job["assignment_id"], job["material_id"]),
+                ).fetchone()
+                self._release_waiting_issue_envelopes(
+                    connection,
+                    str(job["material_id"]),
+                )
+            else:
+                self._hold_waiting_issue_envelopes(
+                    connection,
+                    str(job["material_id"]),
+                    error_code="attachment_scan_blocked",
+                )
         return _material_from_row(row)
 
     def retry_or_fail_job(
@@ -637,8 +1066,11 @@ class MaterialRepository:
             job = self._lock_owned_job(connection, job_id, worker_id)
             can_retry = retryable and int(job["attempt_count"]) < int(job["max_attempts"])
             outcome = "retryable_failed" if can_retry else "permanent_failed"
-            bounded_code = error_code.strip()[:80] or "parser_error"
-            bounded_summary = " ".join(error_summary.split())[:500] or "material parsing failed"
+            bounded_code = error_code.strip()[:80] or "material_processing_error"
+            bounded_summary = (
+                " ".join(error_summary.split())[:500]
+                or "material processing failed"
+            )
             connection.execute(
                 """
                 UPDATE hxy_material_job_attempts
@@ -693,18 +1125,37 @@ class MaterialRepository:
                     job_id,
                 ),
             ).fetchone()
-            material_status = "processing" if can_retry else "needs_attention"
-            connection.execute(
-                f"""
-                UPDATE hxy_product_materials
-                SET status = '{material_status}',
-                    updated_at = NOW()
-                WHERE assignment_id = %s::uuid
-                  AND material_id = %s::uuid
-                  AND status <> 'archived'
-                """,
-                (job["assignment_id"], job["material_id"]),
-            )
+            if str(job.get("job_type") or "parse") == "scan" and not can_retry:
+                connection.execute(
+                    """
+                    UPDATE hxy_product_materials
+                    SET status = 'needs_attention',
+                        scan_status = 'failed',
+                        updated_at = NOW()
+                    WHERE assignment_id = %s::uuid
+                      AND material_id = %s::uuid
+                      AND status <> 'archived'
+                    """,
+                    (job["assignment_id"], job["material_id"]),
+                )
+                self._hold_waiting_issue_envelopes(
+                    connection,
+                    str(job["material_id"]),
+                    error_code="attachment_scan_failed",
+                )
+            else:
+                material_status = "processing" if can_retry else "needs_attention"
+                connection.execute(
+                    f"""
+                    UPDATE hxy_product_materials
+                    SET status = '{material_status}',
+                        updated_at = NOW()
+                    WHERE assignment_id = %s::uuid
+                      AND material_id = %s::uuid
+                      AND status <> 'archived'
+                    """,
+                    (job["assignment_id"], job["material_id"]),
+                )
         return str(updated["status"])
 
     def reclaim_stale_leases(self, *, limit: int = 100) -> int:
@@ -717,6 +1168,7 @@ class MaterialRepository:
                   SELECT job_id,
                          assignment_id,
                          material_id,
+                         job_type,
                          attempt_count,
                          max_attempts
                   FROM hxy_material_parser_jobs
@@ -757,6 +1209,7 @@ class MaterialRepository:
                   RETURNING job.job_id,
                             job.assignment_id,
                             job.material_id,
+                            job.job_type,
                             job.status
                 ), updated_materials AS (
                   UPDATE hxy_product_materials AS material
@@ -765,24 +1218,50 @@ class MaterialRepository:
                           THEN 'needs_attention'
                         ELSE 'processing'
                       END,
+                      scan_status = CASE
+                        WHEN updated_jobs.job_type = 'scan'
+                         AND updated_jobs.status = 'permanent_failed'
+                          THEN 'failed'
+                        ELSE material.scan_status
+                      END,
                       updated_at = NOW()
                   FROM updated_jobs
                   WHERE material.assignment_id = updated_jobs.assignment_id
                     AND material.material_id = updated_jobs.material_id
                     AND material.status <> 'archived'
                 )
-                SELECT job_id::text, status
+                SELECT job_id::text,
+                       material_id::text,
+                       job_type,
+                       status
                 FROM updated_jobs
                 """,
                 (min(limit, 1000),),
             ).fetchall()
+            for row in rows:
+                if (
+                    str(row.get("job_type") or "") == "scan"
+                    and str(row.get("status") or "") == "permanent_failed"
+                ):
+                    self._hold_waiting_issue_envelopes(
+                        connection,
+                        str(row["material_id"]),
+                        error_code="attachment_scan_failed",
+                    )
         return len(rows)
 
     def requeue_material(
         self,
         assignment_id: str,
         material_id: str,
+        *,
+        actor_assignment_id: str,
+        reason: str,
     ) -> dict[str, Any] | None:
+        bounded_reason = " ".join(str(reason or "").split())[:500]
+        if len(bounded_reason) < 4:
+            raise ValueError("material requeue reason is required")
+
         with self.connect() as connection:
             material = connection.execute(
                 _MATERIAL_SELECT
@@ -797,9 +1276,23 @@ class MaterialRepository:
             if material is None:
                 return None
 
+            scan_status = str(material.get("scan_status") or "legacy_unscanned")
+            target_job_type = "parse" if scan_status == "clean" else "scan"
+            parser_strategy = "markitdown" if target_job_type == "parse" else "clamav"
+            from_status = "missing"
+
             job = connection.execute(
                 """
-                UPDATE hxy_material_parser_jobs
+                WITH target AS (
+                  SELECT job_id, status AS from_status
+                  FROM hxy_material_parser_jobs
+                  WHERE assignment_id = %s::uuid
+                    AND material_id = %s::uuid
+                    AND job_type = %s
+                    AND status IN ('retryable_failed', 'permanent_failed')
+                  FOR UPDATE
+                )
+                UPDATE hxy_material_parser_jobs AS job
                 SET status = 'queued',
                     max_attempts = LEAST(max_attempts + 3, 100),
                     available_at = NOW(),
@@ -809,13 +1302,14 @@ class MaterialRepository:
                     last_error_summary = NULL,
                     completed_at = NULL,
                     updated_at = NOW()
-                WHERE assignment_id = %s::uuid
-                  AND material_id = %s::uuid
-                  AND status IN ('retryable_failed', 'permanent_failed')
-                RETURNING job_id::text
+                FROM target
+                WHERE job.job_id = target.job_id
+                RETURNING job.job_id::text, target.from_status
                 """,
-                (assignment_id, material_id),
+                (assignment_id, material_id, target_job_type),
             ).fetchone()
+            if job is not None:
+                from_status = str(job.get("from_status") or "retryable_failed")
             if job is None:
                 existing_job = connection.execute(
                     """
@@ -823,37 +1317,54 @@ class MaterialRepository:
                     FROM hxy_material_parser_jobs
                     WHERE assignment_id = %s::uuid
                       AND material_id = %s::uuid
+                      AND job_type = %s
                     FOR UPDATE
                     """,
-                    (assignment_id, material_id),
+                    (assignment_id, material_id, target_job_type),
                 ).fetchone()
                 if existing_job is None:
-                    connection.execute(
+                    job = connection.execute(
                         """
                         INSERT INTO hxy_material_parser_jobs (
                           assignment_id,
                           material_id,
+                          job_type,
                           parser_strategy,
                           status
                         )
-                        VALUES (%s::uuid, %s::uuid, 'markitdown', 'queued')
+                        VALUES (%s::uuid, %s::uuid, %s, %s, 'queued')
                         RETURNING job_id::text
                         """,
-                        (assignment_id, material_id),
+                        (
+                            assignment_id,
+                            material_id,
+                            target_job_type,
+                            parser_strategy,
+                        ),
                     ).fetchone()
                 elif str(existing_job["status"]) == "succeeded":
                     return _material_from_row(material)
+                else:
+                    job = existing_job
+                    from_status = str(existing_job["status"])
 
+            reset_scan_status = (
+                ",\n                    scan_status = 'pending'"
+                if target_job_type == "scan"
+                else ""
+            )
             row = connection.execute(
-                """
+                f"""
                 UPDATE hxy_product_materials
-                SET status = 'processing',
+                SET status = 'processing'{reset_scan_status},
                     updated_at = NOW()
                 WHERE assignment_id = %s::uuid
                   AND material_id = %s::uuid
                   AND status <> 'archived'
                 RETURNING material_id::text,
                           assignment_id::text,
+                          organization_id::text,
+                          store_id,
                           client_upload_id::text,
                           original_file_name,
                           extension,
@@ -863,6 +1374,7 @@ class MaterialRepository:
                           storage_key,
                           note,
                           status,
+                          scan_status,
                           understanding_json,
                           source_origin,
                           source_authority,
@@ -873,6 +1385,42 @@ class MaterialRepository:
                 """,
                 (assignment_id, material_id),
             ).fetchone()
+            if row is not None and job is not None:
+                connection.execute(
+                    """
+                    INSERT INTO hxy_material_job_requeue_events (
+                      organization_id,
+                      assignment_id,
+                      material_id,
+                      actor_assignment_id,
+                      job_id,
+                      from_status,
+                      target_job_type,
+                      reason
+                    )
+                    VALUES (
+                      %s::uuid,
+                      %s::uuid,
+                      %s::uuid,
+                      %s::uuid,
+                      %s::uuid,
+                      %s,
+                      %s,
+                      %s
+                    )
+                    RETURNING requeue_event_id::text
+                    """,
+                    (
+                        str(row["organization_id"]),
+                        assignment_id,
+                        material_id,
+                        actor_assignment_id,
+                        str(job["job_id"]),
+                        from_status,
+                        target_job_type,
+                        bounded_reason,
+                    ),
+                ).fetchone()
         return _material_from_row(row) if row else None
 
     def search_material_chunks(
@@ -901,6 +1449,7 @@ class MaterialRepository:
              AND material.material_id = chunk.material_id
             WHERE chunk.assignment_id = %s::uuid
               AND material.status = 'ready'
+              AND material.scan_status = 'clean'
         """
         if latest_mode:
             sql = (

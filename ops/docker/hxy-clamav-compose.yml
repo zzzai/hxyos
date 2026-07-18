@@ -1,0 +1,20 @@
+services:
+  hxy-clamav:
+    image: ${HXY_CLAMAV_IMAGE:-clamav/clamav:1.4.2}
+    container_name: hxy-clamav
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${HXY_CLAMAV_PORT:-3310}:3310"
+    volumes:
+      - hxy-clamav-data:/var/lib/clamav
+    healthcheck:
+      test: ["CMD-SHELL", "clamdscan --ping 10 >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  hxy-clamav-data:
