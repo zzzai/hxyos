@@ -1983,7 +1983,39 @@ def test_onboarding_repository_rolls_back_redeem_conflict_generically(
     assert len(connection.calls) == 6
 
 
-@pytest.mark.parametrize("ttl_seconds", (59, 86401))
+def test_onboarding_repository_accepts_product_auth_max_session_ttl(
+    monkeypatch,
+) -> None:
+    connection = RecordingOnboardingConnection(
+        [
+            RecordingOnboardingResult(
+                row={
+                    "id": REPOSITORY_INVITE_ID,
+                    "organization_id": REPOSITORY_ORGANIZATION_ID,
+                    "store_id": REPOSITORY_STORE_ID,
+                    "role": "store_manager",
+                    "display_name": "New Member",
+                }
+            ),
+            RecordingOnboardingResult(),
+            RecordingOnboardingResult(),
+            RecordingOnboardingResult(),
+            RecordingOnboardingResult(),
+            RecordingOnboardingResult(),
+        ]
+    )
+    repository, _ = onboarding_repository(monkeypatch, connection)
+
+    repository.redeem_invite(
+        INVITE_TOKEN_HASH,
+        RAW_SESSION_TOKEN,
+        2_592_000,
+    )
+
+    assert connection.calls[-1][1][-1] == 2_592_000
+
+
+@pytest.mark.parametrize("ttl_seconds", (59, 2_592_001))
 def test_onboarding_repository_rejects_unsafe_session_ttl_before_connecting(
     monkeypatch,
     ttl_seconds: int,

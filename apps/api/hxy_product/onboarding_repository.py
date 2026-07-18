@@ -17,7 +17,7 @@ except ImportError:  # pragma: no cover - deployment dependency may be installed
 
 
 SESSION_TTL_MIN_SECONDS = 60
-SESSION_TTL_MAX_SECONDS = 86400
+SESSION_TTL_MAX_SECONDS = 2_592_000
 PASSWORDLESS_PASSWORD_MARKER = "!hxy-gateway-only$onboarding-passwordless-v1"
 ACCOUNT_ROLE_BY_INVITE_ROLE = {
     "store_manager": "store_manager",
