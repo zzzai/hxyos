@@ -795,6 +795,36 @@ def test_price_policy_risk_requires_review_with_corroborated_internal_evidence()
     assert result["usage_boundary"] == "review_required"
 
 
+def test_approved_reception_card_is_not_downgraded_for_plain_price_reference() -> None:
+    result = build_answer_pipeline(
+        question="门店接待标准是什么？",
+        scenario="门店员工工作问答",
+        role="store_staff",
+        intent="operations",
+        answer=(
+            "先了解顾客这次更想泡脚、按摩还是休息，只介绍适合的项目、时长和价格，"
+            "不做医疗判断、不承诺效果、不强推。"
+        ),
+        evidence=[
+            {
+                "source_id": "approved-reception-card-001",
+                "domain": "approved_answer_card",
+                "status": "approved",
+                "stage": "approved_answer_card",
+            }
+        ],
+        confidence="high",
+        needs_review=False,
+        from_answer_card=True,
+        model_route={"task_type": "authority_answer", "should_call_model": False},
+    )
+
+    assert "价格政策" not in result["policy_decision"]["risk_flags"]
+    assert result["policy_decision"]["action"] == "answer"
+    assert result["answer_mode"] == "formal"
+    assert result["usage_boundary"] == "team_standard"
+
+
 @pytest.mark.parametrize(
     ("evidence", "answer"),
     [

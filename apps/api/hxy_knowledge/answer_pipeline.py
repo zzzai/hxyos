@@ -131,12 +131,18 @@ def _commercial_promise_hits(answer: str) -> list[str]:
     return list(dict.fromkeys(hits))
 
 
-def _risk_flags(question: str, answer: str, scenario: str) -> list[str]:
+def _risk_flags(
+    question: str,
+    answer: str,
+    scenario: str,
+    *,
+    from_answer_card: bool,
+) -> list[str]:
     policy_text = f"{question} {answer} {scenario}"
     flags: list[str] = []
     if _commercial_promise_hits(answer):
         flags.append("收益承诺")
-    if "价格" in policy_text or "政策" in policy_text:
+    if not from_answer_card and ("价格" in policy_text or "政策" in policy_text):
         flags.append("价格政策")
     hits = _overclaim_hits(answer)
     if hits and "夸大表达" not in flags:
@@ -322,7 +328,12 @@ def build_answer_pipeline(
     model_route: dict[str, Any],
 ) -> dict[str, Any]:
     frontdoor = classify_workbench_intake(question, scenario=scenario, role=role)
-    risk_flags = _risk_flags(question, answer, scenario)
+    risk_flags = _risk_flags(
+        question,
+        answer,
+        scenario,
+        from_answer_card=from_answer_card,
+    )
     evidence_has_conflict = _has_conflicting_evidence(evidence)
     reference_only = _has_reference_only_evidence(evidence, from_answer_card)
     process_memory_only = bool(evidence) and all(_is_process_memory_evidence(item) for item in evidence)
