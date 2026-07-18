@@ -248,6 +248,15 @@ def _safe_json_object(value: Any) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
+def _normalize_optional_model_fields(payload: Mapping[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+    for field_name in ("suggested_owner_assignment_id", "suggested_due_at"):
+        value = normalized.get(field_name)
+        if isinstance(value, str) and not value.strip():
+            normalized[field_name] = None
+    return normalized
+
+
 def _trusted_issue_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     outbox = payload.get("_hxy_outbox")
     if not isinstance(outbox, Mapping):
@@ -665,7 +674,9 @@ def build_issue_understanding_handler(
                 retryable=True,
             )
         try:
-            proposal = IssueProposalDraft.model_validate(parsed).model_dump(mode="json")
+            proposal = IssueProposalDraft.model_validate(
+                _normalize_optional_model_fields(parsed)
+            ).model_dump(mode="json")
         except ValidationError as error:
             raise OutboxHandlerError(
                 "invalid_model_output",
