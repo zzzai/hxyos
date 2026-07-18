@@ -47,6 +47,7 @@
 
 | 文件 | 作用 |
 |---|---|
+| `governance/00-project-constitution.md` | HXYOS 最高项目宪法，规定第一性原理决策、独立判断、开源复用、自研边界、AI 权限与可证伪验证纪律 |
 | `README.md` | 项目边界和目录说明 |
 | `2026-07-03-current-status.md` | 当前 HXYOS 知识底座、P0 治理、API、工作台和验证状态快照 |
 | `../product/hxyos-prd.md` | HXYOS 产品需求基准，定义公共 AI 工作间、核心知识发布、0+4+1 记忆、Loop 和 Benchmark 产品红线 |
