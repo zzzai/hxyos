@@ -1155,40 +1155,98 @@ describe("HXYOS product shell", () => {
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   });
 
-  it("gates composer and role actions while identity is loading", () => {
+  it("shows a focused connection state while identity is loading", () => {
     render(<App sessionLoader={() => new Promise(() => undefined)} />);
 
-    expect(screen.getByRole("status")).toHaveTextContent("正在加载身份");
+    expect(screen.getByRole("status")).toHaveTextContent("正在连接 HXYOS");
     expect(
-      screen.getByRole("textbox", { name: "告诉 HXYOS 你要做什么" }),
-    ).toBeDisabled();
-    expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "查看当前对话详情" })).toBeDisabled();
-    for (const label of ["对话", "待办", "我的"]) {
-      expect(screen.getByRole("button", { name: label })).toBeDisabled();
-    }
-    expect(screen.queryByTestId("suggestions")).not.toBeInTheDocument();
+      screen.queryByRole("textbox", { name: "告诉 HXYOS 你要做什么" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "主要导航" })).not.toBeInTheDocument();
   });
 
-  it.each([
-    ["unauthorized", new MeRequestError(401, "Unauthorized"), "登录已失效"],
-    ["error", new Error("network unavailable"), "身份加载失败"],
-  ])(
-    "gates actions, announces %s, and keeps retry available",
-    async (_state, failure, message) => {
-      const loader = vi.fn().mockRejectedValue(failure);
-      render(<App sessionLoader={loader} />);
+  it("shows an actionable access gate instead of a disabled workspace", async () => {
+    const loader = vi
+      .fn()
+      .mockRejectedValue(new MeRequestError(401, "Unauthorized"));
+    render(<App sessionLoader={loader} />);
 
-      expect(await screen.findByRole("alert")).toHaveTextContent(message);
-      expect(
-        screen.getByRole("textbox", { name: "告诉 HXYOS 你要做什么" }),
-      ).toBeDisabled();
-      expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
-      expect(
-        screen.getByRole("button", { name: "重试身份加载" }),
-      ).toBeEnabled();
-    },
-  );
+    expect(
+      await screen.findByRole("heading", { name: "进入 HXYOS" }),
+    ).toBeVisible();
+    expect(screen.getByLabelText("一次性访问码")).toBeEnabled();
+    expect(screen.getByRole("button", { name: "进入" })).toBeDisabled();
+    expect(screen.queryByRole("navigation", { name: "主要导航" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("textbox", { name: "告诉 HXYOS 你要做什么" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("exchanges an entered one-time access code and opens the workspace", async () => {
+    const user = userEvent.setup();
+    const grant = "g".repeat(64);
+    const loader = vi
+      .fn()
+      .mockRejectedValueOnce(new MeRequestError(401, "Unauthorized"))
+      .mockResolvedValueOnce(TEST_SESSION);
+    const grantExchanger = vi.fn().mockResolvedValue(undefined);
+    render(
+      <App sessionLoader={loader} grantExchanger={grantExchanger} />,
+    );
+
+    const accessCode = await screen.findByLabelText("一次性访问码");
+    await user.type(accessCode, grant);
+    await user.click(screen.getByRole("button", { name: "进入" }));
+
+    expect(grantExchanger).toHaveBeenCalledWith(grant);
+    expect(
+      await screen.findByRole("textbox", { name: "告诉 HXYOS 你要做什么" }),
+    ).toBeEnabled();
+    expect(screen.getByRole("navigation", { name: "主要导航" })).toBeVisible();
+  });
+
+  it("keeps the access gate usable when a code is invalid or expired", async () => {
+    const user = userEvent.setup();
+    const grant = "x".repeat(64);
+    const loader = vi
+      .fn()
+      .mockRejectedValue(new MeRequestError(401, "Unauthorized"));
+    const grantExchanger = vi
+      .fn()
+      .mockRejectedValue(new MeRequestError(401, "Unauthorized"));
+    render(
+      <App sessionLoader={loader} grantExchanger={grantExchanger} />,
+    );
+
+    const accessCode = await screen.findByLabelText("一次性访问码");
+    await user.type(accessCode, grant);
+    await user.click(screen.getByRole("button", { name: "进入" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "访问码无效或已过期",
+    );
+    expect(screen.getByLabelText("一次性访问码")).toBeEnabled();
+    expect(screen.getByLabelText("一次性访问码")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "进入" })).toBeDisabled();
+  });
+
+  it("shows a retry action instead of the workspace when identity loading fails", async () => {
+    const user = userEvent.setup();
+    const loader = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("network unavailable"))
+      .mockResolvedValueOnce(TEST_SESSION);
+    render(<App sessionLoader={loader} />);
+
+    expect(
+      await screen.findByRole("heading", { name: "暂时无法连接 HXYOS" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("navigation", { name: "主要导航" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "重新连接" }));
+    expect(
+      await screen.findByRole("textbox", { name: "告诉 HXYOS 你要做什么" }),
+    ).toBeEnabled();
+  });
 
   it("opens and closes truthful current-conversation details on demand", async () => {
     const user = userEvent.setup();

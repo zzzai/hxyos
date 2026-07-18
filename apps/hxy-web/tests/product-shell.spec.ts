@@ -461,9 +461,60 @@ test.describe("HXYOS product shell viewport contract", () => {
     await expect(page.getByRole("textbox", { name: "密码" })).toHaveCount(0);
   });
 
+  test("shows an access gate instead of a disabled workspace on a bare URL", async ({
+    page,
+  }) => {
+    await mockProductApi(page);
+    await page.unroute("**/api/v1/me");
+    await page.route("**/api/v1/me", async (route) => {
+      await route.fulfill({ status: 401, json: { detail: "Unauthorized" } });
+    });
+
+    await page.goto("/");
+
+    await expect(page.getByRole("heading", { name: "进入 HXYOS" })).toBeVisible();
+    await expect(page.getByLabel("一次性访问码")).toBeEnabled();
+    await expect(page.getByRole("button", { name: "进入" })).toBeDisabled();
+    await expect(page.getByRole("navigation", { name: "主要导航" })).toHaveCount(0);
+    await expect(
+      page.getByRole("textbox", { name: "告诉 HXYOS 你要做什么" }),
+    ).toHaveCount(0);
+  });
+
+  test("opens the workspace after an entered one-time access code", async ({
+    page,
+  }) => {
+    const grant = "m".repeat(64);
+    let exchanged = false;
+    await mockProductApi(page);
+    await page.unroute("**/api/v1/me");
+    await page.route("**/api/v1/auth/session-grant", async (route) => {
+      expect(route.request().postDataJSON()).toEqual({ grant });
+      exchanged = true;
+      await route.fulfill({ status: 200, json: { status: "authenticated" } });
+    });
+    await page.route("**/api/v1/me", async (route) => {
+      await route.fulfill(
+        exchanged
+          ? { status: 200, json: TEST_SESSION }
+          : { status: 401, json: { detail: "Unauthorized" } },
+      );
+    });
+
+    await page.goto("/");
+    await page.getByLabel("一次性访问码").fill(grant);
+    await page.getByRole("button", { name: "进入" }).click();
+
+    await expect(
+      page.getByRole("textbox", { name: "告诉 HXYOS 你要做什么" }),
+    ).toBeEnabled();
+    await expect(page.getByRole("navigation", { name: "主要导航" })).toBeVisible();
+  });
+
   test("keeps the mobile composer visible above the primary navigation", async ({
     page,
   }) => {
+    await mockProductApi(page);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/");
 
@@ -495,6 +546,7 @@ test.describe("HXYOS product shell viewport contract", () => {
   });
 
   test("does not overflow horizontally on desktop", async ({ page }) => {
+    await mockProductApi(page);
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/");
 

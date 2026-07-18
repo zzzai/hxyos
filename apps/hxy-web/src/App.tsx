@@ -15,7 +15,6 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Paperclip,
-  RotateCcw,
   SquarePen,
   Store,
   UserRound,
@@ -24,6 +23,7 @@ import {
 
 import {
   logoutSession,
+  MeRequestError,
   productOnboardingClient,
   type CanonicalRole,
   type MeResponse,
@@ -52,6 +52,7 @@ import {
 } from "./api/tasks";
 import {
   SessionProvider,
+  type SessionGrantExchanger,
   type SessionLoader,
   useSession,
 } from "./features/session/SessionProvider";
@@ -117,6 +118,107 @@ interface ProductShellProps {
   onLoggedOut: () => void;
 }
 
+function normalizeAccessCode(value: string): string | null {
+  const trimmed = value.trim();
+  let candidate = trimmed;
+
+  if (trimmed.includes("#")) {
+    try {
+      const url = new URL(trimmed);
+      const params = new URLSearchParams(url.hash.slice(1));
+      candidate = params.get("hxy_session_grant") ?? "";
+    } catch {
+      return null;
+    }
+  }
+
+  return candidate.length >= 43 &&
+    candidate.length <= 256 &&
+    /^[A-Za-z0-9._~-]+$/.test(candidate)
+    ? candidate
+    : null;
+}
+
+interface AccessGateProps {
+  status: "loading" | "unauthorized" | "error";
+  authenticate: (grant: string) => Promise<void>;
+  retry: () => void;
+}
+
+function AccessGate({ status, authenticate, retry }: AccessGateProps) {
+  const [accessCode, setAccessCode] = useState("");
+  const [accessError, setAccessError] = useState("");
+  const normalizedAccessCode = normalizeAccessCode(accessCode);
+
+  const submitAccessCode = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!normalizedAccessCode || status === "loading") return;
+
+    setAccessError("");
+    try {
+      await authenticate(normalizedAccessCode);
+    } catch (error: unknown) {
+      setAccessCode("");
+      setAccessError(
+        error instanceof MeRequestError &&
+          (error.status === 401 || error.status === 403 || error.status === 422)
+          ? "访问码无效或已过期，请重新获取"
+          : "暂时无法连接，请稍后重试",
+      );
+    }
+  };
+
+  return (
+    <main className="access-gate">
+      <div className="access-gate-content">
+        <div className="access-brand" aria-label="HXYOS">
+          <span className="brand-mark" aria-hidden="true">H</span>
+          <span>HXYOS</span>
+        </div>
+
+        {status === "loading" ? (
+          <p className="access-loading" role="status">正在连接 HXYOS</p>
+        ) : status === "error" ? (
+          <div className="access-state">
+            <h1>暂时无法连接 HXYOS</h1>
+            <p>请检查网络后重新连接。</p>
+            <button className="access-primary-button" type="button" onClick={retry}>
+              重新连接
+            </button>
+          </div>
+        ) : (
+          <div className="access-state">
+            <h1>进入 HXYOS</h1>
+            <p>打开管理员发送的一次性访问链接，或输入访问码。</p>
+            <form className="access-form" onSubmit={submitAccessCode}>
+              <label htmlFor="hxy-access-code">一次性访问码</label>
+              <input
+                id="hxy-access-code"
+                type="password"
+                autoComplete="one-time-code"
+                spellCheck={false}
+                value={accessCode}
+                onChange={(event) => {
+                  setAccessCode(event.target.value);
+                  setAccessError("");
+                }}
+              />
+              {accessError ? <p className="access-error" role="alert">{accessError}</p> : null}
+              <button
+                className="access-primary-button"
+                type="submit"
+                disabled={!normalizedAccessCode}
+              >
+                进入
+              </button>
+            </form>
+          </div>
+        )}
+      </div>
+    </main>
+  );
+}
+
 function ProductShell({
   conversationClient,
   materialClient,
@@ -128,7 +230,7 @@ function ProductShell({
   logout,
   onLoggedOut,
 }: ProductShellProps) {
-  const { retry, session, status } = useSession();
+  const { authenticate, retry, session, status } = useSession();
   const [activeView, setActiveView] = useState<PrimaryView>("conversation");
   const [profileEverVisited, setProfileEverVisited] = useState(false);
   const [isRailCompact, setIsRailCompact] = useState(true);
@@ -797,6 +899,16 @@ function ProductShell({
     }
   };
 
+  if (!isAuthenticated) {
+    return (
+      <AccessGate
+        status={status === "authenticated" ? "error" : status}
+        authenticate={authenticate}
+        retry={retry}
+      />
+    );
+  }
+
   return (
     <div
       className={`app-shell${isRailCompact ? " rail-compact" : ""}${
@@ -852,13 +964,6 @@ function ProductShell({
           <div
             className="context-line"
             aria-label="当前身份和门店"
-            role={
-              status === "loading"
-                ? "status"
-                : status === "unauthorized" || status === "error"
-                  ? "alert"
-                  : undefined
-            }
           >
             <Store aria-hidden="true" />
             <span className="context-role">{roleLabel}</span>
@@ -866,17 +971,6 @@ function ProductShell({
               /
             </span>
             <span className="context-scope">{scopeLabel}</span>
-            {status === "unauthorized" || status === "error" ? (
-              <button
-                className="icon-button"
-                type="button"
-                aria-label="重试身份加载"
-                title="重试身份加载"
-                onClick={retry}
-              >
-                <RotateCcw aria-hidden="true" />
-              </button>
-            ) : null}
           </div>
           <div className="stage-actions">
             {activeView === "conversation" ? (
@@ -1488,6 +1582,7 @@ function ProductShell({
 interface AppProps {
   initialSession?: MeResponse;
   sessionLoader?: SessionLoader;
+  grantExchanger?: SessionGrantExchanger;
   conversationClient?: ConversationClient;
   materialClient?: MaterialClient;
   taskClient?: TaskClient;
@@ -1506,6 +1601,7 @@ function reloadAfterLogout() {
 export default function App({
   initialSession,
   sessionLoader,
+  grantExchanger,
   conversationClient = productConversationClient,
   materialClient = productMaterialClient,
   taskClient = productTaskClient,
@@ -1517,7 +1613,11 @@ export default function App({
   onLoggedOut = reloadAfterLogout,
 }: AppProps) {
   return (
-    <SessionProvider loader={sessionLoader} initialSession={initialSession}>
+    <SessionProvider
+      loader={sessionLoader}
+      grantExchanger={grantExchanger}
+      initialSession={initialSession}
+    >
       <ProductShell
         conversationClient={conversationClient}
         materialClient={materialClient}

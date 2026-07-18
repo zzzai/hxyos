@@ -33,6 +33,7 @@ interface SessionState {
 }
 
 interface SessionContextValue extends SessionState {
+  authenticate: (grant: string) => Promise<void>;
   retry: () => void;
 }
 
@@ -218,14 +219,36 @@ export function SessionProvider({
     };
   }, [attempt, grantExchanger, initialSession, inviteExchanger, loader]);
 
+  const authenticate = useCallback(
+    async (grant: string) => {
+      setState({ status: "loading", session: null });
+      try {
+        await grantExchanger(grant);
+        const session = await loader();
+        setState({ status: "authenticated", session });
+      } catch (error: unknown) {
+        setState({
+          status:
+            error instanceof MeRequestError &&
+            (error.status === 401 || error.status === 403 || error.status === 422)
+              ? "unauthorized"
+              : "error",
+          session: null,
+        });
+        throw error;
+      }
+    },
+    [grantExchanger, loader],
+  );
+
   const retry = useCallback(() => {
     setState({ status: "loading", session: null });
     setAttempt((current) => current + 1);
   }, []);
 
   const value = useMemo(
-    () => ({ ...state, retry }),
-    [retry, state],
+    () => ({ ...state, authenticate, retry }),
+    [authenticate, retry, state],
   );
 
   return (

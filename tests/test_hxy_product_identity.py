@@ -55,14 +55,14 @@ SESSION_GRANT = "g" * 64
 def test_product_auth_settings_load_bounded_session_ttl_from_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("HXY_AUTH_SESSION_TTL_SECONDS", "86400")
+    monkeypatch.setenv("HXY_AUTH_SESSION_TTL_SECONDS", "2592000")
 
     settings = ProductAuthSettings.from_environment()
 
-    assert settings.session_ttl_seconds == 86400
+    assert settings.session_ttl_seconds == 2592000
 
 
-@pytest.mark.parametrize("value", ["not-a-number", "59", "86401"])
+@pytest.mark.parametrize("value", ["not-a-number", "59", "2592001"])
 def test_product_auth_settings_reject_invalid_session_ttl(
     monkeypatch: pytest.MonkeyPatch,
     value: str,

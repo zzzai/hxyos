@@ -24,8 +24,8 @@ class ProductAuthSettings:
     def __post_init__(self) -> None:
         if not 1 <= self.assertion_max_age_seconds <= 300:
             raise ValueError("assertion_max_age_seconds must be between 1 and 300")
-        if not 60 <= self.session_ttl_seconds <= 86400:
-            raise ValueError("session_ttl_seconds must be between 60 and 86400")
+        if not 60 <= self.session_ttl_seconds <= 2_592_000:
+            raise ValueError("session_ttl_seconds must be between 60 and 2592000")
 
     @classmethod
     def from_environment(cls) -> ProductAuthSettings:
