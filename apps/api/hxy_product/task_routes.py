@@ -186,6 +186,11 @@ def create_task_router(
         task = repository.get_task(str(task_id))
         if task is None or not can_access_task(assignment, task):
             raise _not_found()
+        if task.get("operating_event_id") is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="Operating task must use governed workflow",
+            )
         if request.status == "cancelled" and "tasks:manage" not in ROLE_CAPABILITIES.get(
             assignment.role, ()
         ):
@@ -199,8 +204,13 @@ def create_task_router(
                 status=request.status,
                 result=request.result.strip() if request.result else None,
             )
-        except TaskStateConflict:
-            raise HTTPException(status_code=409, detail="Task is closed") from None
+        except TaskStateConflict as exc:
+            detail = (
+                "Operating task must use governed workflow"
+                if "governed workflow" in str(exc)
+                else "Task is closed"
+            )
+            raise HTTPException(status_code=409, detail=detail) from None
         if updated is None:
             raise _not_found()
         return {"task": _public_task(updated)}

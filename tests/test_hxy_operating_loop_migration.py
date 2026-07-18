@@ -168,5 +168,13 @@ def test_operating_loop_extends_tasks_without_destroying_history() -> None:
         )
 
     assert "status IN ( 'open', 'assigned', 'in_progress', 'submitted', 'accepted'" in normalized
+    assert (
+        "FOREIGN KEY ( organization_id, store_id, operating_event_id, workflow_instance_id )"
+        in normalized
+    )
+    assert (
+        "REFERENCES hxy_workflow_instances( organization_id, store_id, operating_event_id, workflow_instance_id )"
+        in normalized
+    )
     assert "DROP TABLE" not in sql.upper()
     assert "DELETE FROM" not in sql.upper()

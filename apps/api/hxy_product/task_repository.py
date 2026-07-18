@@ -41,6 +41,16 @@ def _task_from_row(row: dict[str, Any]) -> dict[str, Any]:
             if row.get("parent_task_id") is not None
             else None
         ),
+        "operating_event_id": (
+            str(row["operating_event_id"])
+            if row.get("operating_event_id") is not None
+            else None
+        ),
+        "workflow_instance_id": (
+            str(row["workflow_instance_id"])
+            if row.get("workflow_instance_id") is not None
+            else None
+        ),
         "title": str(row["title"]),
         "details": str(row.get("details") or ""),
         "priority": str(row["priority"]),
@@ -199,6 +209,8 @@ class TaskRepository:
             ).fetchone()
             if current is None:
                 return None
+            if current.get("operating_event_id") is not None:
+                raise TaskStateConflict("operating task requires governed workflow")
             if current["status"] in {"completed", "cancelled"}:
                 raise TaskStateConflict("task is already closed")
             row = connection.execute(

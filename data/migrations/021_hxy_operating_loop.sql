@@ -295,6 +295,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_hxy_workflow_instances_active
   )
   WHERE status IN ('pending', 'running', 'waiting');
 
+CREATE UNIQUE INDEX IF NOT EXISTS uq_hxy_workflow_instances_event_instance
+  ON hxy_workflow_instances (
+    organization_id,
+    store_id,
+    operating_event_id,
+    workflow_instance_id
+  );
+
 CREATE TABLE IF NOT EXISTS hxy_operating_evidence (
   evidence_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES hxy_organizations(organization_id) ON DELETE RESTRICT,
@@ -490,6 +498,28 @@ BEGIN
       ADD CONSTRAINT fk_hxy_product_tasks_operating_event
       FOREIGN KEY (organization_id, store_id, operating_event_id)
       REFERENCES hxy_operating_events(organization_id, store_id, operating_event_id)
+      ON DELETE RESTRICT;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'fk_hxy_product_tasks_workflow_event'
+      AND conrelid = 'hxy_product_tasks'::regclass
+  ) THEN
+    ALTER TABLE hxy_product_tasks
+      ADD CONSTRAINT fk_hxy_product_tasks_workflow_event
+      FOREIGN KEY (
+        organization_id,
+        store_id,
+        operating_event_id,
+        workflow_instance_id
+      )
+      REFERENCES hxy_workflow_instances(
+        organization_id,
+        store_id,
+        operating_event_id,
+        workflow_instance_id
+      )
       ON DELETE RESTRICT;
   END IF;
 

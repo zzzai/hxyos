@@ -381,6 +381,36 @@ def test_assignee_completion_records_actor_time_and_result() -> None:
     }
 
 
+def test_legacy_task_api_rejects_governed_operating_task_mutation() -> None:
+    client, _, repository = build_client("store_employee")
+    repository.create_task(
+        {
+            "title": "整改前台灯具",
+            "priority": "high",
+            "visibility": "assignee",
+            "organization_id": ORGANIZATION_ID,
+            "store_id": STORE_ID,
+            "creator_assignment_id": MANAGER_ASSIGNMENT_ID,
+            "assignee_assignment_id": EMPLOYEE_ASSIGNMENT_ID,
+        }
+    )
+    repository.tasks[TASK_ID]["operating_event_id"] = (
+        "81000000-0000-0000-0000-000000000001"
+    )
+
+    response = client.patch(
+        f"/api/v1/tasks/{TASK_ID}",
+        headers=bearer(),
+        json={"status": "completed", "result": "尝试绕过经营状态机。"},
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": "Operating task must use governed workflow"
+    }
+    assert repository.tasks[TASK_ID]["status"] == "open"
+
+
 def test_manager_cannot_modify_same_store_private_task_not_visible_to_manager() -> None:
     client, _, repository = build_client()
     repository.create_task(
