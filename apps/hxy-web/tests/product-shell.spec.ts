@@ -545,6 +545,52 @@ test.describe("HXYOS product shell viewport contract", () => {
     expect(documentWidth).toBeLessThanOrEqual(viewportWidth);
   });
 
+  test("lets a mobile user activate a suggestion above the empty composer", async ({
+    page,
+  }) => {
+    const prompt = "当前最需要验证的经营假设是什么？";
+    await mockProductApi(page);
+    await page.unroute("**/api/v1/me");
+    await page.route("**/api/v1/me", (route) =>
+      route.fulfill({ status: 200, json: ROLE_SESSIONS.founder }),
+    );
+    await page.route("**/api/v1/journeys/suggestions", (route) =>
+      route.fulfill({
+        status: 200,
+        json: {
+          items: [
+            {
+              type: "ask",
+              label: "询问当前开业进度",
+              prompt: "现在开业进度怎么样？",
+            },
+            {
+              type: "tasks",
+              label: "查看今天的关键事项",
+            },
+            {
+              type: "ask",
+              label: "核对一个经营判断",
+              prompt,
+            },
+          ],
+        },
+      }),
+    );
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/");
+
+    const suggestion = page.getByRole("button", {
+      name: "核对一个经营判断",
+    });
+    await expect(suggestion).toBeVisible();
+    await suggestion.click();
+
+    await expect(
+      page.getByRole("textbox", { name: "告诉 HXYOS 你要做什么" }),
+    ).toHaveValue(prompt);
+  });
+
   test("does not overflow horizontally on desktop", async ({ page }) => {
     await mockProductApi(page);
     await page.setViewportSize({ width: 1440, height: 900 });

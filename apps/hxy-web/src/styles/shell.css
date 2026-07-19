@@ -1772,6 +1772,20 @@ button:disabled {
     grid-row: 1;
   }
 
+  .conversation-stage.is-conversation-empty {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+
+  .conversation-stage.is-conversation-empty .conversation-content {
+    grid-row: 2;
+  }
+
+  .conversation-stage.is-conversation-empty .composer-wrap {
+    grid-row: 3;
+    align-self: stretch;
+    pointer-events: auto;
+  }
+
   .left-rail {
     grid-row: 2;
     gap: 0;
@@ -1913,11 +1927,11 @@ button:disabled {
 
   .conversation-stage.is-conversation-empty .empty-state {
     justify-content: center;
-    padding: 16px 16px 150px;
+    padding: 16px;
   }
 
   .conversation-stage.is-conversation-empty .composer-wrap {
-    padding: 116px 12px 12px;
+    padding: 8px 12px 12px;
   }
 
   .composer {
