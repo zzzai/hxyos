@@ -233,3 +233,13 @@ def test_runbook_stops_all_writers_before_switching_the_release() -> None:
     assert runbook.index(stop_writers) < runbook.index(verify_writers)
     assert runbook.index(verify_writers) < runbook.index(switch_release)
     assert runbook.index(switch_release) < runbook.index(start_services)
+
+
+def test_runbook_requires_isolated_product_smoke_without_visible_uploads() -> None:
+    runbook = (ROOT / "docs" / "operations" / "hxy-operating-material-release.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "scripts/run-hxy-isolated-product-smoke.py" in runbook
+    assert "Do not use the real Founder assignment" in runbook
+    assert "Do not upload release canary materials" in runbook

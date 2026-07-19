@@ -69,6 +69,37 @@ def test_business_question_is_not_mistaken_for_system_capability() -> None:
     assert classify_task_intent("泡脚能做什么？") is None
 
 
+@pytest.mark.parametrize("question", ["会话", "打开会话", "返回对话"])
+def test_conversation_navigation_never_routes_to_business_knowledge(question: str) -> None:
+    assert classify_task_intent(question) == "conversation_navigation"
+
+
+def test_conversation_navigation_answer_skips_knowledge_and_governance_language() -> None:
+    router = _Router(failure=AssertionError("navigation must not call model"))
+
+    result = generate_answer(
+        question="会话",
+        scenario="创始人内部决策",
+        domain=None,
+        stage=None,
+        limit=5,
+        repository=_NoPrivateKnowledgeRepository(),
+        model_router=router,
+        hooks=_hooks(),
+        role="founder",
+        pipeline_role="founder",
+    )
+
+    assert result["task_intent"] == "conversation_navigation"
+    assert result["answer"] == "这里是工作会话。直接说要推进的事。"
+    assert result["needs_review"] is False
+    assert result["evidence"] == []
+    assert result["actions"] == []
+    serialized = json.dumps(result, ensure_ascii=False)
+    for forbidden in ("知识库", "权威", "复核", "答案卡", "selected_model", "model_route"):
+        assert forbidden not in serialized
+
+
 def test_medical_efficacy_question_routes_to_risk_boundary() -> None:
     assert classify_intent("泡脚能治疗失眠吗？") == ("risk_boundary", "compliance")
 

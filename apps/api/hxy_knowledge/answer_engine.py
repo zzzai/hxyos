@@ -265,6 +265,17 @@ def _compact_task_command(question: str) -> str:
 def classify_task_intent(question: str) -> str | None:
     """Classify explicit product commands without consulting business knowledge."""
     compact = _compact_task_command(question)
+    if compact in {
+        "会话",
+        "对话",
+        "打开会话",
+        "打开对话",
+        "进入会话",
+        "进入对话",
+        "返回会话",
+        "返回对话",
+    }:
+        return "conversation_navigation"
     if compact in _CAPABILITY_QUESTIONS or re.fullmatch(
         r"(?:你)?(?:都)?(?:会|能|可以)(?:做|干)?(?:什么|些什么|哪些)",
         compact,
@@ -335,7 +346,10 @@ def model_task_intent_supported(question: str, task_intent: str) -> bool:
 
 def build_task_intent_answer(task_intent: str, *, role: str) -> dict[str, Any]:
     role_key = role or "team"
-    if task_intent == "system_capability":
+    if task_intent == "conversation_navigation":
+        answer = "这里是工作会话。直接说要推进的事。"
+        actions = []
+    elif task_intent == "system_capability":
         if role_key == "store_staff":
             answer = "我可以帮你问工作问题、练接待、上传资料、反馈门店问题。直接说现在遇到的事。"
             actions = [

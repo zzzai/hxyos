@@ -1014,12 +1014,14 @@ _FRONTDOOR_INTENTS = {
     "knowledge_lookup",
 }
 _FRONTDOOR_TASK_INTENTS = {
+    "conversation_navigation",
     "system_capability",
     "training",
     "material_ingestion",
     "issue_reporting",
 }
 _FRONTDOOR_TASK_WORKFLOWS = {
+    "conversation_navigation": "ask",
     "system_capability": "ask",
     "training": "train",
     "material_ingestion": "ingest",

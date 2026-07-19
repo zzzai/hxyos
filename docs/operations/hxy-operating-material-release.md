@@ -76,7 +76,26 @@ contains bounded host, port, timeout, and maximum stream size values.
 
 Start the candidate API on a loopback-only alternate port and verify `/health`,
 unauthorized access, authenticated operating routes, authenticated material routes,
-and one private upload through scan, parse, artifact, preview and search.
+and the material pipeline against an isolated local test fixture.
+
+After activation, run the public conversation smoke only through the temporary
+identity runner:
+
+```bash
+set -a
+source /root/hxy/ops/env/hxy-knowledge-api.env
+set +a
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python \
+  scripts/run-hxy-isolated-product-smoke.py \
+  --app-url https://hxyos.hexiaoyue.com
+```
+
+The runner creates a temporary account, assignment, session and conversation, then
+deletes the temporary account in a `finally` cleanup path.
+Do not use the real Founder assignment for release verification.
+Do not upload release canary materials to any real user workspace. The public smoke
+verifies the deployed API and answer path only; material scanning remains an isolated
+candidate test.
 
 Stop every process that can create or consume database work before changing the
 release pointer. The services must report inactive before the switch; a nonzero

@@ -89,6 +89,7 @@ def generate_answer(
     )
     resolved_task_intent = str(frontdoor.get("intent") or "")
     if resolved_task_intent in {
+        "conversation_navigation",
         "system_capability",
         "training",
         "material_ingestion",
