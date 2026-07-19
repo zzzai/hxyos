@@ -4,7 +4,11 @@ from typing import Any
 
 import pytest
 
-from apps.api.hxy_release.product_smoke import ProductSmokeError, run_isolated_product_smoke
+from apps.api.hxy_release.product_smoke import (
+    ProductSmokeError,
+    _remove_temporary_identity,
+    run_isolated_product_smoke,
+)
 
 
 ACCOUNT_ID = "10000000-0000-0000-0000-000000000001"
@@ -112,6 +116,21 @@ def test_isolated_public_smoke_cleans_temporary_identity_after_success() -> None
     assert connection.commits == 2
     assert connection.closed is True
     assert connection.account_exists is False
+
+
+def test_temporary_identity_cleanup_binds_like_pattern_as_data() -> None:
+    connection = _Connection()
+    connection.account_exists = True
+
+    assert _remove_temporary_identity(connection, ACCOUNT_ID) is True
+
+    delete_sql, delete_params = next(
+        (sql, params)
+        for sql, params in connection.calls
+        if "DELETE FROM staff_accounts" in sql
+    )
+    assert "username LIKE %s" in delete_sql
+    assert delete_params == (ACCOUNT_ID, "hxy_release_smoke_%")
 
 
 def test_isolated_public_smoke_still_cleans_identity_when_http_fails() -> None:

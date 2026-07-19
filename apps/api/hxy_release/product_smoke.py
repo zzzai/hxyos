@@ -117,10 +117,10 @@ def _remove_temporary_identity(connection: Any, account_id: str) -> bool:
         """
         DELETE FROM staff_accounts
         WHERE id = %s::uuid
-          AND username LIKE 'hxy_release_smoke_%'
+          AND username LIKE %s
         RETURNING id::text AS id
         """,
-        (account_id,),
+        (account_id, "hxy_release_smoke_%"),
     ).fetchone()
     if deleted is None:
         connection.rollback()
