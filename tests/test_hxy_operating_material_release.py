@@ -204,3 +204,32 @@ def test_runbook_keeps_activation_and_rollback_gates_explicit() -> None:
         "/root/htops",
     ):
         assert phrase in runbook
+
+
+def test_runbook_stops_all_writers_before_switching_the_release() -> None:
+    runbook = (ROOT / "docs" / "operations" / "hxy-operating-material-release.md").read_text(
+        encoding="utf-8"
+    )
+
+    stop_writers = (
+        "systemctl stop hxy-knowledge-api.service "
+        "hxy-material-worker.service hxy-outbox-worker.service"
+    )
+    verify_writers = (
+        "systemctl is-active hxy-knowledge-api.service "
+        "hxy-material-worker.service hxy-outbox-worker.service"
+    )
+    switch_release = "ln -sfn \"$HXY_CANDIDATE_RELEASE\" /root/hxy/releases/current.next"
+    start_services = (
+        "systemctl start hxy-knowledge-api.service hxy-product-web.service "
+        "hxy-material-worker.service hxy-outbox-worker.service"
+    )
+
+    assert stop_writers in runbook
+    assert verify_writers in runbook
+    assert 'test "$(systemctl is-active "$unit")" = "inactive"' in runbook
+    assert switch_release in runbook
+    assert start_services in runbook
+    assert runbook.index(stop_writers) < runbook.index(verify_writers)
+    assert runbook.index(verify_writers) < runbook.index(switch_release)
+    assert runbook.index(switch_release) < runbook.index(start_services)

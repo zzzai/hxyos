@@ -76,16 +76,46 @@ contains bounded host, port, timeout, and maximum stream size values.
 
 Start the candidate API on a loopback-only alternate port and verify `/health`,
 unauthorized access, authenticated operating routes, authenticated material routes,
-and one private upload through scan, parse, artifact, preview and search. Preserve the
-old release path in `/root/hxy/releases/previous`, atomically switch
-`/root/hxy/releases/current`, then restart API, web, material worker, and the outbox
-worker when installed.
+and one private upload through scan, parse, artifact, preview and search.
+
+Stop every process that can create or consume database work before changing the
+release pointer. The services must report inactive before the switch; a nonzero
+`is-active` result is expected only when every listed unit is inactive:
+
+```bash
+systemctl stop hxy-knowledge-api.service hxy-material-worker.service hxy-outbox-worker.service
+systemctl is-active hxy-knowledge-api.service hxy-material-worker.service hxy-outbox-worker.service
+for unit in hxy-knowledge-api.service hxy-material-worker.service hxy-outbox-worker.service; do
+  test "$(systemctl is-active "$unit")" = "inactive"
+done
+```
+
+Preserve the old release target, then atomically replace the current pointer without
+exposing a partially written symlink:
+
+```bash
+HXY_PREVIOUS_RELEASE="$(readlink -f /root/hxy/releases/current)"
+ln -sfn "$HXY_PREVIOUS_RELEASE" /root/hxy/releases/previous
+ln -sfn "$HXY_CANDIDATE_RELEASE" /root/hxy/releases/current.next
+mv -Tf /root/hxy/releases/current.next /root/hxy/releases/current
+```
+
+Reload the installed units and start the API before the workers. The web process is
+read-only but is included so all public surfaces reference the same candidate:
+
+```bash
+systemctl daemon-reload
+systemctl start hxy-knowledge-api.service hxy-product-web.service hxy-material-worker.service hxy-outbox-worker.service
+```
+
+Do not run an old material or Outbox worker against a database migrated for a newer
+release. If any writer cannot be stopped, do not switch the release pointer.
 
 ## Gate 7: Rollback
 
-If service health or canaries fail, stop HXY workers, atomically point
-`releases/current` back to `releases/previous`, restart the previous services, and
-verify the public release marker. Database rollback is a separate maintenance action:
-restore the verified dump only after preserving the failed postflight evidence and any
-new post-migration business writes. Never perform a blind destructive rollback.
-
+If service health or canaries fail, stop the API, material worker, and Outbox worker;
+verify that all writers are inactive; atomically point `releases/current` back to
+`releases/previous`; restart the previous services; and verify the public release
+marker. Database rollback is a separate maintenance action: restore the verified dump
+only after preserving the failed postflight evidence and any new post-migration
+business writes. Never perform a blind destructive rollback.
