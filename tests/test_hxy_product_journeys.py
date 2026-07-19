@@ -294,6 +294,7 @@ def test_employee_issue_report_becomes_current_store_visible_work() -> None:
     body = response.json()
     assert body["result_type"] == "issue_report"
     assert body["primary_result"]["task"]["title"] == "顾客对项目区别听不懂"
+    assert body["primary_result"]["task"]["available_actions"] == ["complete"]
     assert "creator_assignment_id" not in str(body)
     assert tasks.created[0]["organization_id"] == ORGANIZATION_ID
     assert tasks.created[0]["store_id"] == STORE_ID

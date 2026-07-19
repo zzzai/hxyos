@@ -230,6 +230,7 @@ function taskGateway(overrides: Record<string, unknown> = {}) {
           completed_at: null,
           created_at: "2026-07-12T09:00:00Z",
           updated_at: "2026-07-12T09:00:00Z",
+          available_actions: ["complete"],
         },
       ],
       count: 1,
@@ -300,6 +301,7 @@ function journeyGateway(overrides: Record<string, unknown> = {}) {
           completed_at: null,
           created_at: "2026-07-12T12:00:00Z",
           updated_at: "2026-07-12T12:00:00Z",
+          available_actions: ["complete"],
         },
       },
       actions: [{ type: "tasks", label: "查看门店待办" }],
@@ -601,6 +603,46 @@ describe("HXYOS product shell", () => {
         result: "已完成检查。",
       }),
     );
+  });
+
+  it("does not offer direct completion for a governed operating task", async () => {
+    const user = userEvent.setup();
+    const gateway = taskGateway({
+      listTasks: vi.fn().mockResolvedValue({
+        items: [
+          {
+            id: "task-operating",
+            title: "整改门店异常",
+            details: "需要按问题闭环提交证据并验收。",
+            priority: "high",
+            status: "in_progress",
+            visibility: "assignee",
+            store_id: "store-test",
+            assignee_assignment_id: "assignment-test-manager",
+            source_conversation_id: null,
+            source_message_id: null,
+            result: null,
+            due_at: null,
+            completed_at: null,
+            created_at: "2026-07-12T09:00:00Z",
+            updated_at: "2026-07-12T10:00:00Z",
+            available_actions: [],
+          },
+        ],
+        count: 1,
+      }),
+    });
+    render(<App initialSession={TEST_SESSION} taskClient={gateway} />);
+
+    await user.click(screen.getByRole("button", { name: "待办" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "整改门店异常" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "完成任务" }),
+    ).not.toBeInTheDocument();
+    expect(gateway.updateTask).not.toHaveBeenCalled();
   });
 
   it("turns an answer action into a task without copying text", async () => {
@@ -976,6 +1018,7 @@ describe("HXYOS product shell", () => {
     expect(
       await screen.findByRole("heading", { name: "顾客听不懂项目区别" }),
     ).toBeVisible();
+    expect(screen.getByRole("button", { name: "完成任务" })).toBeVisible();
     expect(journeys.reportIssue).toHaveBeenCalledWith({
       title: "顾客听不懂项目区别",
       details: "连续两位顾客提出相同问题。",

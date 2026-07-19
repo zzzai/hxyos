@@ -1071,7 +1071,7 @@ function ProductShell({
                           反馈问题
                         </button>
                       ) : null}
-                      {task.status === "open" || task.status === "in_progress" ? (
+                      {task.available_actions?.includes("complete") ? (
                         completingTaskId === task.id ? (
                           <div className="task-completion">
                             <textarea

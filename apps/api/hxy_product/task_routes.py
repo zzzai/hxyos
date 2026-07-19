@@ -13,6 +13,17 @@ from .task_repository import TaskStateConflict
 
 RepositoryFactory = Callable[[], Any]
 
+_PUBLIC_TASK_STATUS_BY_DOMAIN_STATUS = {
+    "open": "open",
+    "assigned": "open",
+    "in_progress": "in_progress",
+    "submitted": "in_progress",
+    "rework": "in_progress",
+    "accepted": "completed",
+    "completed": "completed",
+    "cancelled": "cancelled",
+}
+
 
 def _forbidden() -> HTTPException:
     return HTTPException(status_code=403, detail="Forbidden")
@@ -23,7 +34,7 @@ def _not_found() -> HTTPException:
 
 
 def _public_task(record: dict[str, Any]) -> dict[str, Any]:
-    return {
+    public = {
         key: record.get(key)
         for key in (
             "id",
@@ -43,6 +54,20 @@ def _public_task(record: dict[str, Any]) -> dict[str, Any]:
             "updated_at",
         )
     }
+    domain_status = str(record.get("status") or "")
+    public["status"] = _PUBLIC_TASK_STATUS_BY_DOMAIN_STATUS.get(
+        domain_status,
+        domain_status,
+    )
+    if domain_status == "accepted":
+        public["completed_at"] = record.get("accepted_at") or record.get("completed_at")
+    public["available_actions"] = (
+        ["complete"]
+        if record.get("operating_event_id") is None
+        and domain_status in {"open", "in_progress"}
+        else []
+    )
+    return public
 
 
 def can_access_task(assignment: Any, task: dict[str, Any]) -> bool:

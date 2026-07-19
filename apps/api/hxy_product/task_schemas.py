@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TaskPriority = Literal["low", "normal", "high", "urgent"]
 TaskStatus = Literal["open", "in_progress", "completed", "cancelled"]
 TaskVisibility = Literal["assignee", "store"]
+TaskAction = Literal["complete"]
 
 
 class CreateTaskRequest(BaseModel):
@@ -63,6 +64,7 @@ class TaskView(BaseModel):
     completed_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    available_actions: list[TaskAction]
 
 
 class TaskResponse(BaseModel):

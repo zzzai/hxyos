@@ -43,6 +43,7 @@ export interface IssueJourneyResult {
       | "completed_at"
       | "created_at"
       | "updated_at"
+      | "available_actions"
     >;
   };
   actions: Array<{ type: string; label: string }>;

@@ -11,7 +11,11 @@ import httpx
 import pytest
 
 from apps.api.hxy_knowledge_api import create_app
-from apps.api.hxy_product.task_repository import TaskRepository, TaskStateConflict
+from apps.api.hxy_product.task_repository import (
+    TaskRepository,
+    TaskStateConflict,
+    _task_from_row,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -345,8 +349,53 @@ def test_employee_cannot_create_tasks_but_can_read_visible_tasks() -> None:
     assert create_response.status_code == 403
     assert list_response.status_code == 200
     assert list_response.json()["count"] == 1
+    assert list_response.json()["items"][0]["available_actions"] == ["complete"]
     assert repository.list_scopes[-1]["assignment_id"] == EMPLOYEE_ASSIGNMENT_ID
     assert repository.list_scopes[-1]["store_id"] == STORE_ID
+
+
+@pytest.mark.parametrize(
+    ("domain_status", "public_status"),
+    [
+        ("assigned", "open"),
+        ("submitted", "in_progress"),
+        ("rework", "in_progress"),
+        ("accepted", "completed"),
+    ],
+)
+def test_task_list_projects_governed_states_to_public_task_states(
+    domain_status: str,
+    public_status: str,
+) -> None:
+    client, _, repository = build_client("store_employee")
+    repository.create_task(
+        {
+            "title": "整改门店异常",
+            "priority": "high",
+            "visibility": "assignee",
+            "organization_id": ORGANIZATION_ID,
+            "store_id": STORE_ID,
+            "creator_assignment_id": MANAGER_ASSIGNMENT_ID,
+            "assignee_assignment_id": EMPLOYEE_ASSIGNMENT_ID,
+        }
+    )
+    repository.tasks[TASK_ID].update(
+        {
+            "status": domain_status,
+            "operating_event_id": "81000000-0000-0000-0000-000000000001",
+            "accepted_at": NOW if domain_status == "accepted" else None,
+        }
+    )
+
+    response = client.get("/api/v1/tasks", headers=bearer())
+
+    assert response.status_code == 200
+    task = response.json()["items"][0]
+    assert task["status"] == public_status
+    assert task["available_actions"] == []
+    assert task["completed_at"] == (
+        NOW.isoformat().replace("+00:00", "Z") if domain_status == "accepted" else None
+    )
 
 
 def test_assignee_completion_records_actor_time_and_result() -> None:
@@ -490,6 +539,41 @@ def test_task_repository_queries_are_assignment_and_organization_scoped() -> Non
     assert "hxy_product_messages.conversation_id = %s::uuid" in source
     assert "hxy_product_messages.role = 'assistant'" in source
     assert "current[\"status\"] in {\"completed\", \"cancelled\"}" in source
+    assert "WHEN status IN ('in_progress', 'submitted', 'rework') THEN 0" in source
+    assert "WHEN status IN ('open', 'assigned') THEN 1" in source
+    assert source.index("CASE\n                    WHEN status IN") < source.index(
+        "CASE priority"
+    )
+
+
+def test_task_row_adapter_keeps_operating_acceptance_time() -> None:
+    record = _task_from_row(
+        {
+            "task_id": TASK_ID,
+            "organization_id": ORGANIZATION_ID,
+            "store_id": STORE_ID,
+            "creator_assignment_id": MANAGER_ASSIGNMENT_ID,
+            "assignee_assignment_id": EMPLOYEE_ASSIGNMENT_ID,
+            "source_conversation_id": None,
+            "source_message_id": None,
+            "parent_task_id": None,
+            "operating_event_id": "81000000-0000-0000-0000-000000000001",
+            "workflow_instance_id": "82000000-0000-0000-0000-000000000001",
+            "title": "整改门店异常",
+            "details": "",
+            "priority": "high",
+            "visibility": "assignee",
+            "status": "accepted",
+            "result": "已整改并验收。",
+            "due_at": None,
+            "accepted_at": NOW,
+            "completed_at": None,
+            "created_at": NOW,
+            "updated_at": NOW,
+        }
+    )
+
+    assert record["accepted_at"] == NOW
 
 
 def test_repository_rechecks_closed_state_after_acquiring_row_lock() -> None:

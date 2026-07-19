@@ -58,6 +58,7 @@ def _task_from_row(row: dict[str, Any]) -> dict[str, Any]:
         "status": str(row["status"]),
         "result": str(row["result"]) if row.get("result") is not None else None,
         "due_at": row.get("due_at"),
+        "accepted_at": row.get("accepted_at"),
         "completed_at": row.get("completed_at"),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
@@ -98,13 +99,17 @@ class TaskRepository:
                     OR (visibility = 'store' AND store_id = %s)
                   )
                 ORDER BY
+                  CASE
+                    WHEN status IN ('in_progress', 'submitted', 'rework') THEN 0
+                    WHEN status IN ('open', 'assigned') THEN 1
+                    ELSE 2
+                  END,
                   CASE priority
                     WHEN 'urgent' THEN 4
                     WHEN 'high' THEN 3
                     WHEN 'normal' THEN 2
                     ELSE 1
                   END DESC,
-                  CASE status WHEN 'in_progress' THEN 0 WHEN 'open' THEN 1 ELSE 2 END,
                   updated_at DESC
                 LIMIT %s
                 """,

@@ -85,6 +85,12 @@ def _public_task(record: dict[str, Any]) -> dict[str, Any]:
         if record.get("result") is not None
         else None
     )
+    public["available_actions"] = (
+        ["complete"]
+        if record.get("operating_event_id") is None
+        and record.get("status") in {"open", "in_progress"}
+        else []
+    )
     return public
 
 
