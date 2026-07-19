@@ -290,6 +290,64 @@ def test_empty_strings_for_optional_model_fields_are_treated_as_missing() -> Non
     ]
 
 
+def test_unknown_markers_for_optional_model_fields_are_treated_as_missing() -> None:
+    output = json.dumps(
+        {
+            "event_type": "facility_defect",
+            "title": "前台灯带闪烁",
+            "description": "前台左侧灯带持续闪烁。",
+            "location": "前台左侧",
+            "impact": "影响现场观感",
+            "acceptance_criteria": "连续运行30分钟无闪烁",
+            "suggested_owner_assignment_id": "未知",
+            "suggested_due_at": "未知",
+            "risk_flags": [],
+            "confidence": 0.91,
+        },
+        ensure_ascii=False,
+    )
+    _module, handler, channel, operating, _router = _build_handler(output)
+
+    result = handler(_outbox_payload())
+
+    assert result["decision"] == "request_missing"
+    assert channel.processed == [(ORGANIZATION_ID, ENVELOPE_ID)]
+    assert operating.records[0]["payload"]["suggested_owner_assignment_id"] is None
+    assert operating.records[0]["payload"]["suggested_due_at"] is None
+    assert operating.records[0]["decision"]["missing_fields"] == [
+        "owner_assignment_id",
+    ]
+
+
+def test_invalid_optional_suggestions_are_discarded_as_missing() -> None:
+    output = json.dumps(
+        {
+            "event_type": "facility_defect",
+            "title": "前台灯带闪烁",
+            "description": "前台左侧灯带持续闪烁。",
+            "location": "前台左侧",
+            "impact": "影响现场观感",
+            "acceptance_criteria": "连续运行30分钟无闪烁",
+            "suggested_owner_assignment_id": "待定",
+            "suggested_due_at": "稍后",
+            "risk_flags": [],
+            "confidence": 0.91,
+        },
+        ensure_ascii=False,
+    )
+    _module, handler, channel, operating, _router = _build_handler(output)
+
+    result = handler(_outbox_payload())
+
+    assert result["decision"] == "request_missing"
+    assert channel.processed == [(ORGANIZATION_ID, ENVELOPE_ID)]
+    assert operating.records[0]["payload"]["suggested_owner_assignment_id"] is None
+    assert operating.records[0]["payload"]["suggested_due_at"] is None
+    assert operating.records[0]["decision"]["missing_fields"] == [
+        "owner_assignment_id",
+    ]
+
+
 def test_model_cannot_inject_tenant_actor_status_or_metric_fields() -> None:
     output = json.dumps(
         {

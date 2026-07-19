@@ -10,7 +10,14 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+)
 
 from hxy_knowledge.image_adapter import IMAGE_SUFFIXES, ImageAdapterError, recognize_image
 
@@ -103,6 +110,12 @@ class IssueProposalDraft(BaseModel):
             if marker and marker not in normalized:
                 normalized.append(marker)
         return normalized
+
+
+_OPTIONAL_MODEL_FIELD_ADAPTERS = {
+    "suggested_owner_assignment_id": TypeAdapter(UUID),
+    "suggested_due_at": TypeAdapter(datetime),
+}
 
 
 class IssueProposalRepository:
@@ -250,9 +263,17 @@ def _safe_json_object(value: Any) -> dict[str, Any] | None:
 
 def _normalize_optional_model_fields(payload: Mapping[str, Any]) -> dict[str, Any]:
     normalized = dict(payload)
-    for field_name in ("suggested_owner_assignment_id", "suggested_due_at"):
+    for field_name, adapter in _OPTIONAL_MODEL_FIELD_ADAPTERS.items():
         value = normalized.get(field_name)
-        if isinstance(value, str) and not value.strip():
+        if not isinstance(value, str):
+            continue
+        candidate = value.strip()
+        if not candidate:
+            normalized[field_name] = None
+            continue
+        try:
+            adapter.validate_python(candidate)
+        except ValidationError:
             normalized[field_name] = None
     return normalized
 
