@@ -30,69 +30,57 @@ _BRIEFING_SELECT = """
     ) AS proposal ON TRUE
 """
 
-_BRIEFING_PRIORITY_ORDER = """
-    CASE
-      WHEN EXISTS (
+def _evidenced_item_exists(section: str, severity: str | None = None) -> str:
+    if section not in {"risks", "decisions", "progress"}:
+        raise ValueError("unsupported briefing section")
+    if severity is not None and severity not in {"critical", "high", "medium", "low"}:
+        raise ValueError("unsupported risk severity")
+    severity_filter = (
+        f"item ->> 'severity' = '{severity}' AND " if severity is not None else ""
+    )
+    return f"""
+      EXISTS (
         SELECT 1
         FROM jsonb_array_elements(
-          COALESCE(proposal.payload -> 'risks', '[]'::jsonb)
+          CASE
+            WHEN jsonb_typeof(proposal.payload -> '{section}') = 'array'
+              THEN proposal.payload -> '{section}'
+            ELSE '[]'::jsonb
+          END
         ) AS item
-        WHERE item ->> 'severity' = 'critical'
-          AND jsonb_array_length(
-            COALESCE(item -> 'evidence', '[]'::jsonb)
-          ) > 0
-      ) THEN 0
-      WHEN EXISTS (
-        SELECT 1
-        FROM jsonb_array_elements(
-          COALESCE(proposal.payload -> 'risks', '[]'::jsonb)
-        ) AS item
-        WHERE item ->> 'severity' = 'high'
-          AND jsonb_array_length(
-            COALESCE(item -> 'evidence', '[]'::jsonb)
-          ) > 0
-      ) THEN 1
-      WHEN EXISTS (
-        SELECT 1
-        FROM jsonb_array_elements(
-          COALESCE(proposal.payload -> 'decisions', '[]'::jsonb)
-        ) AS item
-        WHERE jsonb_array_length(
-          COALESCE(item -> 'evidence', '[]'::jsonb)
-        ) > 0
-      ) THEN 2
-      WHEN EXISTS (
-        SELECT 1
-        FROM jsonb_array_elements(
-          COALESCE(proposal.payload -> 'progress', '[]'::jsonb)
-        ) AS item
-        WHERE jsonb_array_length(
-          COALESCE(item -> 'evidence', '[]'::jsonb)
-        ) > 0
-      ) THEN 3
-      WHEN EXISTS (
-        SELECT 1
-        FROM jsonb_array_elements(
-          COALESCE(proposal.payload -> 'risks', '[]'::jsonb)
-        ) AS item
-        WHERE item ->> 'severity' = 'medium'
-          AND jsonb_array_length(
-            COALESCE(item -> 'evidence', '[]'::jsonb)
-          ) > 0
-      ) THEN 4
-      WHEN EXISTS (
-        SELECT 1
-        FROM jsonb_array_elements(
-          COALESCE(proposal.payload -> 'risks', '[]'::jsonb)
-        ) AS item
-        WHERE item ->> 'severity' = 'low'
-          AND jsonb_array_length(
-            COALESCE(item -> 'evidence', '[]'::jsonb)
-          ) > 0
-      ) THEN 5
-      ELSE 6
-    END
-"""
+        WHERE {severity_filter}EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(
+            CASE
+              WHEN jsonb_typeof(item -> 'evidence') = 'array'
+                THEN item -> 'evidence'
+              ELSE '[]'::jsonb
+            END
+          ) AS evidence
+          WHERE evidence ->> 'source_record_id' = envelope.envelope_id::text
+            AND NULLIF(BTRIM(evidence ->> 'quote'), '') IS NOT NULL
+        )
+      )
+    """
+
+
+_PRIORITY_RULES = (
+    ("risks", "critical", 0),
+    ("risks", "high", 1),
+    ("decisions", None, 2),
+    ("progress", None, 3),
+    ("risks", "medium", 4),
+    ("risks", "low", 5),
+)
+
+_BRIEFING_PRIORITY_ORDER = (
+    "CASE "
+    + " ".join(
+        f"WHEN {_evidenced_item_exists(section, severity)} THEN {rank}"
+        for section, severity, rank in _PRIORITY_RULES
+    )
+    + " ELSE 6 END"
+)
 
 
 class BriefingRepository:

@@ -339,5 +339,9 @@ def test_briefing_query_prioritizes_evidenced_items_before_freshness_window() ->
     priority_position = sql.index("CASE")
     freshness_position = sql.index("envelope.received_at DESC")
     assert "item ->> 'severity' = 'critical'" in sql
-    assert "COALESCE(item -> 'evidence', '[]'::jsonb)" in sql
+    assert "jsonb_typeof(item -> 'evidence') = 'array'" in sql
+    assert (
+        "evidence ->> 'source_record_id' = envelope.envelope_id::text" in sql
+    )
+    assert "NULLIF(BTRIM(evidence ->> 'quote'), '') IS NOT NULL" in sql
     assert priority_position < freshness_position
