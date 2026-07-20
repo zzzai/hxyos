@@ -174,7 +174,7 @@ def create_record_router(
                 store_id=assignment.store_id,
             )
         except RecordAccessDenied:
-            raise _forbidden() from None
+            raise _not_found() from None
         if record is None:
             raise _not_found()
         return {"record": record}

@@ -120,10 +120,11 @@ class RouteClient:
 def record_route_client(
     tmp_path: Path,
     assignment: RouteAssignment | None = None,
+    record_repository: Any | None = None,
 ) -> RouteClient:
     identity = RouteIdentityRepository(assignment)
     channel = RouteChannelRepository()
-    records = RouteRecordRepository()
+    records = record_repository or RouteRecordRepository()
     app = create_app(
         root_dir=tmp_path,
         repository_factory=lambda: object(),
@@ -197,6 +198,27 @@ def test_detail_returns_visible_record_and_hides_out_of_scope_record(
     assert visible.status_code == 200
     assert visible.json()["record"]["id"] == RECORD_ID
     assert hidden.status_code == 404
+
+
+def test_detail_hides_record_repository_access_denial(tmp_path: Path) -> None:
+    from hxy_product.record_repository import RecordAccessDenied
+
+    class DeniedRecordRepository(RouteRecordRepository):
+        def get_record(self, **_scope: Any) -> dict[str, Any] | None:
+            raise RecordAccessDenied("record is outside the assignment scope")
+
+    client = record_route_client(
+        tmp_path,
+        record_repository=DeniedRecordRepository(),
+    )
+
+    response = client.request(
+        "GET",
+        f"/api/v1/organization-records/{FOREIGN_RECORD_ID}",
+        headers=route_headers(),
+    )
+
+    assert response.status_code == 404
 
 
 def test_system_admin_cannot_create_or_read_organization_records(
