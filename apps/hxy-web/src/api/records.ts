@@ -120,6 +120,21 @@ function responseDetail(payload: unknown, fallback: string): string {
   ) {
     return payload.detail.trim();
   }
+  if (
+    isRecord(payload) &&
+    Array.isArray(payload.detail) &&
+    payload.detail.length > 0
+  ) {
+    const first = payload.detail[0];
+    if (isRecord(first) && typeof first.msg === "string" && first.msg.trim()) {
+      const field = Array.isArray(first.loc)
+        ? [...first.loc].reverse().find((part) => typeof part === "string")
+        : undefined;
+      return field
+        ? `${field}: ${first.msg.trim()}`
+        : first.msg.trim();
+    }
+  }
   return fallback;
 }
 
@@ -172,12 +187,117 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isString(value: unknown): value is string {
+  return typeof value === "string";
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || isString(value);
+}
+
+function isRecordSourceType(value: unknown): value is RecordSourceType {
+  return (
+    isString(value) &&
+    ["text", "link", "image", "audio", "video", "document", "file"].includes(
+      value,
+    )
+  );
+}
+
+function isRecordProcessingStatus(
+  value: unknown,
+): value is RecordProcessingStatus {
+  return (
+    isString(value) &&
+    ["received", "processing", "ready", "needs_attention"].includes(value)
+  );
+}
+
+export function isRecordEvidence(value: unknown): value is RecordEvidence {
+  return (
+    isRecord(value) &&
+    isString(value.source_record_id) &&
+    isNullableString(value.source_asset_id) &&
+    isString(value.quote) &&
+    isNullableString(value.locator)
+  );
+}
+
+function isInterpretationItem(value: unknown): value is RecordInterpretationItem {
+  return (
+    isRecord(value) &&
+    isString(value.statement) &&
+    Array.isArray(value.evidence) &&
+    value.evidence.every(isRecordEvidence)
+  );
+}
+
+function isInterpretation(value: unknown): value is RecordInterpretation {
+  return (
+    isRecord(value) &&
+    isString(value.version) &&
+    isString(value.summary) &&
+    Array.isArray(value.facts) &&
+    value.facts.every(isInterpretationItem) &&
+    Array.isArray(value.decisions) &&
+    value.decisions.every(isInterpretationItem) &&
+    Array.isArray(value.progress) &&
+    value.progress.every(isInterpretationItem) &&
+    Array.isArray(value.risks) &&
+    value.risks.every(isInterpretationItem) &&
+    Array.isArray(value.missing_information) &&
+    value.missing_information.every(isString) &&
+    typeof value.confidence === "number" &&
+    Number.isFinite(value.confidence) &&
+    value.confidence >= 0 &&
+    value.confidence <= 1 &&
+    value.official_knowledge === false
+  );
+}
+
+function isRecordAsset(value: unknown): value is OrganizationRecordAsset {
+  return (
+    isRecord(value) &&
+    isString(value.id) &&
+    isString(value.file_name) &&
+    isString(value.media_type) &&
+    typeof value.size_bytes === "number" &&
+    Number.isFinite(value.size_bytes) &&
+    value.size_bytes >= 0 &&
+    isRecordProcessingStatus(value.status)
+  );
+}
+
+function isOrganizationRecord(value: unknown): value is OrganizationRecord {
+  return (
+    isRecord(value) &&
+    isString(value.id) &&
+    Array.isArray(value.source_types) &&
+    value.source_types.every(isRecordSourceType) &&
+    isString(value.preview) &&
+    isString(value.submitted_by) &&
+    isNullableString(value.store_id) &&
+    isString(value.captured_at) &&
+    isNullableString(value.occurred_at) &&
+    isRecordProcessingStatus(value.processing_status) &&
+    isRecord(value.original) &&
+    isString(value.original.text) &&
+    Array.isArray(value.original.assets) &&
+    value.original.assets.every(isRecordAsset) &&
+    (value.interpretation === null || isInterpretation(value.interpretation))
+  );
+}
+
 function isRecordResponse(value: unknown): boolean {
-  return isRecord(value) && isRecord(value.record);
+  return isRecord(value) && isOrganizationRecord(value.record);
 }
 
 function isRecordListResponse(value: unknown): boolean {
-  return isRecord(value) && Array.isArray(value.records);
+  return (
+    isRecord(value) &&
+    Array.isArray(value.records) &&
+    value.records.every(isOrganizationRecord)
+  );
 }
 
 function validateCreateRequest(request: CreateOrganizationRecordRequest): void {

@@ -12,6 +12,19 @@ const RECORD_ID = "12000000-0000-4000-8000-000000000001";
 const ASSET_ID = "13000000-0000-4000-8000-000000000001";
 const UPLOAD_ID = "14000000-0000-4000-8000-000000000001";
 
+const VALID_RECORD = {
+  id: RECORD_ID,
+  source_types: ["text"],
+  preview: "装修群记录",
+  submitted_by: "周店长",
+  store_id: null,
+  captured_at: "2026-07-20T08:00:00Z",
+  occurred_at: null,
+  processing_status: "received",
+  original: { text: "装修群记录", assets: [] },
+  interpretation: null,
+};
+
 function jsonResponse(payload: unknown, status = 200) {
   return new Response(JSON.stringify(payload), {
     status,
@@ -68,7 +81,7 @@ describe("productRecordClient", () => {
 
   it("encodes a record id before requesting detail", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-      jsonResponse({ record: {} }),
+      jsonResponse({ record: VALID_RECORD }),
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -81,7 +94,7 @@ describe("productRecordClient", () => {
 
   it("sends only the documented record capture fields", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-      jsonResponse({ record: {} }, 202),
+      jsonResponse({ record: VALID_RECORD }, 202),
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -151,7 +164,7 @@ describe("productRecordClient", () => {
           },
         }, 202),
       )
-      .mockResolvedValueOnce(jsonResponse({ record: {} }, 202));
+      .mockResolvedValueOnce(jsonResponse({ record: VALID_RECORD }, 202));
     vi.stubGlobal("fetch", fetchMock);
 
     const file = new File(["装修群记录"], "装修记录.txt", {
@@ -217,6 +230,77 @@ describe("productRecordClient", () => {
         name: "OrganizationRecordRequestError",
         status: 200,
         detail: "Invalid organization record response",
+      }),
+    );
+  });
+
+  it.each([
+    ["an empty record", { record: {} }],
+    ["a null list item", { records: [null] }],
+    [
+      "a malformed nested asset",
+      {
+        record: {
+          ...VALID_RECORD,
+          original: { text: "装修群记录", assets: [{}] },
+        },
+      },
+    ],
+    [
+      "a malformed interpretation",
+      {
+        record: {
+          ...VALID_RECORD,
+          interpretation: { summary: "缺少其余结构" },
+        },
+      },
+    ],
+  ])("rejects %s in a success response", async (_name, payload) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(payload)),
+    );
+
+    const request = "records" in payload
+      ? productRecordClient.listRecords()
+      : productRecordClient.getRecord(RECORD_ID);
+
+    await expect(request).rejects.toEqual(
+      expect.objectContaining<Partial<OrganizationRecordRequestError>>({
+        detail: "Invalid organization record response",
+      }),
+    );
+  });
+
+  it("normalizes FastAPI array-form validation errors", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(
+        jsonResponse(
+          {
+            detail: [
+              {
+                type: "string_too_long",
+                loc: ["body", "text"],
+                msg: "String should have at most 20000 characters",
+                input: "private input must not leak",
+              },
+            ],
+          },
+          422,
+        ),
+      ),
+    );
+
+    await expect(
+      productRecordClient.createRecord({
+        clientRecordId: RECORD_ID,
+        text: "提交内容",
+        sourceAssetIds: [],
+      }),
+    ).rejects.toEqual(
+      expect.objectContaining<Partial<OrganizationRecordRequestError>>({
+        detail: "text: String should have at most 20000 characters",
       }),
     );
   });

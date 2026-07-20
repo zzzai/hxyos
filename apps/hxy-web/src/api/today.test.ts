@@ -6,6 +6,29 @@ import {
   type TodayNextAction,
 } from "./today";
 
+const VALID_ITEM = {
+  id: "brief-1",
+  kind: "risk",
+  severity: "high",
+  statement: "水电位置仍待确认",
+  why_it_matters: "影响施工进度",
+  source_record_id: "record-1",
+  evidence: [
+    {
+      source_record_id: "record-1",
+      source_asset_id: null,
+      quote: "水电位置待确认",
+      locator: null,
+    },
+  ],
+  captured_at: "2026-07-20T08:00:00Z",
+  next_action: {
+    type: "open_record",
+    label: "查看记录",
+    prompt: null,
+  },
+};
+
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -90,6 +113,35 @@ describe("productTodayClient", () => {
       expect.objectContaining<Partial<TodayRequestError>>({
         name: "TodayRequestError",
         status: 200,
+        detail: "Invalid Today response",
+      }),
+    );
+  });
+
+  it.each([
+    ["an empty item", { items: [{}] }],
+    ["a null item", { items: [null] }],
+    [
+      "a malformed next action",
+      { items: [{ ...VALID_ITEM, next_action: {} }] },
+    ],
+    [
+      "malformed evidence",
+      { items: [{ ...VALID_ITEM, evidence: [{}] }] },
+    ],
+  ])("rejects %s in a success response", async (_name, payload) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    await expect(productTodayClient.getToday()).rejects.toEqual(
+      expect.objectContaining<Partial<TodayRequestError>>({
         detail: "Invalid Today response",
       }),
     );

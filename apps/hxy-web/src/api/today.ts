@@ -1,4 +1,4 @@
-import type { RecordEvidence } from "./records";
+import { isRecordEvidence, type RecordEvidence } from "./records";
 
 
 export type TodayBriefKind = "risk" | "decision" | "progress";
@@ -49,10 +49,43 @@ function boundedLimit(value: number): number {
 
 function isTodayResponse(value: unknown): value is TodayResponse {
   return (
-    typeof value === "object" &&
-    value !== null &&
-    "items" in value &&
-    Array.isArray(value.items)
+    isRecord(value) &&
+    Array.isArray(value.items) &&
+    value.items.every(isTodayBriefItem)
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+function isTodayBriefItem(value: unknown): value is TodayBriefItem {
+  if (!isRecord(value)) return false;
+  const action = value.next_action;
+  return (
+    typeof value.id === "string" &&
+    (value.kind === "risk" ||
+      value.kind === "decision" ||
+      value.kind === "progress") &&
+    (value.severity === null ||
+      value.severity === "low" ||
+      value.severity === "medium" ||
+      value.severity === "high" ||
+      value.severity === "critical") &&
+    typeof value.statement === "string" &&
+    typeof value.why_it_matters === "string" &&
+    typeof value.source_record_id === "string" &&
+    Array.isArray(value.evidence) &&
+    value.evidence.every(isRecordEvidence) &&
+    typeof value.captured_at === "string" &&
+    isRecord(action) &&
+    (action.type === "open_record" || action.type === "ask_about_record") &&
+    typeof action.label === "string" &&
+    isNullableString(action.prompt)
   );
 }
 
@@ -65,6 +98,21 @@ function responseDetail(payload: unknown, fallback: string): string {
     payload.detail.trim()
   ) {
     return payload.detail.trim();
+  }
+  if (
+    isRecord(payload) &&
+    Array.isArray(payload.detail) &&
+    payload.detail.length > 0
+  ) {
+    const first = payload.detail[0];
+    if (isRecord(first) && typeof first.msg === "string" && first.msg.trim()) {
+      const field = Array.isArray(first.loc)
+        ? [...first.loc].reverse().find((part) => typeof part === "string")
+        : undefined;
+      return field
+        ? `${field}: ${first.msg.trim()}`
+        : first.msg.trim();
+    }
   }
   return fallback;
 }
