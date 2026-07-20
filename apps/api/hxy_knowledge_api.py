@@ -89,6 +89,8 @@ from hxy_knowledge.workspace_events import (
     redact_workspace_event,
 )
 from hxy_product.auth import Principal, ProductAuthSettings, build_principal_resolver
+from hxy_product.briefing_repository import BriefingRepository
+from hxy_product.briefing_routes import create_briefing_router
 from hxy_product.knowledge_context import AssignmentKnowledgeRepository
 from hxy_product.journey_routes import create_journey_router
 from hxy_product.conversation_repository import ConversationRepository
@@ -761,6 +763,15 @@ def _default_record_repository_factory(database_url: str) -> RepositoryFactory:
         if not database_url:
             raise HTTPException(status_code=503, detail="HXY_DATABASE_URL is not configured")
         return RecordRepository(database_url)
+
+    return make_repository
+
+
+def _default_briefing_repository_factory(database_url: str) -> RepositoryFactory:
+    def make_repository() -> BriefingRepository:
+        if not database_url:
+            raise HTTPException(status_code=503, detail="HXY_DATABASE_URL is not configured")
+        return BriefingRepository(database_url)
 
     return make_repository
 
@@ -4036,6 +4047,7 @@ def create_app(
     task_repository_factory: RepositoryFactory | None = None,
     channel_repository_factory: RepositoryFactory | None = None,
     record_repository_factory: RepositoryFactory | None = None,
+    briefing_repository_factory: RepositoryFactory | None = None,
     operating_repository_factory: RepositoryFactory | None = None,
     evidence_repository_factory: RepositoryFactory | None = None,
     operating_service_builder: Callable[[Any], Any] | None = None,
@@ -4096,6 +4108,10 @@ def create_app(
     make_record_repository = (
         record_repository_factory
         or _default_record_repository_factory(settings.database_url)
+    )
+    make_briefing_repository = (
+        briefing_repository_factory
+        or _default_briefing_repository_factory(settings.database_url)
     )
     make_operating_repository = (
         operating_repository_factory
@@ -4302,6 +4318,12 @@ def create_app(
             make_product_identity_repository,
             make_channel_repository,
             make_record_repository,
+        )
+    )
+    app.include_router(
+        create_briefing_router(
+            make_product_identity_repository,
+            make_briefing_repository,
         )
     )
     app.include_router(
