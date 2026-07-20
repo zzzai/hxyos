@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from hxy_knowledge import answer_service
 from hxy_knowledge.answer_service import AnswerServiceHooks
-from hxy_knowledge.answer_pipeline import build_answer_pipeline
+from hxy_knowledge.answer_pipeline import build_answer_pipeline, enforce_intake_route_policy
 from hxy_knowledge.brand_decision import review_brand_artifact, write_brand_review_record
 from hxy_knowledge.brand_assets import brand_authority_cards, build_brand_asset_center
 from hxy_knowledge.brand_constitution import BrandConstitutionAdapter
@@ -95,6 +95,11 @@ from hxy_product.knowledge_context import AssignmentKnowledgeRepository
 from hxy_product.journey_routes import create_journey_router
 from hxy_product.conversation_repository import ConversationRepository
 from hxy_product.conversation_routes import create_conversation_router
+from hxy_product.intake_router import (
+    build_model_assisted_route_classifier,
+    generate_general_answer,
+)
+from hxy_product.intake_routes import create_intake_router
 from hxy_product.channel_repository import ChannelRepository
 from hxy_product.evidence_repository import EvidenceRepository
 from hxy_product.evidence_routes import create_evidence_router
@@ -4055,6 +4060,8 @@ def create_app(
     journey_training_evaluator: Callable[..., dict[str, Any]] | None = None,
     material_understanding_builder: Callable[..., dict[str, Any]] | None = None,
     product_auth_settings: ProductAuthSettings | None = None,
+    intake_route_classifier: Callable[..., str] | None = None,
+    product_answer_generator: Callable[..., dict[str, Any]] | None = None,
 ) -> FastAPI:
     settings = get_settings()
     resolved_root = (root_dir or settings.root_dir).resolve()
@@ -4190,7 +4197,12 @@ def create_app(
         maybe_apply_model_answer=_maybe_apply_model_answer,
     )
 
-    def generate_product_answer(*, question: str, assignment: Any) -> dict[str, Any]:
+    def generate_product_answer(
+        *,
+        question: str,
+        assignment: Any,
+        answer_route: str = "hxy_official",
+    ) -> dict[str, Any]:
         scenario_by_role = {
             "founder": "创始人内部决策",
             "hq_operations": "总部运营工作问答",
@@ -4206,26 +4218,35 @@ def create_app(
             "system_admin": "system_admin",
         }
         answer_role = answer_role_by_role.get(assignment.role, "team")
-        context_repository = AssignmentKnowledgeRepository(
-            make_repository(),
-            make_material_repository(),
-            assignment_id=assignment.assignment_id,
-        )
         started_at = time.perf_counter()
-        answer = answer_service.generate_answer(
-            question=question,
-            scenario=scenario_by_role.get(assignment.role, "组织内部工作问答"),
-            domain=None,
-            stage=None,
-            limit=5,
-            repository=context_repository,
-            model_router=model_router,
-            hooks=answer_hooks,
-            role=answer_role,
-            pipeline_role=answer_role,
-            brand_constitution=brand_constitution,
-        )
-        retrieval_trace = context_repository.retrieval_trace()
+        retrieval_trace: dict[str, Any] = {}
+        if answer_route == "general":
+            answer = generate_general_answer(question, model_router=model_router)
+        else:
+            context_repository = AssignmentKnowledgeRepository(
+                make_repository(),
+                make_material_repository(),
+                assignment_id=assignment.assignment_id,
+            )
+            answer = answer_service.generate_answer(
+                question=question,
+                scenario=scenario_by_role.get(assignment.role, "组织内部工作问答"),
+                domain=None,
+                stage=None,
+                limit=5,
+                repository=context_repository,
+                model_router=model_router,
+                hooks=answer_hooks,
+                role=answer_role,
+                pipeline_role=answer_role,
+                brand_constitution=brand_constitution,
+            )
+            retrieval_trace = context_repository.retrieval_trace()
+            answer = enforce_intake_route_policy(
+                answer,
+                question=question,
+                answer_route=answer_route,
+            )
         private_evidence = [
             item
             for item in (answer.get("evidence") or answer.get("sources") or [])
@@ -4281,11 +4302,27 @@ def create_app(
         }
         return answer
 
+    resolved_route_classifier = (
+        intake_route_classifier or build_model_assisted_route_classifier(model_router)
+    )
+    resolved_answer_generator = product_answer_generator or generate_product_answer
+
     app.include_router(
         create_conversation_router(
             make_product_identity_repository,
             make_conversation_repository,
-            generate_product_answer,
+            resolved_answer_generator,
+            resolved_route_classifier,
+        )
+    )
+    app.include_router(
+        create_intake_router(
+            make_product_identity_repository,
+            make_channel_repository,
+            make_record_repository,
+            make_conversation_repository,
+            resolved_answer_generator,
+            resolved_route_classifier,
         )
     )
     app.include_router(

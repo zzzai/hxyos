@@ -22,6 +22,7 @@ from .routes import ROLE_CAPABILITIES, assignment_for_principal
 
 RepositoryFactory = Callable[[], Any]
 AnswerGenerator = Callable[..., dict[str, Any]]
+RouteClassifier = Callable[..., str]
 
 _ANSWER_STATUSES = frozenset({"已批准", "AI 草稿", "待复核", "资料不足"})
 _CONFIDENCE_LEVELS = frozenset({"high", "medium", "low"})
@@ -215,10 +216,80 @@ def _not_found() -> HTTPException:
     return HTTPException(status_code=404, detail="Not Found")
 
 
+def complete_conversation_message(
+    *,
+    conversation_id: str,
+    client_message_id: str,
+    content: str,
+    assignment: Any,
+    repository: Any,
+    answer_generator: AnswerGenerator,
+    route_classifier: RouteClassifier,
+) -> dict[str, Any]:
+    reservation = repository.reserve_user_message(
+        assignment.assignment_id,
+        conversation_id,
+        client_message_id,
+        content,
+    )
+    if reservation is None:
+        raise _not_found()
+    state = reservation.get("state")
+    if state == "conflict":
+        raise HTTPException(status_code=409, detail="client_message_id conflict")
+    if state == "processing":
+        raise HTTPException(status_code=409, detail="Message is processing")
+
+    user_message = reservation["user_message"]
+    assistant_message = reservation.get("assistant_message")
+    if state != "completed":
+        try:
+            answer_route = route_classifier(content, assignment=assignment)
+            answer = answer_generator(
+                question=content,
+                assignment=assignment,
+                answer_route=answer_route,
+            )
+            safe_payload = product_answer_payload(answer)
+            safe_payload.update(_role_result_envelope(assignment.role, answer))
+            assistant_message = repository.complete_assistant_message(
+                assignment.assignment_id,
+                conversation_id,
+                user_message["id"],
+                client_message_id,
+                safe_payload,
+                trace_payload=answer.get("_product_trace"),
+            )
+        except Exception:
+            repository.mark_generation_failed(
+                assignment.assignment_id,
+                conversation_id,
+                user_message["id"],
+            )
+            raise
+        if assistant_message is None:
+            repository.mark_generation_failed(
+                assignment.assignment_id,
+                conversation_id,
+                user_message["id"],
+            )
+            raise HTTPException(status_code=409, detail="Message completion conflict")
+
+    conversation = repository.get_conversation(assignment.assignment_id, conversation_id)
+    if conversation is None or assistant_message is None:
+        raise _not_found()
+    return {
+        "conversation": _public_conversation(conversation),
+        "user_message": _public_message(user_message),
+        "assistant_message": _public_message(assistant_message),
+    }
+
+
 def create_conversation_router(
     identity_repository_factory: RepositoryFactory,
     conversation_repository_factory: RepositoryFactory,
     answer_generator: AnswerGenerator,
+    route_classifier: RouteClassifier,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -296,57 +367,14 @@ def create_conversation_router(
     ) -> dict[str, Any]:
         conversation_key = str(conversation_id)
         client_message_id = str(request.client_message_id)
-        reservation = repository.reserve_user_message(
-            assignment.assignment_id,
-            conversation_key,
-            client_message_id,
-            request.content,
+        return complete_conversation_message(
+            conversation_id=conversation_key,
+            client_message_id=client_message_id,
+            content=request.content,
+            assignment=assignment,
+            repository=repository,
+            answer_generator=answer_generator,
+            route_classifier=route_classifier,
         )
-        if reservation is None:
-            raise _not_found()
-        state = reservation.get("state")
-        if state == "conflict":
-            raise HTTPException(status_code=409, detail="client_message_id conflict")
-        if state == "processing":
-            raise HTTPException(status_code=409, detail="Message is processing")
-
-        user_message = reservation["user_message"]
-        assistant_message = reservation.get("assistant_message")
-        if state != "completed":
-            try:
-                answer = answer_generator(question=request.content, assignment=assignment)
-                safe_payload = product_answer_payload(answer)
-                safe_payload.update(_role_result_envelope(assignment.role, answer))
-                assistant_message = repository.complete_assistant_message(
-                    assignment.assignment_id,
-                    conversation_key,
-                    user_message["id"],
-                    client_message_id,
-                    safe_payload,
-                    trace_payload=answer.get("_product_trace"),
-                )
-            except Exception:
-                repository.mark_generation_failed(
-                    assignment.assignment_id,
-                    conversation_key,
-                    user_message["id"],
-                )
-                raise
-            if assistant_message is None:
-                repository.mark_generation_failed(
-                    assignment.assignment_id,
-                    conversation_key,
-                    user_message["id"],
-                )
-                raise HTTPException(status_code=409, detail="Message completion conflict")
-
-        conversation = repository.get_conversation(assignment.assignment_id, conversation_key)
-        if conversation is None or assistant_message is None:
-            raise _not_found()
-        return {
-            "conversation": _public_conversation(conversation),
-            "user_message": _public_message(user_message),
-            "assistant_message": _public_message(assistant_message),
-        }
 
     return router

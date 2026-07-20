@@ -464,3 +464,110 @@ def build_answer_pipeline(
         ),
         "model_route": model_route,
     }
+
+
+def _has_governed_hxy_evidence(answer: dict[str, Any]) -> bool:
+    if bool(answer.get("from_answer_card")):
+        return True
+    for item in answer.get("evidence") or answer.get("sources") or []:
+        if not isinstance(item, dict):
+            continue
+        authority = str(item.get("authority_source") or item.get("source_authority") or "")
+        if authority in {"approved_answer_card", "official_internal", "internal_material"}:
+            return True
+    return False
+
+
+def _high_risk_safe_answer(question: str) -> str:
+    if any(term in question for term in ("手机号", "身份证", "病历", "顾客信息")):
+        return (
+            "不能把顾客敏感信息发送到无授权渠道，也不能交给模型作无边界处理。"
+            "请只使用系统内的脱敏顾客标识，并按岗位权限完成记录或升级处理。"
+        )
+    if any(term in question for term in ("回本", "收益", "稳赚", "盈利")):
+        return (
+            "不能保证回本、稳赚或确定收益。经营判断必须说明数据来源、假设条件、"
+            "成本口径和风险，并由有权限的负责人确认。"
+        )
+    return (
+        "不能根据门店描述替顾客作医疗诊断，也不能承诺按摩、推拿或足疗能够治疗、"
+        "治愈疾病或保证疗效。可以询问顾客当下感受并提供非医疗性的放松服务；"
+        "如有持续疼痛或明显不适，应建议顾客咨询医疗专业人员。"
+    )
+
+
+def enforce_intake_route_policy(
+    answer: dict[str, Any],
+    *,
+    question: str,
+    answer_route: str,
+) -> dict[str, Any]:
+    guarded = dict(answer)
+
+    if answer_route == "high_risk":
+        policy_evidence = {
+            "source_id": "system-policy:hxy-intake-high-risk:v1",
+            "title": "HXYOS 高风险回答边界",
+            "domain": "system_policy",
+            "source_type": "system_policy",
+            "status": "active",
+            "authority_source": "system_policy",
+            "authority_recorded": True,
+            "authority_version": 1,
+            "immutable": True,
+        }
+        guarded.update(
+            {
+                "answer": _high_risk_safe_answer(question),
+                "answer_status": "AI 草稿",
+                "confidence": "high",
+                "needs_review": False,
+                "answer_mode": "working",
+                "authority_source": "system_policy",
+                "authority_provenance": "system_policy",
+                "usage_boundary": "safety_boundary",
+                "evidence": [policy_evidence],
+                "sources": [policy_evidence],
+            }
+        )
+        return guarded
+
+    if answer_route not in {"hxy_official", "mixed", "service_scenario"}:
+        return guarded
+
+    evidence = [
+        item
+        for item in (guarded.get("evidence") or guarded.get("sources") or [])
+        if isinstance(item, dict)
+    ]
+    has_governed_evidence = _has_governed_hxy_evidence(guarded)
+    if not evidence and not has_governed_evidence:
+        guarded.update(
+            {
+                "answer": (
+                    "当前没有找到已核定、可用于回答这个荷小悦问题的资料。"
+                    "我不会把模型推测当作公司正式口径。"
+                ),
+                "answer_status": "资料不足",
+                "confidence": "low",
+                "needs_review": True,
+                "from_answer_card": False,
+                "evidence": [],
+                "sources": [],
+            }
+        )
+        return guarded
+
+    if not has_governed_evidence and guarded.get("answer_status") == "已批准":
+        guarded["answer_status"] = "待复核"
+        guarded["needs_review"] = True
+        guarded["confidence"] = "low"
+    elif (
+        has_governed_evidence
+        and not guarded.get("from_answer_card")
+        and guarded.get("answer_status") == "已批准"
+    ):
+        guarded["answer_status"] = "AI 草稿"
+        guarded["needs_review"] = True
+
+    return guarded

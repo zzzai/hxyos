@@ -5,7 +5,10 @@ from typing import Any
 import pytest
 
 from apps.api.hxy_knowledge.answer_engine import build_evidence, synthesize_answer
-from apps.api.hxy_knowledge.answer_pipeline import build_answer_pipeline
+from apps.api.hxy_knowledge.answer_pipeline import (
+    build_answer_pipeline,
+    enforce_intake_route_policy,
+)
 from apps.api.hxy_knowledge.answer_service import AnswerServiceHooks, generate_answer
 from apps.api.hxy_knowledge_api import _model_answer_messages
 
@@ -860,3 +863,46 @@ def test_high_risk_or_insufficient_evidence_requires_review_despite_model_confid
     assert result["policy_decision"]["action"] == "needs_review"
     assert result["policy_decision"]["requires_review"] is True
     assert result["usage_boundary"] == "review_required"
+
+
+def test_hxy_route_cannot_present_unknown_model_output_as_official_fact() -> None:
+    result = enforce_intake_route_policy(
+        {
+            "answer": "荷小悦所有门店统一执行一个尚未核定的价格。",
+            "answer_status": "已批准",
+            "confidence": "high",
+            "needs_review": False,
+            "from_answer_card": False,
+            "evidence": [],
+            "sources": [],
+        },
+        question="荷小悦新项目的正式价格是多少？",
+        answer_route="hxy_official",
+    )
+
+    assert result["answer_status"] == "资料不足"
+    assert result["confidence"] == "low"
+    assert result["needs_review"] is True
+    assert "没有找到已核定" in result["answer"]
+    assert "统一执行" not in result["answer"]
+
+
+def test_high_risk_route_replaces_diagnosis_and_efficacy_guarantee() -> None:
+    result = enforce_intake_route_policy(
+        {
+            "answer": "这是颈椎病，推拿保证可以治愈。",
+            "answer_status": "已批准",
+            "confidence": "high",
+            "needs_review": False,
+            "evidence": [],
+            "sources": [],
+        },
+        question="判断顾客是不是颈椎病，并保证推拿能治好。",
+        answer_route="high_risk",
+    )
+
+    assert "不能根据门店描述替顾客作医疗诊断" in result["answer"]
+    assert "不能承诺" in result["answer"]
+    assert "保证可以治愈" not in result["answer"]
+    assert result["answer_status"] == "AI 草稿"
+    assert result["needs_review"] is False

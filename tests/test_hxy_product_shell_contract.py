@@ -5,6 +5,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "apps" / "hxy-web" / "src" / "App.tsx"
+NAVIGATION = ROOT / "apps" / "hxy-web" / "src" / "features" / "shell" / "Navigation.tsx"
+COMPOSER = ROOT / "apps" / "hxy-web" / "src" / "features" / "composer" / "UniversalComposer.tsx"
 ROOT_PACKAGE = ROOT / "package.json"
 SHELL_STYLES = ROOT / "apps" / "hxy-web" / "src" / "styles" / "shell.css"
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
@@ -36,12 +38,17 @@ EXPECTED_STEPS = {
 class HxyProductShellContractTest(unittest.TestCase):
     def test_shell_exposes_only_the_product_frontstage_contract(self):
         self.assertTrue(APP.exists(), "React product shell App.tsx should exist")
-        source = APP.read_text(encoding="utf-8")
+        self.assertTrue(NAVIGATION.exists(), "product navigation should exist")
+        self.assertTrue(COMPOSER.exists(), "unified composer should exist")
+        source = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (APP, NAVIGATION, COMPOSER)
+        )
 
-        for navigation_item in ["对话", "待办", "我的"]:
+        for navigation_item in ["今日", "对话", "记录", "我的"]:
             self.assertIn(navigation_item, source)
 
-        self.assertIn("告诉 HXYOS 你要做什么", source)
+        self.assertIn("问问题，或记录刚刚发生的事", source)
 
         for forbidden in ["claim", "chunk_id", "review queue", "/root/hxy"]:
             self.assertNotIn(forbidden, source.lower())

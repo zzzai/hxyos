@@ -52,6 +52,53 @@ def _not_found() -> HTTPException:
     return HTTPException(status_code=404, detail="Not Found")
 
 
+def persist_organization_record(
+    request: CreateOrganizationRecordRequest,
+    *,
+    principal: Principal,
+    assignment: Any,
+    channel_repository: Any,
+    record_repository: Any,
+) -> dict[str, Any]:
+    try:
+        receipt = channel_repository.accept_authenticated_record(
+            {
+                "organization_id": assignment.organization_id,
+                "channel": "pwa",
+                "channel_tenant_id": assignment.organization_id,
+                "channel_message_id": str(request.client_record_id),
+                "channel_thread_id": "",
+                "channel_user_id": principal.account_id,
+                "idempotency_key": str(request.client_record_id),
+                "raw_text": request.text,
+                "raw_payload": {},
+                "source_asset_ids": [str(value) for value in request.source_asset_ids],
+                "intent_hint": "organization_record",
+            },
+            assignment=assignment,
+        )
+    except SourceAssetAccessDenied:
+        raise _not_found() from None
+    except AuthenticatedIntakeScopeDenied:
+        raise _forbidden() from None
+    except IntakeIdempotencyConflict:
+        raise HTTPException(
+            status_code=409,
+            detail="Idempotency key conflict",
+        ) from None
+
+    record = record_repository.get_record(
+        organization_id=assignment.organization_id,
+        record_id=str(receipt["id"]),
+        assignment_id=assignment.assignment_id,
+        role=assignment.role,
+        store_id=assignment.store_id,
+    )
+    if record is None:  # pragma: no cover - committed envelope invariant
+        raise HTTPException(status_code=503, detail="Record is temporarily unavailable")
+    return record
+
+
 def create_record_router(
     identity_repository_factory: RepositoryFactory,
     channel_repository_factory: RepositoryFactory,
@@ -97,42 +144,13 @@ def create_record_router(
         channel_repository: Any = Depends(get_channel_repository),
         record_repository: Any = Depends(get_record_repository),
     ) -> dict[str, Any]:
-        try:
-            receipt = channel_repository.accept_authenticated_record(
-                {
-                    "organization_id": assignment.organization_id,
-                    "channel": "pwa",
-                    "channel_tenant_id": assignment.organization_id,
-                    "channel_message_id": str(request.client_record_id),
-                    "channel_thread_id": "",
-                    "channel_user_id": principal.account_id,
-                    "idempotency_key": str(request.client_record_id),
-                    "raw_text": request.text,
-                    "raw_payload": {},
-                    "source_asset_ids": [str(value) for value in request.source_asset_ids],
-                    "intent_hint": "organization_record",
-                },
-                assignment=assignment,
-            )
-        except SourceAssetAccessDenied:
-            raise _not_found() from None
-        except AuthenticatedIntakeScopeDenied:
-            raise _forbidden() from None
-        except IntakeIdempotencyConflict:
-            raise HTTPException(
-                status_code=409,
-                detail="Idempotency key conflict",
-            ) from None
-
-        record = record_repository.get_record(
-            organization_id=assignment.organization_id,
-            record_id=str(receipt["id"]),
-            assignment_id=assignment.assignment_id,
-            role=assignment.role,
-            store_id=assignment.store_id,
+        record = persist_organization_record(
+            request,
+            principal=principal,
+            assignment=assignment,
+            channel_repository=channel_repository,
+            record_repository=record_repository,
         )
-        if record is None:  # pragma: no cover - committed envelope invariant
-            raise HTTPException(status_code=503, detail="Record is temporarily unavailable")
         return {"record": record}
 
     @router.get(
