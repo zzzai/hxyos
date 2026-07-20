@@ -130,6 +130,35 @@ def _asset_is_visible(asset: dict[str, Any], assignment: dict[str, Any]) -> bool
     }
 
 
+def _asset_covers_record_audience(
+    asset: dict[str, Any],
+    assignment: dict[str, Any],
+) -> bool:
+    scope = _json_object(asset.get("visibility_scope"))
+    role = str(assignment["role"])
+    if scope.get("hq") is not True:
+        return False
+    if role in _HQ_ROLES:
+        return True
+    if scope.get("store_manager") is not True:
+        return False
+    if role == "store_manager":
+        return True
+    if role != "store_employee":
+        return False
+
+    assignment_id = str(assignment["assignment_id"])
+    uploader_visible = (
+        scope.get("uploader") is True
+        and str(asset.get("assignment_id") or "") == assignment_id
+    )
+    allowed_assignments = scope.get("assignment_ids")
+    assignment_visible = isinstance(allowed_assignments, list) and assignment_id in {
+        str(value) for value in allowed_assignments
+    }
+    return uploader_visible or assignment_visible
+
+
 class ChannelRepository:
     def __init__(self, database_url: str):
         if not database_url:
@@ -888,6 +917,7 @@ class ChannelRepository:
                     str(asset["material_id"])
                     for asset in assets
                     if _asset_is_visible(asset, active_assignment)
+                    and _asset_covers_record_audience(asset, active_assignment)
                 }
                 if authorized_ids != set(source_asset_ids):
                     raise SourceAssetAccessDenied(

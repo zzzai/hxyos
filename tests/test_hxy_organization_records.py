@@ -386,6 +386,195 @@ def test_founder_record_intake_uses_org_asset_scope_and_dedicated_outbox() -> No
     assert "LIKE" not in outbox_sql.upper()
 
 
+@pytest.mark.parametrize(
+    (
+        "role",
+        "assignment_id",
+        "store_id",
+        "asset_assignment_id",
+        "visibility_scope",
+    ),
+    [
+        ("founder", FOUNDER_ID, None, FOUNDER_ID, {"uploader": True}),
+        ("hq_operations", HQ_ID, None, HQ_ID, {"uploader": True}),
+        (
+            "store_manager",
+            MANAGER_ID,
+            STORE_ID,
+            FOUNDER_ID,
+            {"store_manager": True},
+        ),
+        (
+            "store_employee",
+            EMPLOYEE_ID,
+            STORE_ID,
+            EMPLOYEE_ID,
+            {"hq": True, "uploader": True},
+        ),
+        (
+            "store_employee",
+            EMPLOYEE_ID,
+            STORE_ID,
+            FOUNDER_ID,
+            {"hq": True, "store_manager": True, "store_employee": True},
+        ),
+    ],
+    ids=(
+        "founder-requires-hq",
+        "hq-operations-requires-hq",
+        "manager-requires-hq-and-manager",
+        "employee-requires-manager",
+        "employee-requires-personal-visibility",
+    ),
+)
+def test_record_intake_rejects_attachment_without_full_record_audience(
+    role: str,
+    assignment_id: str,
+    store_id: str | None,
+    asset_assignment_id: str,
+    visibility_scope: dict[str, Any],
+) -> None:
+    from apps.api.hxy_product.channel_repository import (
+        ChannelRepository,
+        SourceAssetAccessDenied,
+    )
+
+    assignment = {
+        "assignment_id": assignment_id,
+        "organization_id": ORGANIZATION_ID,
+        "store_id": store_id,
+        "role": role,
+    }
+    connection = RecordIntakeConnection(
+        assignment,
+        [
+            {
+                "material_id": ASSET_ID,
+                "assignment_id": asset_assignment_id,
+                "store_id": store_id,
+                "scan_status": "clean",
+                "visibility_scope": visibility_scope,
+            }
+        ],
+    )
+    repository = ChannelRepository("postgresql://records.test/hxy")
+    repository.connect = lambda: connection
+
+    with pytest.raises(SourceAssetAccessDenied):
+        repository.accept_authenticated_record(
+            authenticated_record_payload([ASSET_ID]),
+            assignment=RouteAssignment(
+                assignment_id=assignment_id,
+                store_id=store_id,
+                store_name="首店" if store_id else None,
+                role=role,
+            ),
+        )
+
+    assert not any(
+        "INSERT INTO hxy_inbound_envelopes" in sql
+        for sql, _ in connection.executed
+    )
+    assert not any(
+        "INSERT INTO hxy_outbox_messages" in sql for sql, _ in connection.executed
+    )
+
+
+@pytest.mark.parametrize(
+    (
+        "role",
+        "assignment_id",
+        "store_id",
+        "asset_assignment_id",
+        "visibility_scope",
+    ),
+    [
+        ("founder", FOUNDER_ID, None, HQ_ID, {"hq": True}),
+        ("hq_operations", HQ_ID, None, FOUNDER_ID, {"hq": True}),
+        (
+            "store_manager",
+            MANAGER_ID,
+            STORE_ID,
+            FOUNDER_ID,
+            {"hq": True, "store_manager": True},
+        ),
+        (
+            "store_employee",
+            EMPLOYEE_ID,
+            STORE_ID,
+            EMPLOYEE_ID,
+            {"hq": True, "store_manager": True, "uploader": True},
+        ),
+        (
+            "store_employee",
+            EMPLOYEE_ID,
+            STORE_ID,
+            FOUNDER_ID,
+            {
+                "hq": True,
+                "store_manager": True,
+                "assignment_ids": [EMPLOYEE_ID],
+            },
+        ),
+    ],
+    ids=(
+        "founder-hq-visible",
+        "hq-operations-hq-visible",
+        "manager-full-audience",
+        "employee-is-uploader",
+        "employee-in-assignment-list",
+    ),
+)
+def test_record_intake_accepts_attachment_covering_full_record_audience(
+    role: str,
+    assignment_id: str,
+    store_id: str | None,
+    asset_assignment_id: str,
+    visibility_scope: dict[str, Any],
+) -> None:
+    from apps.api.hxy_product.channel_repository import ChannelRepository
+
+    assignment = {
+        "assignment_id": assignment_id,
+        "organization_id": ORGANIZATION_ID,
+        "store_id": store_id,
+        "role": role,
+    }
+    connection = RecordIntakeConnection(
+        assignment,
+        [
+            {
+                "material_id": ASSET_ID,
+                "assignment_id": asset_assignment_id,
+                "store_id": store_id,
+                "scan_status": "clean",
+                "visibility_scope": visibility_scope,
+            }
+        ],
+    )
+    repository = ChannelRepository("postgresql://records.test/hxy")
+    repository.connect = lambda: connection
+
+    receipt = repository.accept_authenticated_record(
+        authenticated_record_payload([ASSET_ID]),
+        assignment=RouteAssignment(
+            assignment_id=assignment_id,
+            store_id=store_id,
+            store_name="首店" if store_id else None,
+            role=role,
+        ),
+    )
+
+    assert receipt["status"] == "queued"
+    assert any(
+        "INSERT INTO hxy_inbound_envelopes" in sql
+        for sql, _ in connection.executed
+    )
+    assert any(
+        "INSERT INTO hxy_outbox_messages" in sql for sql, _ in connection.executed
+    )
+
+
 def test_store_record_intake_cannot_bind_hq_only_attachment() -> None:
     from apps.api.hxy_product.channel_repository import (
         ChannelRepository,
