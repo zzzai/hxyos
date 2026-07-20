@@ -92,3 +92,32 @@ def test_old_immediate_franchise_claims_are_explicitly_non_authoritative() -> No
     assert "立即开放单店加盟" in combined
     assert "历史参考" in combined
     assert "不能作为正式战略" in combined
+
+
+def test_store_role_v1_freezes_the_august_release_contract() -> None:
+    design_path = "docs/plans/2026-07-21-hxyos-store-role-v1-design.md"
+    plan_path = "docs/plans/2026-07-21-hxyos-store-role-v1-implementation.md"
+    design = read(design_path)
+    plan = read(plan_path)
+    roadmap = read("docs/project-brain/roadmap/01-stage-roadmap.md")
+
+    for phrase in (
+        "2026-08-20",
+        "Universal composer",
+        "general",
+        "hxy_official",
+        "mixed",
+        "service_scenario",
+        "high_risk",
+        "ServiceContext",
+        "provisional",
+        "unauthorized sensitive-data exposure       0",
+    ):
+        assert phrase in design
+
+    assert "third-party transaction API" in design
+    assert "ask versus record" in design
+    assert "seven consecutive days" in design
+    assert design_path in roadmap
+    assert plan_path in roadmap
+    assert "third-party transaction API" in plan
