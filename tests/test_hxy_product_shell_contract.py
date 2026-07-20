@@ -45,7 +45,7 @@ class HxyProductShellContractTest(unittest.TestCase):
             for path in (APP, NAVIGATION, COMPOSER)
         )
 
-        for navigation_item in ["今日", "对话", "记录", "我的"]:
+        for navigation_item in ["今日", "对话", "学习", "我的"]:
             self.assertIn(navigation_item, source)
 
         self.assertIn("问问题，或记录刚刚发生的事", source)

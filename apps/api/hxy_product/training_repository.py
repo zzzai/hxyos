@@ -73,3 +73,33 @@ class ProductTrainingRepository:
                 ),
             ).fetchone()
         return {"id": str(row["training_session_id"])}
+
+    def list_assignment_sessions(
+        self,
+        *,
+        organization_id: str,
+        assignment_id: str,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        bounded_limit = min(100, max(1, int(limit)))
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT training_session_id::text AS id,
+                       customer_question,
+                       employee_answer,
+                       score,
+                       level,
+                       needs_retrain,
+                       standard_script,
+                       correction_points,
+                       created_at
+                FROM hxy_product_training_sessions
+                WHERE organization_id = %s::uuid
+                  AND assignment_id = %s::uuid
+                ORDER BY created_at DESC, training_session_id DESC
+                LIMIT %s
+                """,
+                (organization_id, assignment_id, bounded_limit),
+            ).fetchall()
+        return [dict(row) for row in rows]

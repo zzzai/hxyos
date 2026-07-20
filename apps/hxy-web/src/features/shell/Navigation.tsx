@@ -1,5 +1,6 @@
 import {
   CircleUserRound,
+  BookOpenCheck,
   FileClock,
   MessageSquare,
   NotebookPen,
@@ -9,7 +10,7 @@ import {
 
 import type { ConversationSummary } from "../../api/conversations";
 
-export type FrontstageView = "today" | "conversation" | "records" | "me";
+export type FrontstageView = "today" | "conversation" | "learning" | "records" | "me";
 
 interface NavigationProps {
   activeView: FrontstageView;
@@ -18,6 +19,7 @@ interface NavigationProps {
   scopeLabel: string;
   canAsk: boolean;
   canCreateRecords: boolean;
+  canLearn: boolean;
   canReadRecords: boolean;
   onNavigate: (view: FrontstageView) => void;
   onNewInput: () => void;
@@ -27,7 +29,7 @@ interface NavigationProps {
 const mobileItems = [
   { id: "today", label: "今日", icon: Sparkles },
   { id: "conversation", label: "对话", icon: MessageSquare },
-  { id: "records", label: "记录", icon: FileClock },
+  { id: "learning", label: "学习", icon: BookOpenCheck },
   { id: "me", label: "我的", icon: CircleUserRound },
 ] as const;
 
@@ -38,6 +40,7 @@ export function Navigation({
   scopeLabel,
   canAsk,
   canCreateRecords,
+  canLearn,
   canReadRecords,
   onNavigate,
   onNewInput,
@@ -92,6 +95,17 @@ export function Navigation({
               <span>对话</span>
             </button>
           ) : null}
+          {canLearn ? (
+            <button
+              type="button"
+              aria-label="打开学习"
+              aria-current={activeView === "learning" ? "page" : undefined}
+              onClick={() => onNavigate("learning")}
+            >
+              <BookOpenCheck aria-hidden="true" />
+              <span>学习</span>
+            </button>
+          ) : null}
         </nav>
 
         {canAsk ? (
@@ -136,8 +150,9 @@ export function Navigation({
       <nav className="mobile-navigation" aria-label="移动端导航">
         {mobileItems
           .filter((item) => {
-            if (item.id === "today" || item.id === "records") return canReadRecords;
+            if (item.id === "today") return canReadRecords;
             if (item.id === "conversation") return canAsk;
+            if (item.id === "learning") return canLearn;
             return true;
           })
           .map((item) => {
@@ -146,7 +161,7 @@ export function Navigation({
             <button
               key={item.id}
               type="button"
-              aria-label={item.id === "records" ? "打开记录列表" : item.label}
+              aria-label={item.label}
               aria-current={activeView === item.id ? "page" : undefined}
               onClick={() => onNavigate(item.id)}
             >

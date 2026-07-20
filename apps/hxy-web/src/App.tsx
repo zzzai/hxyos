@@ -12,6 +12,7 @@ import {
   type ConversationClient,
 } from "./api/conversations";
 import { productMaterialClient, type MaterialClient } from "./api/materials";
+import { productLearningClient, type LearningClient } from "./api/learning";
 import {
   productRecordClient,
   type OrganizationRecordClient,
@@ -131,6 +132,7 @@ interface ApplicationSurfaceProps {
   recordClient: OrganizationRecordClient;
   conversationClient: ConversationClient;
   materialClient: MaterialClient;
+  learningClient: LearningClient;
   onboardingClient: OnboardingClient;
   clientIdFactory: () => string;
   uploadIdFactory: () => string;
@@ -154,6 +156,7 @@ interface AppProps {
   recordClient?: OrganizationRecordClient;
   conversationClient?: ConversationClient;
   materialClient?: MaterialClient;
+  learningClient?: LearningClient;
   onboardingClient?: OnboardingClient;
   clientMessageIdFactory?: () => string;
   materialUploadIdFactory?: () => string;
@@ -173,6 +176,7 @@ export default function App({
   recordClient = productRecordClient,
   conversationClient = productConversationClient,
   materialClient = productMaterialClient,
+  learningClient = productLearningClient,
   onboardingClient = productOnboardingClient,
   clientMessageIdFactory = () => crypto.randomUUID(),
   materialUploadIdFactory = () => crypto.randomUUID(),
@@ -190,6 +194,7 @@ export default function App({
         recordClient={recordClient}
         conversationClient={conversationClient}
         materialClient={materialClient}
+        learningClient={learningClient}
         onboardingClient={onboardingClient}
         clientIdFactory={clientMessageIdFactory}
         uploadIdFactory={materialUploadIdFactory}

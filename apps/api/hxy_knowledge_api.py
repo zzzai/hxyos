@@ -93,6 +93,7 @@ from hxy_product.briefing_repository import BriefingRepository
 from hxy_product.briefing_routes import create_briefing_router
 from hxy_product.knowledge_context import AssignmentKnowledgeRepository
 from hxy_product.journey_routes import create_journey_router
+from hxy_product.learning_routes import create_learning_router
 from hxy_product.conversation_repository import ConversationRepository
 from hxy_product.conversation_routes import create_conversation_router
 from hxy_product.intake_router import (
@@ -4373,6 +4374,13 @@ def create_app(
         create_journey_router(
             make_product_identity_repository,
             make_task_repository,
+            make_product_training_repository,
+            resolved_journey_training_evaluator,
+        )
+    )
+    app.include_router(
+        create_learning_router(
+            make_product_identity_repository,
             make_product_training_repository,
             resolved_journey_training_evaluator,
         )

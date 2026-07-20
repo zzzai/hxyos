@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MeResponse } from "../../api/client";
 import type { ConversationClient } from "../../api/conversations";
 import type { MaterialClient } from "../../api/materials";
+import type { LearningClient } from "../../api/learning";
 import type {
   OrganizationRecord,
   OrganizationRecordClient,
@@ -29,6 +30,7 @@ const TEST_SESSION = {
       "materials:read",
       "records:create",
       "records:read",
+      "training:practice",
     ],
   },
   available_assignments: [],
@@ -238,12 +240,40 @@ function materialClient(): MaterialClient {
   };
 }
 
+function learningClient(): LearningClient {
+  return {
+    loadLearning: vi.fn().mockResolvedValue({
+      next_action: {
+        id: "service-boundary-v1",
+        title: "回应顾客不适",
+        purpose: "练习先回应感受，再守住非医疗服务边界。",
+        estimated_minutes: 3,
+        scenario: { customer_message: "顾客说：做完以后还是不舒服，我该怎么办？" },
+        response_modes: ["text", "voice"],
+      },
+      progress: {
+        visibility: "private",
+        attempts: 0,
+        mastered: [],
+        practicing: ["服务边界表达"],
+        needs_attention: [],
+      },
+      limitations: [
+        "AI 只评估沟通表达、服务意识和风险边界。",
+        "推拿或按摩手法必须由有资质的培训人员现场评估。",
+      ],
+    }),
+    submitPractice: vi.fn(),
+  };
+}
+
 function shellElement(options: {
   session?: MeResponse;
   today?: TodayClient;
   records?: OrganizationRecordClient;
   conversations?: ConversationClient;
   materials?: MaterialClient;
+  learning?: LearningClient;
   logout?: () => Promise<void>;
   onLoggedOut?: () => void;
   onboardingClient?: undefined;
@@ -256,6 +286,7 @@ function shellElement(options: {
         recordClient={options.records ?? recordClient()}
         conversationClient={options.conversations ?? conversationClient()}
         materialClient={options.materials ?? materialClient()}
+        learningClient={options.learning ?? learningClient()}
         clientIdFactory={
           options.clientIdFactory ??
           (() => "15000000-0000-4000-8000-000000000001")
@@ -565,6 +596,19 @@ describe("minimal HXYOS frontstage", () => {
     expect(screen.queryByText(/审核|模型运行|知识治理|成员管理/)).not.toBeInTheDocument();
   });
 
+  it("opens one role-scoped learning action from primary navigation", async () => {
+    const user = userEvent.setup();
+    const learning = learningClient();
+    renderShell({ learning });
+
+    await user.click(screen.getByRole("button", { name: "学习" }));
+
+    expect(await screen.findByRole("heading", { name: "回应顾客不适" })).toBeVisible();
+    expect(learning.loadLearning).toHaveBeenCalledOnce();
+    expect(screen.getByText("仅自己可见")).toBeVisible();
+    expect(screen.queryByText(/课程目录|排行榜|审核|知识治理/)).not.toBeInTheDocument();
+  });
+
   it("all primary navigation and composer controls perform an action", async () => {
     const user = userEvent.setup();
     renderShell();
@@ -575,6 +619,8 @@ describe("minimal HXYOS frontstage", () => {
     expect(screen.getByRole("heading", { name: "对话" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "今日" }));
     expect(screen.getByRole("heading", { name: "今日" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "学习" }));
+    expect(await screen.findByRole("heading", { name: "学习" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "新输入" }));
     expect(screen.queryByRole("button", { name: "提问" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "记录" })).not.toBeInTheDocument();

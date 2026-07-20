@@ -694,6 +694,238 @@ a:focus-visible {
 
 /* Universal composer */
 
+/* Learning */
+
+.learning-header {
+  align-items: center;
+}
+
+.private-progress-label {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.private-progress-label svg,
+.learning-action-heading svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.8;
+}
+
+.learning-action {
+  padding: 30px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.learning-action-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.learning-action-heading h2,
+.learning-feedback h2 {
+  margin: 0;
+  font-size: 19px;
+  line-height: 1.35;
+}
+
+.learning-action-heading p {
+  max-width: 52ch;
+  margin: 7px 0 0;
+  color: var(--color-muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.learning-action-heading > span {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.learning-action blockquote {
+  margin: 24px 0 20px;
+  padding: 17px 18px;
+  color: var(--color-text);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.65;
+  background: var(--color-surface);
+  border-left: 3px solid var(--color-accent);
+  border-radius: 0 6px 6px 0;
+}
+
+.learning-practice-form {
+  display: grid;
+  gap: 9px;
+}
+
+.learning-practice-form label {
+  font-size: 13px;
+  font-weight: 680;
+}
+
+.learning-practice-form textarea {
+  width: 100%;
+  min-height: 112px;
+  resize: vertical;
+  padding: 12px;
+  color: var(--color-text);
+  font-size: 14px;
+  line-height: 1.6;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 6px;
+}
+
+.learning-practice-form textarea:focus {
+  border-color: var(--color-accent);
+}
+
+.learning-practice-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.learning-voice-button,
+.learning-submit-button {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-radius: 6px;
+}
+
+.learning-voice-button {
+  width: 42px;
+  padding: 0;
+  color: var(--color-muted);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+}
+
+.learning-voice-button.is-listening {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.learning-submit-button {
+  min-width: 118px;
+  padding: 0 16px;
+  color: #ffffff;
+  font-weight: 680;
+  background: var(--color-accent);
+  border: 1px solid var(--color-accent);
+}
+
+.learning-submit-button:hover:not(:disabled) {
+  background: var(--color-accent-strong);
+}
+
+.learning-submit-button:disabled {
+  color: #edf1ef;
+  background: var(--color-disabled);
+  border-color: var(--color-disabled);
+}
+
+.learning-voice-button svg,
+.learning-submit-button svg {
+  width: 17px;
+  height: 17px;
+}
+
+.learning-form-error {
+  margin: 0;
+  color: var(--color-danger);
+  font-size: 12px;
+}
+
+.learning-feedback,
+.learning-progress {
+  padding: 26px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.learning-feedback-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.learning-feedback-heading > span {
+  color: var(--color-accent);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.learning-feedback ul {
+  display: grid;
+  gap: 7px;
+  margin: 16px 0;
+  padding-left: 20px;
+  color: var(--color-text);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.learning-feedback > p,
+.learning-example p,
+.learning-progress span,
+.learning-progress p,
+.learning-limitation {
+  color: var(--color-muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.learning-example {
+  margin-top: 18px;
+  padding-left: 14px;
+  border-left: 2px solid var(--color-border-strong);
+}
+
+.learning-example strong {
+  font-size: 12px;
+}
+
+.learning-example p {
+  margin: 5px 0 0;
+}
+
+.learning-progress > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.learning-progress strong {
+  font-size: 14px;
+}
+
+.learning-progress p {
+  margin: 9px 0 0;
+}
+
+.learning-limitation {
+  margin: 18px 0 0;
+  color: var(--color-subtle);
+  font-size: 11px;
+}
+
 .composer-dock {
   position: relative;
   z-index: 4;
@@ -1568,6 +1800,37 @@ a:focus-visible {
 
   .view-header p {
     margin-top: 5px;
+  }
+
+  .learning-action {
+    padding: 24px 0;
+  }
+
+  .learning-action-heading {
+    display: grid;
+    gap: 10px;
+  }
+
+  .learning-action-heading > span {
+    order: -1;
+  }
+
+  .learning-action blockquote {
+    margin: 20px 0 17px;
+    padding: 14px 15px;
+  }
+
+  .learning-practice-actions {
+    justify-content: stretch;
+  }
+
+  .learning-submit-button {
+    flex: 1 1 auto;
+  }
+
+  .learning-progress > div {
+    display: grid;
+    gap: 5px;
   }
 
   .briefing-list button {

@@ -7,6 +7,7 @@ import {
   type ConversationSummary,
 } from "../../api/conversations";
 import type { MaterialClient } from "../../api/materials";
+import type { LearningClient } from "../../api/learning";
 import {
   type OrganizationRecord,
   type OrganizationRecordClient,
@@ -15,6 +16,7 @@ import type { TodayBriefItem, TodayClient } from "../../api/today";
 import { UniversalComposer } from "../composer/UniversalComposer";
 import { ConversationView } from "../conversation/ConversationView";
 import { OrganizationPanel } from "../onboarding/OrganizationPanel";
+import { LearningView } from "../learning/LearningView";
 import { RecordDetail } from "../records/RecordDetail";
 import { RecordsView } from "../records/RecordsView";
 import { useSession } from "../session/SessionProvider";
@@ -29,6 +31,7 @@ export interface ProductShellProps {
   recordClient: OrganizationRecordClient;
   conversationClient: ConversationClient;
   materialClient: MaterialClient;
+  learningClient: LearningClient;
   clientIdFactory: () => string;
   uploadIdFactory: () => string;
   onboardingClient?: OnboardingClient;
@@ -58,6 +61,7 @@ export function ProductShell({
   recordClient,
   conversationClient,
   materialClient,
+  learningClient,
   clientIdFactory,
   uploadIdFactory,
   onboardingClient,
@@ -70,6 +74,7 @@ export function ProductShell({
   const canCreateRecords = assignment?.capabilities.includes("records:create") ?? false;
   const canAsk = assignment?.capabilities.includes("conversation:use") ?? false;
   const canUpload = assignment?.capabilities.includes("materials:create") ?? false;
+  const canLearn = assignment?.capabilities.includes("training:practice") ?? false;
   const [activeView, setActiveView] = useState<FrontstageView>(() =>
     canReadRecords ? "today" : canAsk ? "conversation" : "me",
   );
@@ -175,10 +180,11 @@ export function ProductShell({
     const unavailable =
       ((activeView === "today" || activeView === "records") && !canReadRecords) ||
       (activeView === "conversation" && !canAsk);
-    if (unavailable) {
+    const learningUnavailable = activeView === "learning" && !canLearn;
+    if (unavailable || learningUnavailable) {
       setActiveView(canReadRecords ? "today" : canAsk ? "conversation" : "me");
     }
-  }, [activeView, canAsk, canReadRecords]);
+  }, [activeView, canAsk, canLearn, canReadRecords]);
 
   useEffect(() => {
     if (activeView === "today" || activeView === "conversation") {
@@ -192,6 +198,7 @@ export function ProductShell({
     if (view === "today" && !canReadRecords) return;
     if (view === "records" && !canReadRecords) return;
     if (view === "conversation" && !canAsk) return;
+    if (view === "learning" && !canLearn) return;
     recordDetailRequest.current += 1;
     setSelectedRecord(null);
     setActiveView(view);
@@ -377,6 +384,7 @@ export function ProductShell({
         scopeLabel={`${assignment.role_label} · ${scopeLabel}`}
         canAsk={canAsk}
         canCreateRecords={canCreateRecords}
+        canLearn={canLearn}
         canReadRecords={canReadRecords}
         onNavigate={navigate}
         onNewInput={startNewInput}
@@ -419,6 +427,9 @@ export function ProductShell({
               onOpenRecord={(id) => void openRecord(id)}
               onRetry={() => void loadRecords()}
             />
+          ) : null}
+          {activeView === "learning" && canLearn ? (
+            <LearningView client={learningClient} />
           ) : null}
           {activeView === "me" ? (
             <section className="profile-view" aria-label="当前身份">
