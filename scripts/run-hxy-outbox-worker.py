@@ -22,6 +22,10 @@ from hxy_product.issue_understanding import (  # noqa: E402
     IssueProposalRepository,
     build_issue_understanding_handler,
 )
+from hxy_product.record_understanding import (  # noqa: E402
+    OrganizationRecordProposalRepository,
+    build_record_understanding_handler,
+)
 from hxy_product.operating_policy import evaluate_issue_proposal  # noqa: E402
 from hxy_product.operating_metrics import (  # noqa: E402
     OperatingMetricsRepository,
@@ -35,11 +39,15 @@ def build_handlers(
     *,
     channel_repository=None,
     operating_repository=None,
+    record_proposal_repository=None,
     model_router=None,
     metrics_repository=None,
 ) -> dict:
     channel = channel_repository or ChannelRepository(database_url)
     operating = operating_repository or IssueProposalRepository(database_url)
+    record_proposals = record_proposal_repository or OrganizationRecordProposalRepository(
+        database_url
+    )
     router = model_router or ModelRouter()
     metrics = metrics_repository or OperatingMetricsRepository(database_url)
     return {
@@ -48,6 +56,11 @@ def build_handlers(
             operating,
             router,
             evaluate_issue_proposal,
+        ),
+        "understand.organization_record": build_record_understanding_handler(
+            channel,
+            record_proposals,
+            router,
         ),
         "metrics.operating_event.closed": build_closed_event_metrics_handler(metrics),
     }

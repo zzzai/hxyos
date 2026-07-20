@@ -1144,6 +1144,69 @@ class ChannelRepository:
             "published_event_types": published_event_types,
         }
 
+    def load_record_context(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        organization_id = str(payload.get("organization_id") or "").strip()
+        envelope_id = str(payload.get("envelope_id") or "").strip()
+        if not organization_id or not envelope_id:
+            raise ValueError("scoped organization record identifiers are required")
+
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT envelope.envelope_id::text,
+                       envelope.organization_id::text,
+                       envelope.raw_text
+                FROM hxy_inbound_envelopes AS envelope
+                WHERE envelope.organization_id = %s::uuid
+                  AND envelope.envelope_id = %s::uuid
+                  AND envelope.intent_hint = 'organization_record'
+                  AND envelope.status IN ('queued', 'processed')
+                FOR SHARE OF envelope
+                """,
+                (organization_id, envelope_id),
+            ).fetchone()
+            if row is None:
+                return None
+            assets = connection.execute(
+                """
+                SELECT material.material_id::text AS source_asset_id,
+                       material.original_file_name AS file_name,
+                       material.extension,
+                       material.media_type,
+                       material.storage_key,
+                       material.status AS material_status,
+                       normalized.storage_key AS normalized_storage_key
+                FROM hxy_asset_bindings AS binding
+                JOIN hxy_product_materials AS material
+                  ON material.organization_id = binding.organization_id
+                 AND material.material_id = binding.source_id
+                LEFT JOIN LATERAL (
+                  SELECT artifact.storage_key
+                  FROM hxy_material_artifacts AS artifact
+                  WHERE artifact.assignment_id = material.assignment_id
+                    AND artifact.material_id = material.material_id
+                    AND artifact.artifact_type = 'normalized_markdown'
+                  ORDER BY artifact.created_at DESC, artifact.artifact_id DESC
+                  LIMIT 1
+                ) AS normalized ON TRUE
+                WHERE binding.organization_id = %s::uuid
+                  AND binding.source_type = 'source_asset'
+                  AND binding.target_type = 'inbound_envelope'
+                  AND binding.target_id = %s::uuid
+                  AND binding.relation_type = 'attached_to'
+                  AND material.status <> 'archived'
+                  AND material.scan_status = 'clean'
+                ORDER BY binding.created_at, binding.binding_id
+                """,
+                (organization_id, envelope_id),
+            ).fetchall()
+        return {
+            "organization_id": str(row["organization_id"]),
+            "envelope_id": str(row["envelope_id"]),
+            "raw_text": _sanitize_text(str(row.get("raw_text") or "")),
+            "attachments": [dict(asset) for asset in assets],
+        }
+
     def mark_envelope_processed(
         self,
         organization_id: str,

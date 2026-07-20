@@ -23,6 +23,10 @@ _DEFAULT_ROUTES: dict[str, dict[str, Any]] = {
         "purpose": "把门店经营问题提取为受治理的结构化候选提案",
         "model_role": "default_model",
     },
+    "organization_record_understanding": {
+        "purpose": "把组织记录提取为带原文证据的事实、决策、进展和风险候选",
+        "model_role": "default_model",
+    },
     "vision": {
         "purpose": "图片理解、菜单图解析、流程图解析、报表截图解析",
         "model_role": "default_model",
@@ -342,6 +346,7 @@ class ModelRouter:
                 "reasoning",
                 "classification",
                 "issue_understanding",
+                "organization_record_understanding",
                 "vision",
                 "embedding",
                 "speech",
