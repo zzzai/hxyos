@@ -319,3 +319,25 @@ def test_store_manager_briefing_query_is_limited_to_active_store() -> None:
     sql, params = connection.executed[0]
     assert "envelope.store_id = %s" in sql
     assert params == (ORGANIZATION_ID, "store-1", 100)
+
+
+def test_briefing_query_prioritizes_evidenced_items_before_freshness_window() -> None:
+    from apps.api.hxy_product.briefing_repository import BriefingRepository as Repository
+
+    connection = RecordingConnection()
+    repository = Repository("postgresql://briefing.test/hxy")
+    repository.connect = lambda: connection
+
+    repository.list_briefing_records(
+        organization_id=ORGANIZATION_ID,
+        assignment_id=FOUNDER_ID,
+        role="founder",
+        store_id=None,
+    )
+
+    sql, _params = connection.executed[0]
+    priority_position = sql.index("CASE")
+    freshness_position = sql.index("envelope.received_at DESC")
+    assert "item ->> 'severity' = 'critical'" in sql
+    assert "COALESCE(item -> 'evidence', '[]'::jsonb)" in sql
+    assert priority_position < freshness_position

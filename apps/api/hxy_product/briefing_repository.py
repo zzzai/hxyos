@@ -30,6 +30,70 @@ _BRIEFING_SELECT = """
     ) AS proposal ON TRUE
 """
 
+_BRIEFING_PRIORITY_ORDER = """
+    CASE
+      WHEN EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements(
+          COALESCE(proposal.payload -> 'risks', '[]'::jsonb)
+        ) AS item
+        WHERE item ->> 'severity' = 'critical'
+          AND jsonb_array_length(
+            COALESCE(item -> 'evidence', '[]'::jsonb)
+          ) > 0
+      ) THEN 0
+      WHEN EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements(
+          COALESCE(proposal.payload -> 'risks', '[]'::jsonb)
+        ) AS item
+        WHERE item ->> 'severity' = 'high'
+          AND jsonb_array_length(
+            COALESCE(item -> 'evidence', '[]'::jsonb)
+          ) > 0
+      ) THEN 1
+      WHEN EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements(
+          COALESCE(proposal.payload -> 'decisions', '[]'::jsonb)
+        ) AS item
+        WHERE jsonb_array_length(
+          COALESCE(item -> 'evidence', '[]'::jsonb)
+        ) > 0
+      ) THEN 2
+      WHEN EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements(
+          COALESCE(proposal.payload -> 'progress', '[]'::jsonb)
+        ) AS item
+        WHERE jsonb_array_length(
+          COALESCE(item -> 'evidence', '[]'::jsonb)
+        ) > 0
+      ) THEN 3
+      WHEN EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements(
+          COALESCE(proposal.payload -> 'risks', '[]'::jsonb)
+        ) AS item
+        WHERE item ->> 'severity' = 'medium'
+          AND jsonb_array_length(
+            COALESCE(item -> 'evidence', '[]'::jsonb)
+          ) > 0
+      ) THEN 4
+      WHEN EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements(
+          COALESCE(proposal.payload -> 'risks', '[]'::jsonb)
+        ) AS item
+        WHERE item ->> 'severity' = 'low'
+          AND jsonb_array_length(
+            COALESCE(item -> 'evidence', '[]'::jsonb)
+          ) > 0
+      ) THEN 5
+      ELSE 6
+    END
+"""
+
 
 class BriefingRepository:
     def __init__(self, database_url: str):
@@ -71,7 +135,9 @@ class BriefingRepository:
             + " WHERE envelope.organization_id = %s::uuid"
             + " AND envelope.intent_hint = 'organization_record'"
             + scope_sql
-            + " ORDER BY envelope.received_at DESC, envelope.envelope_id DESC LIMIT %s"
+            + " ORDER BY "
+            + _BRIEFING_PRIORITY_ORDER
+            + ", envelope.received_at DESC, envelope.envelope_id DESC LIMIT %s"
         )
         params = (
             organization_id,
