@@ -1,6 +1,6 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { MeResponse } from "../../api/client";
 import type { ConversationClient } from "../../api/conversations";
@@ -71,6 +71,41 @@ const RECORD: OrganizationRecord = {
     official_knowledge: false,
   },
 };
+
+class FakeVoiceRecorder {
+  readonly mimeType = "audio/webm";
+  state: RecordingState = "inactive";
+  ondataavailable: ((event: BlobEvent) => void) | null = null;
+  onstop: ((event: Event) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+
+  constructor(_stream: MediaStream) {}
+
+  start() {
+    this.state = "recording";
+  }
+
+  stop() {
+    this.state = "inactive";
+    this.ondataavailable?.({
+      data: new Blob(["voice"], { type: "audio/webm" }),
+    } as BlobEvent);
+    this.onstop?.(new Event("stop"));
+  }
+}
+
+function enableVoiceCapture() {
+  const stop = vi.fn();
+  const stream = { getTracks: () => [{ stop }] } as unknown as MediaStream;
+  const getUserMedia = vi.fn().mockResolvedValue(stream);
+  vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
+  vi.stubGlobal("MediaRecorder", FakeVoiceRecorder);
+  return { getUserMedia, stop };
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 function brief(index: number): TodayBriefItem {
   return {
@@ -380,6 +415,85 @@ describe("minimal HXYOS frontstage", () => {
         sourceAssetIds: [ASSET_ID],
       }),
     );
+  });
+
+  it("records voice and submits it through protected material intake", async () => {
+    const user = userEvent.setup();
+    enableVoiceCapture();
+    const records = recordClient();
+    const materials = materialClient();
+    renderShell({ records, materials });
+
+    await user.click(screen.getByRole("button", { name: "开始录音" }));
+    expect(await screen.findByRole("button", { name: "停止录音" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "停止录音" }));
+
+    expect(await screen.findByText(/^voice-.*\.webm$/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => expect(materials.uploadMaterial).toHaveBeenCalledOnce());
+    expect(materials.uploadMaterial).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "audio/webm" }),
+      "",
+      "16000000-0000-4000-8000-000000000001",
+    );
+    expect(records.createRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceAssetIds: [ASSET_ID] }),
+    );
+  });
+
+  it("cancels an active voice capture without adding an attachment", async () => {
+    const user = userEvent.setup();
+    const { stop } = enableVoiceCapture();
+    renderShell();
+
+    await user.click(screen.getByRole("button", { name: "开始录音" }));
+    await user.click(await screen.findByRole("button", { name: "取消录音" }));
+
+    expect(await screen.findByRole("button", { name: "开始录音" })).toBeVisible();
+    expect(screen.queryByText(/^voice-.*\.webm$/)).not.toBeInTheDocument();
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
+  it("supports hold-to-record on touch devices", async () => {
+    enableVoiceCapture();
+    renderShell();
+
+    const microphone = screen.getByRole("button", { name: "开始录音" });
+    fireEvent.pointerDown(microphone, { pointerId: 7, pointerType: "touch" });
+    const stopRecording = await screen.findByRole("button", { name: "停止录音" });
+    fireEvent.pointerUp(stopRecording, { pointerId: 7, pointerType: "touch" });
+
+    expect(await screen.findByText(/^voice-.*\.webm$/)).toBeVisible();
+  });
+
+  it("honors touch release while microphone permission is still pending", async () => {
+    let resolvePermission: ((stream: MediaStream) => void) | undefined;
+    const stop = vi.fn();
+    const stream = { getTracks: () => [{ stop }] } as unknown as MediaStream;
+    const getUserMedia = vi.fn(
+      () =>
+        new Promise<MediaStream>((resolve) => {
+          resolvePermission = resolve;
+        }),
+    );
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
+    vi.stubGlobal("MediaRecorder", FakeVoiceRecorder);
+    renderShell();
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "开始录音" }), {
+      pointerId: 8,
+      pointerType: "touch",
+    });
+    const requesting = await screen.findByRole("button", {
+      name: "正在请求麦克风",
+    });
+    expect(requesting).toBeEnabled();
+    fireEvent.pointerUp(requesting, { pointerId: 8, pointerType: "touch" });
+    await act(async () => resolvePermission?.(stream));
+
+    expect(await screen.findByText(/^voice-.*\.webm$/)).toBeVisible();
+    expect(stop).toHaveBeenCalledOnce();
   });
 
   it("opens evidence-backed record detail from a briefing row", async () => {

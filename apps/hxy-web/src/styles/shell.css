@@ -787,9 +787,16 @@ a:focus-visible {
 
 .composer-actions {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) 36px;
+  grid-template-columns: auto minmax(0, 1fr) 36px;
   align-items: center;
   gap: 8px;
+}
+
+.composer-tools {
+  display: flex;
+  min-width: 34px;
+  align-items: center;
+  gap: 2px;
 }
 
 .attachment-control {
@@ -824,12 +831,54 @@ a:focus-visible {
   opacity: 0;
 }
 
+.voice-control {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  padding: 0;
+  color: var(--color-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+}
+
+.voice-control:hover:not(:disabled) {
+  color: var(--color-text);
+  background: var(--color-canvas);
+}
+
+.voice-control.is-recording {
+  color: #ffffff;
+  background: #b42318;
+}
+
+.voice-control:disabled {
+  color: var(--color-disabled);
+}
+
+.voice-control svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 1.8;
+}
+
+.voice-control.is-recording svg {
+  width: 13px;
+  height: 13px;
+  fill: currentColor;
+}
+
 .composer-hint {
   overflow: hidden;
   color: var(--color-subtle);
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.composer-hint.is-error {
+  color: #b42318;
 }
 
 .composer-submit {
@@ -1574,11 +1623,12 @@ a:focus-visible {
   }
 
   .composer-actions {
-    grid-template-columns: 36px minmax(0, 1fr) 38px;
+    grid-template-columns: auto minmax(0, 1fr) 38px;
   }
 
   .composer-submit,
-  .attachment-control {
+  .attachment-control,
+  .voice-control {
     width: 38px;
     height: 38px;
   }
