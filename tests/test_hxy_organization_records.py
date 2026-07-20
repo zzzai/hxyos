@@ -1,15 +1,23 @@
 from __future__ import annotations
 
+import asyncio
 import json
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from pydantic import ValidationError
 
+from apps.api.hxy_knowledge_api import create_app
+
 
 ORGANIZATION_ID = "10000000-0000-0000-0000-000000000001"
+ACCOUNT_ID = "11000000-0000-0000-0000-000000000001"
 RECORD_ID = "20000000-0000-0000-0000-000000000001"
+FOREIGN_RECORD_ID = "20000000-0000-0000-0000-000000000099"
 ASSET_ID = "30000000-0000-0000-0000-000000000001"
 FOUNDER_ID = "40000000-0000-0000-0000-000000000001"
 HQ_ID = "40000000-0000-0000-0000-000000000002"
@@ -18,6 +26,388 @@ EMPLOYEE_ID = "40000000-0000-0000-0000-000000000004"
 STORE_ID = "store-1"
 CAPTURED_AT = datetime(2026, 7, 20, 8, 30, tzinfo=timezone.utc)
 OCCURRED_AT = datetime(2026, 7, 20, 7, 45, tzinfo=timezone.utc)
+
+
+@dataclass(frozen=True)
+class RoutePrincipal:
+    account_id: str = ACCOUNT_ID
+    display_name: str = "测试创始人"
+    assignment_id: str = FOUNDER_ID
+
+
+@dataclass(frozen=True)
+class RouteAssignment:
+    assignment_id: str = FOUNDER_ID
+    organization_id: str = ORGANIZATION_ID
+    organization_name: str = "荷小悦"
+    store_id: str | None = None
+    store_name: str | None = None
+    role: str = "founder"
+
+
+class RouteIdentityRepository:
+    def __init__(self, assignment: RouteAssignment | None = None) -> None:
+        self.assignment = assignment or RouteAssignment()
+
+    def resolve_session(self, raw_token: str) -> RoutePrincipal | None:
+        if raw_token != "valid-session":
+            return None
+        return RoutePrincipal(assignment_id=self.assignment.assignment_id)
+
+    def list_assignments(self, _account_id: str) -> list[RouteAssignment]:
+        return [self.assignment]
+
+
+class RouteChannelRepository:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def accept_authenticated_record(
+        self,
+        payload: dict[str, Any],
+        *,
+        assignment: RouteAssignment,
+    ) -> dict[str, Any]:
+        self.calls.append({"payload": payload, "assignment": assignment})
+        return {
+            "id": RECORD_ID,
+            "organization_id": ORGANIZATION_ID,
+            "channel": "pwa",
+            "assignment_id": assignment.assignment_id,
+            "store_id": assignment.store_id,
+            "status": "queued",
+            "received_at": CAPTURED_AT,
+        }
+
+
+class RouteRecordRepository:
+    def __init__(self) -> None:
+        from apps.api.hxy_product.record_repository import public_record
+
+        self.record = public_record(
+            record_row(
+                raw_text="水电图今天确认",
+                status="queued",
+                interpretation_payload=None,
+                assets=[],
+            )
+        )
+
+    def list_records(self, **_scope: Any) -> list[dict[str, Any]]:
+        return [dict(self.record)]
+
+    def get_record(self, *, record_id: str, **_scope: Any) -> dict[str, Any] | None:
+        return dict(self.record) if record_id == RECORD_ID else None
+
+
+class RouteClient:
+    def __init__(self, app: Any, channel_repository: RouteChannelRepository) -> None:
+        self.app = app
+        self.channel_repository = channel_repository
+
+    def request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        async def run() -> httpx.Response:
+            transport = httpx.ASGITransport(app=self.app, raise_app_exceptions=False)
+            async with httpx.AsyncClient(
+                transport=transport,
+                base_url="http://testserver",
+            ) as client:
+                return await client.request(method, url, **kwargs)
+
+        return asyncio.run(run())
+
+
+def record_route_client(
+    tmp_path: Path,
+    assignment: RouteAssignment | None = None,
+) -> RouteClient:
+    identity = RouteIdentityRepository(assignment)
+    channel = RouteChannelRepository()
+    records = RouteRecordRepository()
+    app = create_app(
+        root_dir=tmp_path,
+        repository_factory=lambda: object(),
+        product_identity_repository_factory=lambda: identity,
+        channel_repository_factory=lambda: channel,
+        record_repository_factory=lambda: records,
+    )
+    return RouteClient(app, channel)
+
+
+def route_headers() -> dict[str, str]:
+    return {"Authorization": "Bearer valid-session"}
+
+
+def test_post_organization_record_returns_async_receipt(tmp_path: Path) -> None:
+    client = record_route_client(tmp_path)
+
+    response = client.request(
+        "POST",
+        "/api/v1/organization-records",
+        headers=route_headers(),
+        json={
+            "client_record_id": "12000000-0000-0000-0000-000000000001",
+            "text": "水电图今天确认",
+            "source_asset_ids": [],
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.json()["record"]["processing_status"] in {
+        "received",
+        "processing",
+    }
+    call = client.channel_repository.calls[0]
+    assert call["payload"]["intent_hint"] == "organization_record"
+    assert call["payload"]["idempotency_key"] == (
+        "12000000-0000-0000-0000-000000000001"
+    )
+    assert call["assignment"].store_id is None
+
+
+def test_list_organization_records_returns_visible_records(tmp_path: Path) -> None:
+    client = record_route_client(tmp_path)
+
+    response = client.request(
+        "GET",
+        "/api/v1/organization-records?limit=50",
+        headers=route_headers(),
+    )
+
+    assert response.status_code == 200
+    assert isinstance(response.json()["records"], list)
+
+
+def test_detail_returns_visible_record_and_hides_out_of_scope_record(
+    tmp_path: Path,
+) -> None:
+    client = record_route_client(tmp_path)
+
+    visible = client.request(
+        "GET",
+        f"/api/v1/organization-records/{RECORD_ID}",
+        headers=route_headers(),
+    )
+    hidden = client.request(
+        "GET",
+        f"/api/v1/organization-records/{FOREIGN_RECORD_ID}",
+        headers=route_headers(),
+    )
+
+    assert visible.status_code == 200
+    assert visible.json()["record"]["id"] == RECORD_ID
+    assert hidden.status_code == 404
+
+
+def test_system_admin_cannot_create_or_read_organization_records(
+    tmp_path: Path,
+) -> None:
+    client = record_route_client(
+        tmp_path,
+        RouteAssignment(
+            assignment_id=HQ_ID,
+            role="system_admin",
+        ),
+    )
+
+    created = client.request(
+        "POST",
+        "/api/v1/organization-records",
+        headers=route_headers(),
+        json={
+            "client_record_id": "12000000-0000-0000-0000-000000000002",
+            "text": "系统管理员不应读取业务记录",
+            "source_asset_ids": [],
+        },
+    )
+    listed = client.request(
+        "GET",
+        "/api/v1/organization-records",
+        headers=route_headers(),
+    )
+
+    assert created.status_code == 403
+    assert listed.status_code == 403
+    assert client.channel_repository.calls == []
+
+
+class RecordIntakeConnection:
+    def __init__(
+        self,
+        assignment: dict[str, Any],
+        assets: list[dict[str, Any]],
+    ) -> None:
+        self.assignment = assignment
+        self.assets = assets
+        self.executed: list[tuple[str, tuple[Any, ...]]] = []
+
+    def __enter__(self) -> "RecordIntakeConnection":
+        return self
+
+    def __exit__(self, *_args: Any) -> None:
+        return None
+
+    def execute(self, sql: str, params: tuple[Any, ...]) -> QueryResult:
+        normalized = " ".join(sql.split())
+        self.executed.append((normalized, params))
+        if "FROM hxy_role_assignments AS assignment" in normalized:
+            return QueryResult([self.assignment])
+        if "SELECT envelope_id::text" in normalized:
+            return QueryResult([])
+        if "FROM hxy_product_materials AS material" in normalized:
+            return QueryResult(self.assets)
+        if "INSERT INTO hxy_inbound_envelopes" in normalized:
+            return QueryResult(
+                [
+                    {
+                        "envelope_id": RECORD_ID,
+                        "organization_id": ORGANIZATION_ID,
+                        "channel": "pwa",
+                        "sender_assignment_id": self.assignment["assignment_id"],
+                        "store_id": self.assignment.get("store_id"),
+                        "status": "received",
+                        "request_fingerprint": "",
+                        "received_at": CAPTURED_AT,
+                        "created_at": CAPTURED_AT,
+                        "updated_at": CAPTURED_AT,
+                    }
+                ]
+            )
+        if "INSERT INTO hxy_asset_bindings" in normalized:
+            return QueryResult([])
+        if "INSERT INTO hxy_outbox_messages" in normalized:
+            return QueryResult([])
+        if "UPDATE hxy_inbound_envelopes" in normalized:
+            return QueryResult(
+                [
+                    {
+                        "envelope_id": RECORD_ID,
+                        "organization_id": ORGANIZATION_ID,
+                        "channel": "pwa",
+                        "sender_assignment_id": self.assignment["assignment_id"],
+                        "store_id": self.assignment.get("store_id"),
+                        "status": "queued",
+                        "received_at": CAPTURED_AT,
+                        "created_at": CAPTURED_AT,
+                        "updated_at": CAPTURED_AT,
+                    }
+                ]
+            )
+        raise AssertionError(normalized)
+
+
+def authenticated_record_payload(source_asset_ids: list[str]) -> dict[str, Any]:
+    return {
+        "organization_id": ORGANIZATION_ID,
+        "channel": "pwa",
+        "channel_tenant_id": ORGANIZATION_ID,
+        "channel_message_id": "12000000-0000-0000-0000-000000000003",
+        "channel_thread_id": "",
+        "channel_user_id": ACCOUNT_ID,
+        "idempotency_key": "12000000-0000-0000-0000-000000000003",
+        "raw_text": "水电图今天确认",
+        "raw_payload": {},
+        "source_asset_ids": source_asset_ids,
+        "intent_hint": "organization_record",
+    }
+
+
+def test_founder_record_intake_uses_org_asset_scope_and_dedicated_outbox() -> None:
+    from apps.api.hxy_product.channel_repository import ChannelRepository
+
+    assignment = {
+        "assignment_id": FOUNDER_ID,
+        "organization_id": ORGANIZATION_ID,
+        "store_id": None,
+        "role": "founder",
+    }
+    connection = RecordIntakeConnection(
+        assignment,
+        [
+            {
+                "material_id": ASSET_ID,
+                "assignment_id": FOUNDER_ID,
+                "store_id": None,
+                "scan_status": "clean",
+                "visibility_scope": {"hq": True},
+            }
+        ],
+    )
+    repository = ChannelRepository("postgresql://records.test/hxy")
+    repository.connect = lambda: connection
+
+    receipt = repository.accept_authenticated_record(
+        authenticated_record_payload([ASSET_ID]),
+        assignment=RouteAssignment(),
+    )
+
+    assert receipt["status"] == "queued"
+    asset_sql = next(
+        sql for sql, _ in connection.executed if "FROM hxy_product_materials" in sql
+    )
+    assert "material.organization_id = %s::uuid" in asset_sql
+    assert "(material.store_id IS NULL OR material.store_id = %s)" not in asset_sql
+    envelope_sql, envelope_params = next(
+        (sql, params)
+        for sql, params in connection.executed
+        if "INSERT INTO hxy_inbound_envelopes" in sql
+    )
+    assert "intent_hint" in envelope_sql
+    assert "organization_record" in envelope_params
+    outbox_sql, _ = next(
+        (sql, params)
+        for sql, params in connection.executed
+        if "INSERT INTO hxy_outbox_messages" in sql
+    )
+    assert "'understand.organization_record'" in outbox_sql
+    assert "'inbound_envelope'" in outbox_sql
+    assert "LIKE" not in outbox_sql.upper()
+
+
+def test_store_record_intake_cannot_bind_hq_only_attachment() -> None:
+    from apps.api.hxy_product.channel_repository import (
+        ChannelRepository,
+        SourceAssetAccessDenied,
+    )
+
+    assignment = {
+        "assignment_id": MANAGER_ID,
+        "organization_id": ORGANIZATION_ID,
+        "store_id": STORE_ID,
+        "role": "store_manager",
+    }
+    connection = RecordIntakeConnection(
+        assignment,
+        [
+            {
+                "material_id": ASSET_ID,
+                "assignment_id": FOUNDER_ID,
+                "store_id": None,
+                "scan_status": "clean",
+                "visibility_scope": {"hq": True},
+            }
+        ],
+    )
+    repository = ChannelRepository("postgresql://records.test/hxy")
+    repository.connect = lambda: connection
+
+    with pytest.raises(SourceAssetAccessDenied):
+        repository.accept_authenticated_record(
+            authenticated_record_payload([ASSET_ID]),
+            assignment=RouteAssignment(
+                assignment_id=MANAGER_ID,
+                store_id=STORE_ID,
+                store_name="首店",
+                role="store_manager",
+            ),
+        )
+
+    assert not any(
+        "INSERT INTO hxy_asset_bindings" in sql for sql, _ in connection.executed
+    )
+    assert not any(
+        "INSERT INTO hxy_outbox_messages" in sql for sql, _ in connection.executed
+    )
 
 
 def record_row(**overrides: Any) -> dict[str, Any]:
@@ -345,6 +735,7 @@ def test_list_records_uses_fixed_role_selected_sql_scope(
 
     sql, actual_params = connection.executed[0]
     assert required_sql in sql
+    assert "envelope.intent_hint = 'organization_record'" in sql
     assert "proposal.proposal_type = 'organization_record_understanding'" in sql
     assert "FROM hxy_asset_bindings AS binding" in sql
     assert "JOIN hxy_product_materials AS material" in sql
@@ -402,6 +793,7 @@ def test_get_record_returns_none_when_not_found_or_out_of_scope() -> None:
     assert record is None
     sql, params = connection.executed[0]
     assert "envelope.envelope_id = %s::uuid" in sql
+    assert "envelope.intent_hint = 'organization_record'" in sql
     assert "envelope.sender_assignment_id = %s::uuid" in sql
     assert params == (ORGANIZATION_ID, RECORD_ID, EMPLOYEE_ID)
 

@@ -16,6 +16,11 @@ class OutboxLeaseLost(Exception):
     pass
 
 
+_INBOUND_UNDERSTANDING_TOPICS = frozenset(
+    {"understand.inbound.issue", "understand.organization_record"}
+)
+
+
 def lock_outbox_execution_fence(
     connection: Any,
     fence: Mapping[str, Any],
@@ -391,7 +396,7 @@ class OutboxRepository:
             ).fetchone()
             if (
                 outcome == "dead_letter"
-                and str(message["topic"]) == "understand.inbound.issue"
+                and str(message["topic"]) in _INBOUND_UNDERSTANDING_TOPICS
                 and str(message["aggregate_type"]) == "inbound_envelope"
             ):
                 connection.execute(
@@ -498,7 +503,10 @@ class OutboxRepository:
                       updated_at = NOW()
                   FROM updated_messages AS message
                   WHERE message.status = 'dead_letter'
-                    AND message.topic = 'understand.inbound.issue'
+                    AND message.topic IN (
+                          'understand.inbound.issue',
+                          'understand.organization_record'
+                        )
                     AND message.aggregate_type = 'inbound_envelope'
                     AND envelope.organization_id = message.organization_id
                     AND envelope.envelope_id = message.aggregate_id

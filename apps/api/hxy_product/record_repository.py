@@ -376,6 +376,7 @@ class RecordRepository:
         sql = (
             _RECORD_SELECT
             + " WHERE envelope.organization_id = %s::uuid"
+            + " AND envelope.intent_hint = 'organization_record'"
             + scope_sql
             + " ORDER BY envelope.received_at DESC, envelope.envelope_id DESC LIMIT %s"
         )
@@ -402,6 +403,7 @@ class RecordRepository:
             _RECORD_SELECT
             + " WHERE envelope.organization_id = %s::uuid"
             + " AND envelope.envelope_id = %s::uuid"
+            + " AND envelope.intent_hint = 'organization_record'"
             + scope_sql
             + " LIMIT 1"
         )

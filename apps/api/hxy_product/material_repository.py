@@ -225,7 +225,10 @@ class MaterialRepository:
                   last_error_code = NULL,
                   last_error_summary = NULL,
                   updated_at = NOW()
-              WHERE message.topic = 'understand.inbound.issue'
+              WHERE message.topic IN (
+                    'understand.inbound.issue',
+                    'understand.organization_record'
+                  )
                 AND message.aggregate_type = 'inbound_envelope'
                 AND message.status = 'pending'
                 AND message.available_at = 'infinity'::timestamptz
@@ -281,7 +284,10 @@ class MaterialRepository:
                   last_error_code = %s,
                   last_error_summary = 'an attached material needs attention',
                   updated_at = NOW()
-              WHERE message.topic = 'understand.inbound.issue'
+              WHERE message.topic IN (
+                    'understand.inbound.issue',
+                    'understand.organization_record'
+                  )
                 AND message.aggregate_type = 'inbound_envelope'
                 AND message.status = 'pending'
                 AND EXISTS (

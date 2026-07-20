@@ -30,7 +30,10 @@ class IntakeIdempotencyConflict(Exception):
 
 
 _CONTROL_CHARACTERS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
-_HQ_ROLES = frozenset({"founder", "hq_operations", "system_admin"})
+_HQ_ROLES = frozenset({"founder", "hq_operations"})
+_RECORD_ROLES = frozenset(
+    {"founder", "hq_operations", "store_manager", "store_employee"}
+)
 
 
 def _sanitize_text(value: str) -> str:
@@ -740,6 +743,232 @@ class ChannelRepository:
                     envelope_id,
                     json.dumps(outbox_payload, ensure_ascii=False),
                     f"pwa:{intake.idempotency_key}",
+                    attachments_ready,
+                ),
+            )
+            queued = None
+            if attachments_ready:
+                queued = connection.execute(
+                    """
+                    UPDATE hxy_inbound_envelopes
+                    SET status = 'queued', updated_at = NOW()
+                    WHERE organization_id = %s::uuid
+                      AND envelope_id = %s::uuid
+                      AND status = 'received'
+                    RETURNING envelope_id::text,
+                              organization_id::text,
+                              channel,
+                              sender_assignment_id::text,
+                              store_id,
+                              status,
+                              received_at,
+                              created_at,
+                              updated_at
+                    """,
+                    (organization_id, envelope_id),
+                ).fetchone()
+
+        return _envelope_from_row(queued or row)
+
+    def accept_authenticated_record(
+        self,
+        payload: dict[str, Any],
+        *,
+        assignment: Any,
+    ) -> dict[str, Any]:
+        """Persist a generic organization record and enqueue understanding."""
+        intake = ChannelIntakePayload.model_validate(payload)
+        if intake.channel != "pwa" or intake.intent_hint != "organization_record":
+            raise AuthenticatedIntakeScopeDenied("organization record scope is invalid")
+
+        def assignment_value(key: str) -> str:
+            if isinstance(assignment, dict):
+                value = assignment.get(key)
+            else:
+                value = getattr(assignment, key, None)
+            return str(value or "")
+
+        assignment_id = assignment_value("assignment_id")
+        organization_id = assignment_value("organization_id")
+        role = assignment_value("role")
+        expected_store_id = assignment_value("store_id") or None
+        if (
+            not assignment_id
+            or not organization_id
+            or role not in _RECORD_ROLES
+            or str(intake.organization_id) != organization_id
+            or (role in {"store_manager", "store_employee"} and not expected_store_id)
+        ):
+            raise AuthenticatedIntakeScopeDenied("organization record scope is invalid")
+
+        request_fingerprint = _intake_request_fingerprint(
+            intake,
+            assignment_id=assignment_id,
+            store_id=expected_store_id,
+        )
+
+        with self.connect() as connection:
+            active_assignment = connection.execute(
+                """
+                SELECT assignment.assignment_id::text,
+                       assignment.organization_id::text,
+                       assignment.store_id,
+                       assignment.role
+                FROM hxy_role_assignments AS assignment
+                JOIN hxy_organizations AS organization
+                  ON organization.organization_id = assignment.organization_id
+                WHERE assignment.organization_id = %s::uuid
+                  AND assignment.assignment_id = %s::uuid
+                  AND assignment.status = 'active'
+                  AND organization.status = 'active'
+                FOR SHARE OF assignment
+                """,
+                (organization_id, assignment_id),
+            ).fetchone()
+            active_store_id = (
+                str(active_assignment["store_id"])
+                if active_assignment is not None
+                and active_assignment.get("store_id") is not None
+                else None
+            )
+            if (
+                active_assignment is None
+                or str(active_assignment["organization_id"]) != organization_id
+                or str(active_assignment["assignment_id"]) != assignment_id
+                or str(active_assignment["role"]) != role
+                or active_store_id != expected_store_id
+            ):
+                raise AuthenticatedIntakeScopeDenied(
+                    "authenticated assignment is no longer active"
+                )
+
+            existing = self._find_existing_authenticated(
+                connection,
+                intake,
+                assignment_id,
+            )
+            if existing is not None:
+                return _replay_or_raise(existing, request_fingerprint)
+
+            source_asset_ids = tuple(
+                dict.fromkeys(str(value) for value in intake.source_asset_ids)
+            )
+            assets: list[dict[str, Any]] = []
+            if source_asset_ids:
+                store_scope_sql = ""
+                asset_params: tuple[Any, ...] = (
+                    organization_id,
+                    list(source_asset_ids),
+                )
+                if role in {"store_manager", "store_employee"}:
+                    store_scope_sql = (
+                        " AND (material.store_id IS NULL OR material.store_id = %s)"
+                    )
+                    asset_params = (*asset_params, expected_store_id)
+                assets = connection.execute(
+                    """
+                    SELECT material.material_id::text,
+                           material.assignment_id::text,
+                           material.store_id,
+                           material.scan_status,
+                           material.visibility_scope
+                    FROM hxy_product_materials AS material
+                    WHERE material.organization_id = %s::uuid
+                      AND material.material_id = ANY(%s::uuid[])
+                    """
+                    + store_scope_sql
+                    + """
+                      AND material.status <> 'archived'
+                      AND material.scan_status <> 'blocked'
+                    FOR SHARE OF material
+                    """,
+                    asset_params,
+                ).fetchall()
+                authorized_ids = {
+                    str(asset["material_id"])
+                    for asset in assets
+                    if _asset_is_visible(asset, active_assignment)
+                }
+                if authorized_ids != set(source_asset_ids):
+                    raise SourceAssetAccessDenied(
+                        "source asset is outside the record scope"
+                    )
+
+            attachments_ready = all(
+                str(asset.get("scan_status") or "legacy_unscanned") == "clean"
+                for asset in assets
+            )
+            attachments_failed = any(
+                str(asset.get("scan_status") or "legacy_unscanned") == "failed"
+                for asset in assets
+            )
+
+            row = self._insert_envelope(
+                connection,
+                intake,
+                assignment_id=assignment_id,
+                store_id=expected_store_id,
+                raw_payload={},
+                raw_text=_sanitize_text(intake.raw_text),
+                request_fingerprint=request_fingerprint,
+                visibility_scope={
+                    "assignment_id": assignment_id,
+                    "store_id": expected_store_id,
+                    "hq": True,
+                },
+                status="needs_attention" if attachments_failed else "received",
+            )
+            if row is None:
+                existing = self._find_existing_authenticated(
+                    connection,
+                    intake,
+                    assignment_id,
+                )
+                if existing is None:  # pragma: no cover - database invariant
+                    raise RuntimeError("idempotent organization record could not be loaded")
+                return _replay_or_raise(existing, request_fingerprint)
+
+            envelope_id = str(row["envelope_id"])
+            for source_asset_id in source_asset_ids:
+                connection.execute(
+                    """
+                    INSERT INTO hxy_asset_bindings (
+                      organization_id, source_type, source_id, target_type,
+                      target_id, relation_type, created_by_assignment_id
+                    )
+                    VALUES (
+                      %s::uuid, 'source_asset', %s::uuid, 'inbound_envelope',
+                      %s::uuid, 'attached_to', %s::uuid
+                    )
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (organization_id, source_asset_id, envelope_id, assignment_id),
+                )
+
+            outbox_payload = {
+                "organization_id": organization_id,
+                "envelope_id": envelope_id,
+                "store_id": expected_store_id,
+                "source_asset_ids": list(source_asset_ids),
+            }
+            connection.execute(
+                """
+                INSERT INTO hxy_outbox_messages (
+                  organization_id, topic, aggregate_type, aggregate_id,
+                  payload, idempotency_key, available_at
+                )
+                VALUES (
+                  %s::uuid, 'understand.organization_record', 'inbound_envelope',
+                  %s::uuid, %s::jsonb, %s,
+                  CASE WHEN %s THEN NOW() ELSE 'infinity'::timestamptz END
+                )
+                ON CONFLICT (organization_id, topic, idempotency_key) DO NOTHING
+                """,
+                (
+                    organization_id,
+                    envelope_id,
+                    json.dumps(outbox_payload, ensure_ascii=False),
+                    intake.idempotency_key,
                     attachments_ready,
                 ),
             )

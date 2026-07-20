@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATION = ROOT / "data" / "migrations" / "021_hxy_operating_loop.sql"
@@ -40,11 +42,16 @@ class Result:
         return self.rows
 
 
-def _message_row(*, attempt_count: int = 0, max_attempts: int = 5) -> dict[str, Any]:
+def _message_row(
+    *,
+    attempt_count: int = 0,
+    max_attempts: int = 5,
+    topic: str = "understand.inbound.issue",
+) -> dict[str, Any]:
     return {
         "outbox_message_id": MESSAGE_ID,
         "organization_id": ORGANIZATION_ID,
-        "topic": "understand.inbound.issue",
+        "topic": topic,
         "aggregate_type": "inbound_envelope",
         "aggregate_id": AGGREGATE_ID,
         "payload": {"envelope_id": AGGREGATE_ID},
@@ -232,7 +239,13 @@ def test_fail_uses_exponential_retry_delay_capped_at_one_hour() -> None:
     assert not any("UPDATE hxy_outbox_attempts" in sql for sql, _ in calls)
 
 
-def test_fail_dead_letters_after_attempt_budget_and_retains_history() -> None:
+@pytest.mark.parametrize(
+    "topic",
+    ("understand.inbound.issue", "understand.organization_record"),
+)
+def test_fail_dead_letters_understanding_topics_and_retains_history(
+    topic: str,
+) -> None:
     module = importlib.import_module("apps.api.hxy_product.outbox_repository")
     repository = module.OutboxRepository("postgresql://outbox.test/hxy")
     calls: list[str] = []
@@ -248,7 +261,14 @@ def test_fail_dead_letters_after_attempt_budget_and_retains_history() -> None:
             normalized = " ".join(sql.split())
             calls.append(normalized)
             if "FOR UPDATE" in normalized and "lease_owner" in normalized:
-                return Result(_message_row(attempt_count=5, max_attempts=5) | {"status": "leased"})
+                return Result(
+                    _message_row(
+                        attempt_count=5,
+                        max_attempts=5,
+                        topic=topic,
+                    )
+                    | {"status": "leased"}
+                )
             if "INSERT INTO hxy_outbox_attempts" in normalized:
                 return Result({"attempt_id": ATTEMPT_ID})
             if "UPDATE hxy_outbox_messages" in normalized:
@@ -317,6 +337,10 @@ def test_reclaim_stale_leases_appends_final_attempts_and_requeues_or_dead_letter
     assert "lease_expired" in statement
     assert "UPDATE hxy_inbound_envelopes" in statement
     assert "UPDATE hxy_outbox_attempts" not in statement
+    assert "message.topic IN (" in statement
+    assert "'understand.inbound.issue'" in statement
+    assert "'understand.organization_record'" in statement
+    assert "topic LIKE" not in statement
 
 
 def test_database_and_claim_contract_prevent_duplicate_execution() -> None:

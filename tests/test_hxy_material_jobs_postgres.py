@@ -17,6 +17,36 @@ from apps.api.hxy_release.activation_release import run_postflight
 DATABASE_URL = os.getenv("HXY_TEST_DATABASE_URL", "").strip()
 
 
+@pytest.mark.parametrize(
+    ("method_name", "args"),
+    [
+        ("_release_waiting_issue_envelopes", ("material-1",)),
+        ("_hold_waiting_issue_envelopes", ("material-1",)),
+    ],
+)
+def test_material_envelope_updates_use_exact_understanding_topic_allowlist(
+    method_name: str,
+    args: tuple[str, ...],
+) -> None:
+    statements: list[str] = []
+
+    class Connection:
+        def execute(self, sql: str, _params: tuple[object, ...]):
+            statements.append(" ".join(sql.split()))
+
+    method = getattr(MaterialRepository, method_name)
+    if method_name == "_hold_waiting_issue_envelopes":
+        method(Connection(), *args, error_code="attachment_failed")
+    else:
+        method(Connection(), *args)
+
+    assert len(statements) == 1
+    assert "message.topic IN (" in statements[0]
+    assert "'understand.inbound.issue'" in statements[0]
+    assert "'understand.organization_record'" in statements[0]
+    assert "topic LIKE" not in statements[0]
+
+
 @pytest.mark.skipif(not DATABASE_URL, reason="HXY_TEST_DATABASE_URL is not configured")
 def test_postgres_source_authority_rejects_unauthorized_or_cross_org_events() -> None:
     organization_id = str(uuid4())

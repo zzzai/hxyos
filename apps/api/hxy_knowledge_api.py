@@ -103,6 +103,8 @@ from hxy_product.onboarding_routes import create_onboarding_router, validate_pub
 from hxy_product.operating_repository import OperatingRepository
 from hxy_product.operating_routes import create_operating_router
 from hxy_product.operating_service import OperatingService
+from hxy_product.record_repository import RecordRepository
+from hxy_product.record_routes import create_record_router
 from hxy_product.repository import IdentityRepository
 from hxy_product.routes import assignment_for_principal, create_identity_router
 from hxy_product.task_repository import TaskRepository
@@ -750,6 +752,15 @@ def _default_channel_repository_factory(database_url: str) -> RepositoryFactory:
         if not database_url:
             raise HTTPException(status_code=503, detail="HXY_DATABASE_URL is not configured")
         return ChannelRepository(database_url)
+
+    return make_repository
+
+
+def _default_record_repository_factory(database_url: str) -> RepositoryFactory:
+    def make_repository() -> RecordRepository:
+        if not database_url:
+            raise HTTPException(status_code=503, detail="HXY_DATABASE_URL is not configured")
+        return RecordRepository(database_url)
 
     return make_repository
 
@@ -4024,6 +4035,7 @@ def create_app(
     material_repository_factory: RepositoryFactory | None = None,
     task_repository_factory: RepositoryFactory | None = None,
     channel_repository_factory: RepositoryFactory | None = None,
+    record_repository_factory: RepositoryFactory | None = None,
     operating_repository_factory: RepositoryFactory | None = None,
     evidence_repository_factory: RepositoryFactory | None = None,
     operating_service_builder: Callable[[Any], Any] | None = None,
@@ -4080,6 +4092,10 @@ def create_app(
     make_channel_repository = (
         channel_repository_factory
         or _default_channel_repository_factory(settings.database_url)
+    )
+    make_record_repository = (
+        record_repository_factory
+        or _default_record_repository_factory(settings.database_url)
     )
     make_operating_repository = (
         operating_repository_factory
@@ -4279,6 +4295,13 @@ def create_app(
             make_channel_repository,
             make_operating_repository,
             service_builder=build_operating_service,
+        )
+    )
+    app.include_router(
+        create_record_router(
+            make_product_identity_repository,
+            make_channel_repository,
+            make_record_repository,
         )
     )
     app.include_router(
