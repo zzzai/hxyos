@@ -56,6 +56,25 @@ def test_strict_schema_accepts_the_documented_contract() -> None:
 
 
 @pytest.mark.parametrize(
+    "required_field",
+    [
+        "occurred_at",
+        "facts",
+        "decisions",
+        "progress",
+        "risks",
+        "missing_information",
+    ],
+)
+def test_strict_schema_rejects_missing_contract_fields(required_field: str) -> None:
+    payload = _valid_payload()
+    payload.pop(required_field)
+
+    with pytest.raises(ValidationError):
+        OrganizationRecordUnderstandingDraft.model_validate(payload)
+
+
+@pytest.mark.parametrize(
     "mutation",
     [
         lambda payload: payload.update({"official_knowledge": True}),

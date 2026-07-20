@@ -73,12 +73,12 @@ class RecordRiskDraft(RecordStatementDraft):
 class OrganizationRecordUnderstandingDraft(StrictUnderstandingModel):
     summary: str = Field(max_length=2000)
     record_type: RecordType
-    occurred_at: datetime | None = None
-    facts: list[RecordStatementDraft] = Field(default_factory=list, max_length=5)
-    decisions: list[RecordStatementDraft] = Field(default_factory=list, max_length=5)
-    progress: list[RecordStatementDraft] = Field(default_factory=list, max_length=5)
-    risks: list[RecordRiskDraft] = Field(default_factory=list, max_length=5)
-    missing_information: list[str] = Field(default_factory=list, max_length=5)
+    occurred_at: datetime | None
+    facts: list[RecordStatementDraft] = Field(max_length=5)
+    decisions: list[RecordStatementDraft] = Field(max_length=5)
+    progress: list[RecordStatementDraft] = Field(max_length=5)
+    risks: list[RecordRiskDraft] = Field(max_length=5)
+    missing_information: list[str] = Field(max_length=5)
     confidence: float = Field(ge=0, le=1)
 
     @field_validator("summary")
