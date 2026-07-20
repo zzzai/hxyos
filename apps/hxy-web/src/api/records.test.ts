@@ -4,6 +4,7 @@ import { productMaterialClient } from "./materials";
 import {
   OrganizationRecordRequestError,
   productRecordClient,
+  type RecordEvidence,
 } from "./records";
 
 
@@ -22,6 +23,18 @@ afterEach(() => {
 
 
 describe("productRecordClient", () => {
+  it("represents nullable evidence fields returned by the API", () => {
+    const value: RecordEvidence = {
+      source_record_id: "record-1",
+      source_asset_id: null,
+      quote: "原文依据",
+      locator: null,
+    };
+
+    expect(value.source_asset_id).toBeNull();
+    expect(value.locator).toBeNull();
+  });
+
   it("lists records with credentials and a bounded limit", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       jsonResponse({ records: [] }),

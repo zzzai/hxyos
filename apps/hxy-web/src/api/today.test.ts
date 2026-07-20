@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { productTodayClient, TodayRequestError } from "./today";
+import {
+  productTodayClient,
+  TodayRequestError,
+  type TodayNextAction,
+} from "./today";
 
 
 afterEach(() => {
@@ -10,6 +14,16 @@ afterEach(() => {
 
 
 describe("productTodayClient", () => {
+  it("represents a next action without an optional prompt", () => {
+    const action: TodayNextAction = {
+      type: "open_record",
+      label: "查看记录",
+      prompt: null,
+    };
+
+    expect(action.prompt).toBeNull();
+  });
+
   it("loads no more than three briefing items with credentials", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify({ items: [] }), {

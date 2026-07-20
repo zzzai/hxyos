@@ -7,7 +7,7 @@ export type TodayBriefSeverity = "low" | "medium" | "high" | "critical";
 export interface TodayNextAction {
   type: "open_record" | "ask_about_record";
   label: string;
-  prompt?: string;
+  prompt: string | null;
 }
 
 export interface TodayBriefItem {

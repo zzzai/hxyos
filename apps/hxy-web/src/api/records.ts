@@ -15,9 +15,9 @@ export type RecordProcessingStatus =
 
 export interface RecordEvidence {
   source_record_id: string;
-  source_asset_id?: string;
+  source_asset_id: string | null;
   quote: string;
-  locator?: string;
+  locator: string | null;
 }
 
 export interface RecordInterpretationItem {
