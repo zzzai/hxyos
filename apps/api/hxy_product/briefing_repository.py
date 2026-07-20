@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .briefing_schemas import PROGRESS_MAX_AGE_DAYS
 from .record_repository import RecordAccessDenied
 
 try:
@@ -35,9 +36,33 @@ def _evidenced_item_exists(section: str, severity: str | None = None) -> str:
         raise ValueError("unsupported briefing section")
     if severity is not None and severity not in {"critical", "high", "medium", "low"}:
         raise ValueError("unsupported risk severity")
-    severity_filter = (
-        f"item ->> 'severity' = '{severity}' AND " if severity is not None else ""
+    conditions = [
+        "item_ordinality <= 5",
+        "NULLIF(BTRIM(item ->> 'statement'), '') IS NOT NULL",
+    ]
+    if severity is not None:
+        conditions.append(f"item ->> 'severity' = '{severity}'")
+    if section == "progress":
+        conditions.append(
+            "envelope.received_at >= CURRENT_TIMESTAMP "
+            f"- INTERVAL '{PROGRESS_MAX_AGE_DAYS} days'"
+        )
+    conditions.append(
+        """EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(
+            CASE
+              WHEN jsonb_typeof(item -> 'evidence') = 'array'
+                THEN item -> 'evidence'
+              ELSE '[]'::jsonb
+            END
+          ) WITH ORDINALITY AS evidence_entries(evidence, evidence_ordinality)
+          WHERE evidence_ordinality <= 5
+            AND evidence ->> 'source_record_id' = envelope.envelope_id::text
+            AND NULLIF(BTRIM(evidence ->> 'quote'), '') IS NOT NULL
+        )"""
     )
+    where_clause = "\n          AND ".join(conditions)
     return f"""
       EXISTS (
         SELECT 1
@@ -47,19 +72,8 @@ def _evidenced_item_exists(section: str, severity: str | None = None) -> str:
               THEN proposal.payload -> '{section}'
             ELSE '[]'::jsonb
           END
-        ) AS item
-        WHERE {severity_filter}EXISTS (
-          SELECT 1
-          FROM jsonb_array_elements(
-            CASE
-              WHEN jsonb_typeof(item -> 'evidence') = 'array'
-                THEN item -> 'evidence'
-              ELSE '[]'::jsonb
-            END
-          ) AS evidence
-          WHERE evidence ->> 'source_record_id' = envelope.envelope_id::text
-            AND NULLIF(BTRIM(evidence ->> 'quote'), '') IS NOT NULL
-        )
+        ) WITH ORDINALITY AS entries(item, item_ordinality)
+        WHERE {where_clause}
       )
     """
 

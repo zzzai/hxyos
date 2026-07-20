@@ -38,7 +38,7 @@ def create_briefing_router(
 
     @router.get("/api/v1/today", response_model=TodayResponse)
     def get_today(
-        limit: int = Query(default=3, ge=1, le=100),
+        limit: int = Query(default=3, ge=1, le=3),
         assignment: Any = Depends(read_assignment),
         repository: Any = Depends(get_briefing_repository),
     ) -> dict[str, Any]:

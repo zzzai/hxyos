@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 BriefKind = Literal["risk", "decision", "progress"]
 BriefSeverity = Literal["low", "medium", "high", "critical"]
+PROGRESS_MAX_AGE_DAYS = 30
 
 _SEVERITY_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 _WHY_IT_MATTERS = {
@@ -112,7 +113,12 @@ def project_brief_items(
     records: list[dict[str, Any]],
     *,
     limit: int = 3,
+    now: datetime | None = None,
 ) -> list[dict[str, Any]]:
+    reference_now = _captured_at(now) if now is not None else datetime.now(timezone.utc)
+    if reference_now is None:  # pragma: no cover - typed caller invariant
+        raise ValueError("now must be a datetime")
+    progress_cutoff = reference_now - timedelta(days=PROGRESS_MAX_AGE_DAYS)
     candidates: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
     for record in records:
         record_id = str(record.get("id") or record.get("record_id") or "").strip()
@@ -128,6 +134,8 @@ def project_brief_items(
             ("decision", "decisions"),
             ("progress", "progress"),
         ):
+            if kind == "progress" and captured_at < progress_cutoff:
+                continue
             values = interpretation.get(section)
             if not isinstance(values, list):
                 continue

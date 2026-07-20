@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +17,7 @@ ORGANIZATION_ID = "10000000-0000-0000-0000-000000000001"
 FOUNDER_ID = "40000000-0000-0000-0000-000000000001"
 RECORD_ID = "20000000-0000-0000-0000-000000000001"
 OTHER_RECORD_ID = "20000000-0000-0000-0000-000000000099"
-CAPTURED_AT = datetime(2026, 7, 20, 8, 30, tzinfo=timezone.utc)
+CAPTURED_AT = datetime.now(timezone.utc).replace(microsecond=0)
 
 
 def evidence(record_id: str = RECORD_ID, quote: str = "原文依据") -> dict[str, Any]:
@@ -140,6 +140,26 @@ def test_medium_risk_does_not_displace_decision_or_progress() -> None:
     assert [item["kind"] for item in items] == ["decision", "progress"]
 
 
+def test_progress_older_than_thirty_days_is_not_a_today_item() -> None:
+    records = [
+        interpreted_record(
+            progress=[
+                {
+                    "statement": "已经过期的进展",
+                    "evidence": [evidence(quote="旧进展依据")],
+                }
+            ],
+        )
+    ]
+
+    items = project_brief_items(
+        records,
+        now=CAPTURED_AT + timedelta(days=31),
+    )
+
+    assert items == []
+
+
 @dataclass(frozen=True)
 class RoutePrincipal:
     account_id: str = "11000000-0000-0000-0000-000000000001"
@@ -228,7 +248,7 @@ def test_today_route_uses_role_scope_and_hard_maximum_of_three(tmp_path: Path) -
     client = briefing_client(tmp_path, repository)
 
     response = client.get(
-        "/api/v1/today?limit=50",
+        "/api/v1/today?limit=3",
         headers={"Authorization": "Bearer valid-session"},
     )
 
@@ -241,6 +261,12 @@ def test_today_route_uses_role_scope_and_hard_maximum_of_three(tmp_path: Path) -
         "store_id": None,
         "limit": 100,
     }
+
+    rejected = client.get(
+        "/api/v1/today?limit=4",
+        headers={"Authorization": "Bearer valid-session"},
+    )
+    assert rejected.status_code == 422
 
 
 def test_system_admin_cannot_read_today(tmp_path: Path) -> None:
@@ -340,8 +366,13 @@ def test_briefing_query_prioritizes_evidenced_items_before_freshness_window() ->
     freshness_position = sql.index("envelope.received_at DESC")
     assert "item ->> 'severity' = 'critical'" in sql
     assert "jsonb_typeof(item -> 'evidence') = 'array'" in sql
+    assert "WITH ORDINALITY AS entries(item, item_ordinality)" in sql
+    assert "item_ordinality <= 5" in sql
+    assert "NULLIF(BTRIM(item ->> 'statement'), '') IS NOT NULL" in sql
     assert (
         "evidence ->> 'source_record_id' = envelope.envelope_id::text" in sql
     )
     assert "NULLIF(BTRIM(evidence ->> 'quote'), '') IS NOT NULL" in sql
+    assert "evidence_ordinality <= 5" in sql
+    assert "CURRENT_TIMESTAMP - INTERVAL '30 days'" in sql
     assert priority_position < freshness_position
