@@ -441,7 +441,7 @@ def build_record_understanding_handler(
         try:
             proposal = OrganizationRecordUnderstandingDraft.model_validate(
                 parsed
-            ).model_dump(mode="json", exclude_none=True)
+            ).model_dump(mode="json")
         except ValidationError as error:
             raise OutboxHandlerError(
                 "invalid_record_output",

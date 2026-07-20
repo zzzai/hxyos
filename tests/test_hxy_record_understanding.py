@@ -246,6 +246,7 @@ def test_handler_saves_only_proposed_interpretation_with_verbatim_evidence() -> 
     assert proposal_repository.saved["proposal_type"] == "organization_record_understanding"
     assert proposal_repository.saved["status"] == "proposed"
     assert proposal_repository.saved["risk_level"] == "medium"
+    assert proposal_repository.saved["payload"]["occurred_at"] is None
     assert (
         proposal_repository.saved["payload"]["risks"][0]["evidence"][0]["quote"]
         == "施工方尚未收到最终水电图"
