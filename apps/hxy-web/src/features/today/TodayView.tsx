@@ -1,11 +1,22 @@
-import { AlertTriangle, ArrowRight, CheckCircle2, RefreshCw } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowRight,
+  CheckCircle2,
+  ClipboardCheck,
+  RefreshCw,
+} from "lucide-react";
+import type { ReactNode } from "react";
 
-import type { TodayBriefItem } from "../../api/today";
+import type { TodayBriefItem, TodayRoleAction } from "../../api/today";
 
 interface TodayViewProps {
   items: TodayBriefItem[];
   status: "loading" | "ready" | "error";
+  leadingAction?: ReactNode;
+  leadingActionActive?: boolean;
+  roleAction?: TodayRoleAction | null;
   onOpenRecord: (recordId: string) => void;
+  onRoleAction?: (action: TodayRoleAction) => void;
   onRetry: () => void;
 }
 
@@ -15,7 +26,19 @@ function kindLabel(item: TodayBriefItem): string {
   return "进展";
 }
 
-export function TodayView({ items, status, onOpenRecord, onRetry }: TodayViewProps) {
+export function TodayView({
+  items,
+  status,
+  leadingAction,
+  leadingActionActive = false,
+  roleAction = null,
+  onOpenRecord,
+  onRoleAction,
+  onRetry,
+}: TodayViewProps) {
+  const occupiedSlots = leadingActionActive || roleAction ? 1 : 0;
+  const visibleItems = items.slice(0, Math.max(0, 3 - occupiedSlots));
+
   return (
     <section className="frontstage-view today-view" aria-labelledby="today-title">
       <header className="view-header">
@@ -24,6 +47,24 @@ export function TodayView({ items, status, onOpenRecord, onRetry }: TodayViewPro
           <p>只看与你当前身份有关的关键变化</p>
         </div>
       </header>
+
+      {leadingAction}
+
+      {roleAction ? (
+        <button
+          className="today-role-action"
+          type="button"
+          aria-label={roleAction.label}
+          onClick={() => onRoleAction?.(roleAction)}
+        >
+          <ClipboardCheck aria-hidden="true" />
+          <span>
+            <strong>{roleAction.label}</strong>
+            <small>用一句话留下今天最重要的经营情况</small>
+          </span>
+          <ArrowRight aria-hidden="true" />
+        </button>
+      ) : null}
 
       {status === "loading" ? (
         <div className="quiet-state" role="status">正在整理今日重点</div>
@@ -35,14 +76,14 @@ export function TodayView({ items, status, onOpenRecord, onRetry }: TodayViewPro
             重试
           </button>
         </div>
-      ) : items.length === 0 ? (
+      ) : visibleItems.length === 0 && !leadingActionActive && !roleAction ? (
         <div className="quiet-state">
           <CheckCircle2 aria-hidden="true" />
           <p>现在没有需要特别关注的变化</p>
         </div>
       ) : (
         <ul className="briefing-list" aria-label="今日重点">
-          {items.slice(0, 3).map((item) => (
+          {visibleItems.map((item) => (
             <li key={item.id}>
               <button
                 type="button"

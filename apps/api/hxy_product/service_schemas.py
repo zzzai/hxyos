@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 _MAINLAND_MOBILE = re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)")
@@ -71,13 +71,19 @@ class ServiceContextListResponse(StrictServiceModel):
 
 class AddServiceFeedbackRequest(StrictServiceModel):
     client_feedback_id: UUID
-    text: str = Field(min_length=1, max_length=4000)
+    text: str = Field(default="", max_length=4000)
     source_asset_ids: list[UUID] = Field(default_factory=list, max_length=10)
 
     @field_validator("text")
     @classmethod
     def validate_text(cls, value: str) -> str:
         return reject_plain_mobile(value)
+
+    @model_validator(mode="after")
+    def require_feedback_content(self) -> "AddServiceFeedbackRequest":
+        if not self.text and not self.source_asset_ids:
+            raise ValueError("feedback text or a protected asset is required")
+        return self
 
 
 class PublicServiceFeedbackReceipt(StrictServiceModel):

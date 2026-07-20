@@ -49,8 +49,15 @@ class TodayBriefItem(StrictBriefModel):
     next_action: BriefNextAction
 
 
+class TodayRoleAction(StrictBriefModel):
+    type: Literal["closing_review"]
+    label: str = Field(min_length=1, max_length=80)
+    prompt: str = Field(min_length=1, max_length=1000)
+
+
 class TodayResponse(StrictBriefModel):
     items: list[TodayBriefItem] = Field(default_factory=list, max_length=3)
+    role_action: TodayRoleAction | None = None
 
 
 def _object(value: Any) -> dict[str, Any]:

@@ -8,17 +8,23 @@ import {
 } from "../../api/conversations";
 import type { MaterialClient } from "../../api/materials";
 import type { LearningClient } from "../../api/learning";
+import type { ServiceClient } from "../../api/services";
 import {
   type OrganizationRecord,
   type OrganizationRecordClient,
 } from "../../api/records";
-import type { TodayBriefItem, TodayClient } from "../../api/today";
+import type {
+  TodayBriefItem,
+  TodayClient,
+  TodayRoleAction,
+} from "../../api/today";
 import { UniversalComposer } from "../composer/UniversalComposer";
 import { ConversationView } from "../conversation/ConversationView";
 import { OrganizationPanel } from "../onboarding/OrganizationPanel";
 import { LearningView } from "../learning/LearningView";
 import { RecordDetail } from "../records/RecordDetail";
 import { RecordsView } from "../records/RecordsView";
+import { ServiceFeedbackPrompt } from "../service/ServiceFeedbackPrompt";
 import { useSession } from "../session/SessionProvider";
 import { TodayView } from "../today/TodayView";
 import { Navigation, type FrontstageView } from "./Navigation";
@@ -32,6 +38,7 @@ export interface ProductShellProps {
   conversationClient: ConversationClient;
   materialClient: MaterialClient;
   learningClient: LearningClient;
+  serviceClient: ServiceClient;
   clientIdFactory: () => string;
   uploadIdFactory: () => string;
   onboardingClient?: OnboardingClient;
@@ -62,6 +69,7 @@ export function ProductShell({
   conversationClient,
   materialClient,
   learningClient,
+  serviceClient,
   clientIdFactory,
   uploadIdFactory,
   onboardingClient,
@@ -75,6 +83,10 @@ export function ProductShell({
   const canAsk = assignment?.capabilities.includes("conversation:use") ?? false;
   const canUpload = assignment?.capabilities.includes("materials:create") ?? false;
   const canLearn = assignment?.capabilities.includes("training:practice") ?? false;
+  const canGiveServiceFeedback =
+    assignment?.role === "store_employee" &&
+    (assignment?.capabilities.includes("services:feedback") ?? false) &&
+    (assignment?.capabilities.includes("services:read") ?? false);
   const [activeView, setActiveView] = useState<FrontstageView>(() =>
     canReadRecords ? "today" : canAsk ? "conversation" : "me",
   );
@@ -86,6 +98,8 @@ export function ProductShell({
   const [composerPending, setComposerPending] = useState(false);
   const [receipt, setReceipt] = useState<ReceiptState | null>(null);
   const [todayItems, setTodayItems] = useState<TodayBriefItem[]>([]);
+  const [todayRoleAction, setTodayRoleAction] = useState<TodayRoleAction | null>(null);
+  const [servicePromptActive, setServicePromptActive] = useState(false);
   const [todayStatus, setTodayStatus] = useState<LoadStatus>("loading");
   const [records, setRecords] = useState<OrganizationRecord[]>([]);
   const [recordsStatus, setRecordsStatus] = useState<LoadStatus>("loading");
@@ -110,6 +124,7 @@ export function ProductShell({
     const request = ++todayRequest.current;
     if (!canReadRecords) {
       setTodayItems([]);
+      setTodayRoleAction(null);
       setTodayStatus("ready");
       return;
     }
@@ -118,6 +133,7 @@ export function ProductShell({
       const response = await todayClient.getToday(3);
       if (request !== todayRequest.current) return;
       setTodayItems(response.items.slice(0, 3));
+      setTodayRoleAction(response.role_action ?? null);
       setTodayStatus("ready");
     } catch {
       if (request !== todayRequest.current) return;
@@ -358,6 +374,7 @@ export function ProductShell({
       setUploadedAsset(null);
       setPendingSubmission(null);
       setConversationStatus("idle");
+      if (text.startsWith("闭店复盘：")) setTodayRoleAction(null);
     } catch {
       setConversationStatus("idle");
       setReceipt({
@@ -404,6 +421,26 @@ export function ProductShell({
             <TodayView
               items={todayItems}
               status={todayStatus}
+              leadingAction={
+                canGiveServiceFeedback ? (
+                  <ServiceFeedbackPrompt
+                    key={assignment.assignment_id}
+                    serviceClient={serviceClient}
+                    materialClient={materialClient}
+                    clientFeedbackIdFactory={clientIdFactory}
+                    uploadIdFactory={uploadIdFactory}
+                    onActiveChange={setServicePromptActive}
+                  />
+                ) : null
+              }
+              leadingActionActive={servicePromptActive}
+              roleAction={todayRoleAction}
+              onRoleAction={(action) => {
+                setDraft(action.prompt);
+                setPendingSubmission(null);
+                setReceipt(null);
+                requestAnimationFrame(() => composerRef.current?.focus());
+              }}
               onOpenRecord={(id) => void openRecord(id)}
               onRetry={() => void loadToday()}
             />

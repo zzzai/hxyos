@@ -19,6 +19,9 @@ from hxy_product.service_repository import (
 
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATION = ROOT / "data" / "migrations" / "024_hxy_service_context.sql"
+FEEDBACK_MIGRATION = (
+    ROOT / "data" / "migrations" / "025_hxy_service_feedback_optional_text.sql"
+)
 ACCOUNT_ID = "11000000-0000-0000-0000-000000000001"
 ASSIGNMENT_ID = "22000000-0000-0000-0000-000000000001"
 ORGANIZATION_ID = "33000000-0000-0000-0000-000000000001"
@@ -322,6 +325,47 @@ def test_feedback_is_linked_without_exposing_or_accepting_identity_scope() -> No
     }
 
 
+def test_voice_only_feedback_is_accepted_as_a_protected_asset() -> None:
+    client, repository = build_client()
+    client_feedback_id = str(uuid4())
+    source_asset_id = str(uuid4())
+
+    response = client.request(
+        "POST",
+        f"/api/v1/service-contexts/{CONTEXT_ID}/feedback",
+        headers=bearer(),
+        json={
+            "client_feedback_id": client_feedback_id,
+            "text": "",
+            "source_asset_ids": [source_asset_id],
+        },
+    )
+
+    assert response.status_code == 201
+    assert repository.feedback_calls[0]["payload"]["text"] == ""
+    assert repository.feedback_calls[0]["payload"]["source_asset_ids"] == [
+        source_asset_id
+    ]
+
+
+def test_feedback_requires_text_or_a_protected_asset() -> None:
+    client, repository = build_client()
+
+    response = client.request(
+        "POST",
+        f"/api/v1/service-contexts/{CONTEXT_ID}/feedback",
+        headers=bearer(),
+        json={
+            "client_feedback_id": str(uuid4()),
+            "text": "",
+            "source_asset_ids": [],
+        },
+    )
+
+    assert response.status_code == 422
+    assert repository.feedback_calls == []
+
+
 def test_manager_reconciliation_hashes_external_refs_before_repository() -> None:
     client, repository = build_client(role="store_manager")
 
@@ -409,4 +453,12 @@ def test_migration_defines_reconcilable_contexts_and_immutable_identity_hints() 
     assert "external_identifier_hash" in sql
     assert "external_identifier" not in sql.replace("external_identifier_hash", "")
     assert "phone" not in sql.lower()
+    assert "/root/htops" not in sql
+
+
+def test_followup_migration_allows_asset_only_feedback_text() -> None:
+    sql = FEEDBACK_MIGRATION.read_text(encoding="utf-8")
+
+    assert "ALTER TABLE hxy_service_feedback" in sql
+    assert "char_length(btrim(feedback_text)) BETWEEN 0 AND 4000" in sql
     assert "/root/htops" not in sql

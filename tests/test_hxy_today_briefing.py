@@ -191,13 +191,24 @@ class IdentityRepository:
 
 
 class BriefingRepository:
-    def __init__(self, records: list[dict[str, Any]]) -> None:
+    def __init__(
+        self,
+        records: list[dict[str, Any]],
+        *,
+        closing_review_exists: bool = False,
+    ) -> None:
         self.records = records
+        self.closing_review_exists = closing_review_exists
         self.scopes: list[dict[str, Any]] = []
+        self.closing_review_scopes: list[dict[str, Any]] = []
 
     def list_briefing_records(self, **scope: Any) -> list[dict[str, Any]]:
         self.scopes.append(scope)
         return self.records
+
+    def has_today_closing_review(self, **scope: Any) -> bool:
+        self.closing_review_scopes.append(scope)
+        return self.closing_review_exists
 
 
 class RouteClient:
@@ -269,6 +280,78 @@ def test_today_route_uses_role_scope_and_hard_maximum_of_three(tmp_path: Path) -
     assert rejected.status_code == 422
 
 
+def test_store_manager_gets_one_closing_review_action_and_two_brief_items(
+    tmp_path: Path,
+) -> None:
+    repository = BriefingRepository(
+        [
+            interpreted_record(
+                record_id=f"20000000-0000-0000-0000-00000000000{index}",
+                progress=[
+                    {
+                        "statement": f"进展 {index}",
+                        "evidence": [
+                            evidence(
+                                record_id=f"20000000-0000-0000-0000-00000000000{index}",
+                                quote=f"进展依据 {index}",
+                            )
+                        ],
+                    }
+                ],
+            )
+            for index in range(1, 4)
+        ]
+    )
+    assignment = RouteAssignment(
+        assignment_id=FOUNDER_ID,
+        store_id="store-1",
+        store_name="荷小悦首店",
+        role="store_manager",
+    )
+    client = briefing_client(tmp_path, repository, assignment)
+
+    response = client.get(
+        "/api/v1/today?limit=3",
+        headers={"Authorization": "Bearer valid-session"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["role_action"] == {
+        "type": "closing_review",
+        "label": "记录闭店复盘",
+        "prompt": "闭店复盘：",
+    }
+    assert len(payload["items"]) == 2
+    assert repository.closing_review_scopes == [
+        {
+            "organization_id": ORGANIZATION_ID,
+            "store_id": "store-1",
+        }
+    ]
+
+
+def test_manager_closing_review_action_disappears_after_store_review_exists(
+    tmp_path: Path,
+) -> None:
+    repository = BriefingRepository([], closing_review_exists=True)
+    assignment = RouteAssignment(
+        assignment_id=FOUNDER_ID,
+        store_id="store-1",
+        store_name="荷小悦首店",
+        role="store_manager",
+    )
+    client = briefing_client(tmp_path, repository, assignment)
+
+    response = client.get(
+        "/api/v1/today",
+        headers={"Authorization": "Bearer valid-session"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["role_action"] is None
+
+
 def test_system_admin_cannot_read_today(tmp_path: Path) -> None:
     repository = BriefingRepository([])
     client = briefing_client(
@@ -292,6 +375,9 @@ class QueryResult:
 
     def fetchall(self) -> list[dict[str, Any]]:
         return self.rows
+
+    def fetchone(self) -> dict[str, Any] | None:
+        return self.rows[0] if self.rows else None
 
 
 class RecordingConnection:
@@ -376,3 +462,25 @@ def test_briefing_query_prioritizes_evidenced_items_before_freshness_window() ->
     assert "evidence_ordinality <= 5" in sql
     assert "CURRENT_TIMESTAMP - INTERVAL '30 days'" in sql
     assert priority_position < freshness_position
+
+
+def test_closing_review_query_is_store_scoped_and_uses_a_canonical_marker() -> None:
+    from apps.api.hxy_product.briefing_repository import BriefingRepository as Repository
+
+    connection = RecordingConnection()
+    repository = Repository("postgresql://briefing.test/hxy")
+    repository.connect = lambda: connection
+
+    exists = repository.has_today_closing_review(
+        organization_id=ORGANIZATION_ID,
+        store_id="store-1",
+    )
+
+    sql, params = connection.executed[0]
+    assert exists is False
+    assert "envelope.organization_id = %s::uuid" in sql
+    assert "envelope.store_id = %s" in sql
+    assert "assignment.role = 'store_manager'" in sql
+    assert "BTRIM(envelope.raw_text) LIKE %s" in sql
+    assert "Asia/Shanghai" in sql
+    assert params == (ORGANIZATION_ID, "store-1", "闭店复盘：%")

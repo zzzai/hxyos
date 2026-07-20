@@ -6,6 +6,7 @@ import type { MeResponse } from "../../api/client";
 import type { ConversationClient } from "../../api/conversations";
 import type { MaterialClient } from "../../api/materials";
 import type { LearningClient } from "../../api/learning";
+import type { ServiceClient, ServiceContext } from "../../api/services";
 import type {
   OrganizationRecord,
   OrganizationRecordClient,
@@ -31,6 +32,8 @@ const TEST_SESSION = {
       "records:create",
       "records:read",
       "training:practice",
+      "services:feedback",
+      "services:read",
     ],
   },
   available_assignments: [],
@@ -134,8 +137,37 @@ function brief(index: number): TodayBriefItem {
   };
 }
 
-function todayClient(items = [brief(1), brief(2), brief(3), brief(4)]): TodayClient {
-  return { getToday: vi.fn().mockResolvedValue({ items }) };
+function todayClient(
+  items = [brief(1), brief(2), brief(3), brief(4)],
+  roleAction: Awaited<ReturnType<TodayClient["getToday"]>>["role_action"] = null,
+): TodayClient {
+  return { getToday: vi.fn().mockResolvedValue({ items, role_action: roleAction }) };
+}
+
+function serviceClient(contexts: ServiceContext[] = []): ServiceClient {
+  return {
+    listRecent: vi.fn().mockResolvedValue({ contexts }),
+    addFeedback: vi.fn().mockResolvedValue({
+      feedback: {
+        id: "77000000-0000-0000-0000-000000000001",
+        context_id: contexts[0]?.id ?? "66000000-0000-0000-0000-000000000001",
+        status: "received",
+        created_at: "2026-07-21T10:05:00Z",
+      },
+      context: {
+        ...(contexts[0] ?? {
+          id: "66000000-0000-0000-0000-000000000001",
+          status: "provisional" as const,
+          occurred_at: "2026-07-21T09:00:00Z",
+          service_label: "足部舒缓服务",
+          customer_display: "顾客",
+          feedback_count: 0,
+          created_at: "2026-07-21T09:00:00Z",
+        }),
+        feedback_count: 1,
+      },
+    }),
+  };
 }
 
 function recordClient(
@@ -274,6 +306,7 @@ function shellElement(options: {
   conversations?: ConversationClient;
   materials?: MaterialClient;
   learning?: LearningClient;
+  services?: ServiceClient;
   logout?: () => Promise<void>;
   onLoggedOut?: () => void;
   onboardingClient?: undefined;
@@ -287,6 +320,7 @@ function shellElement(options: {
         conversationClient={options.conversations ?? conversationClient()}
         materialClient={options.materials ?? materialClient()}
         learningClient={options.learning ?? learningClient()}
+        serviceClient={options.services ?? serviceClient()}
         clientIdFactory={
           options.clientIdFactory ??
           (() => "15000000-0000-4000-8000-000000000001")
@@ -310,6 +344,69 @@ describe("minimal HXYOS frontstage", () => {
     const briefing = await screen.findByRole("list", { name: "今日重点" });
     expect(within(briefing).getAllByRole("listitem")).toHaveLength(3);
     expect(screen.queryByText("今日进展 4")).not.toBeInTheDocument();
+  });
+
+  it("shows one unfinished technician service and keeps Today to three actions", async () => {
+    const context: ServiceContext = {
+      id: "66000000-0000-0000-0000-000000000001",
+      status: "provisional",
+      occurred_at: "2026-07-21T09:00:00Z",
+      service_label: "足部舒缓服务",
+      customer_display: "王女士 · 尾号 1234",
+      feedback_count: 0,
+      created_at: "2026-07-21T09:00:00Z",
+    };
+    renderShell({ services: serviceClient([context]) });
+
+    expect(await screen.findByText("王女士 · 尾号 1234")).toBeVisible();
+    const briefing = screen.getByRole("list", { name: "今日重点" });
+    expect(within(briefing).getAllByRole("listitem")).toHaveLength(2);
+  });
+
+  it("lets a store manager start the server-derived closing review in the composer", async () => {
+    const user = userEvent.setup();
+    const records = recordClient();
+    const managerSession: MeResponse = {
+      ...TEST_SESSION,
+      user: { account_id: "account-manager", display_name: "周店长" },
+      active_assignment: {
+        ...TEST_SESSION.active_assignment,
+        assignment_id: "assignment-manager",
+        role: "store_manager",
+        role_label: "店长",
+        capabilities: [
+          "conversation:use",
+          "materials:create",
+          "materials:read",
+          "records:create",
+          "records:read",
+        ],
+      },
+    };
+    renderShell({
+      session: managerSession,
+      records,
+      today: todayClient([brief(1), brief(2), brief(3)], {
+        type: "closing_review",
+        label: "记录闭店复盘",
+        prompt: "闭店复盘：",
+      }),
+    });
+
+    await user.click(await screen.findByRole("button", { name: "记录闭店复盘" }));
+    const composer = screen.getByRole("textbox", {
+      name: "问问题，或记录刚刚发生的事",
+    });
+    expect(composer).toHaveValue("闭店复盘：");
+    await user.type(composer, "今日客流平稳，无未处理客诉。");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => expect(records.createRecord).toHaveBeenCalledOnce());
+    expect(records.createRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "闭店复盘：今日客流平稳，无未处理客诉。",
+      }),
+    );
   });
 
   it("persists and routes text without asking for a mode, category, or tag", async () => {

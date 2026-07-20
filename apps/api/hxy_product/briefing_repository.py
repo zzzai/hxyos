@@ -149,3 +149,34 @@ class BriefingRepository:
         with self.connect() as connection:
             rows = connection.execute(sql, params).fetchall()
         return [dict(row) for row in rows]
+
+    def has_today_closing_review(
+        self,
+        *,
+        organization_id: str,
+        store_id: str,
+    ) -> bool:
+        sql = """
+            SELECT EXISTS (
+              SELECT 1
+              FROM hxy_inbound_envelopes AS envelope
+              JOIN hxy_role_assignments AS assignment
+                ON assignment.organization_id = envelope.organization_id
+               AND assignment.assignment_id = envelope.sender_assignment_id
+              WHERE envelope.organization_id = %s::uuid
+                AND envelope.store_id = %s
+                AND envelope.intent_hint = 'organization_record'
+                AND assignment.role = 'store_manager'
+                AND BTRIM(envelope.raw_text) LIKE %s
+                AND envelope.received_at >= (
+                  date_trunc('day', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')
+                  AT TIME ZONE 'Asia/Shanghai'
+                )
+            ) AS exists
+        """
+        with self.connect() as connection:
+            row = connection.execute(
+                sql,
+                (organization_id, store_id, "闭店复盘：%"),
+            ).fetchone()
+        return bool(row and row.get("exists"))

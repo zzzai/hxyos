@@ -4,6 +4,7 @@ import {
   productTodayClient,
   TodayRequestError,
   type TodayNextAction,
+  type TodayRoleAction,
 } from "./today";
 
 const VALID_ITEM = {
@@ -45,6 +46,28 @@ describe("productTodayClient", () => {
     };
 
     expect(action.prompt).toBeNull();
+  });
+
+  it("accepts one server-derived manager role action", async () => {
+    const action: TodayRoleAction = {
+      type: "closing_review",
+      label: "记录闭店复盘",
+      prompt: "闭店复盘：",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(JSON.stringify({ items: [], role_action: action }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    await expect(productTodayClient.getToday()).resolves.toEqual({
+      items: [],
+      role_action: action,
+    });
   });
 
   it("loads no more than three briefing items with credentials", async () => {
@@ -129,6 +152,7 @@ describe("productTodayClient", () => {
       "malformed evidence",
       { items: [{ ...VALID_ITEM, evidence: [{}] }] },
     ],
+    ["a malformed role action", { items: [], role_action: {} }],
   ])("rejects %s in a success response", async (_name, payload) => {
     vi.stubGlobal(
       "fetch",

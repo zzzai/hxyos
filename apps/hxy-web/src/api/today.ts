@@ -22,8 +22,15 @@ export interface TodayBriefItem {
   next_action: TodayNextAction;
 }
 
+export interface TodayRoleAction {
+  type: "closing_review";
+  label: string;
+  prompt: string;
+}
+
 export interface TodayResponse {
   items: TodayBriefItem[];
+  role_action?: TodayRoleAction | null;
 }
 
 export interface TodayClient {
@@ -51,7 +58,10 @@ function isTodayResponse(value: unknown): value is TodayResponse {
   return (
     isRecord(value) &&
     Array.isArray(value.items) &&
-    value.items.every(isTodayBriefItem)
+    value.items.every(isTodayBriefItem) &&
+    (value.role_action === undefined ||
+      value.role_action === null ||
+      isTodayRoleAction(value.role_action))
   );
 }
 
@@ -86,6 +96,15 @@ function isTodayBriefItem(value: unknown): value is TodayBriefItem {
     (action.type === "open_record" || action.type === "ask_about_record") &&
     typeof action.label === "string" &&
     isNullableString(action.prompt)
+  );
+}
+
+function isTodayRoleAction(value: unknown): value is TodayRoleAction {
+  return (
+    isRecord(value) &&
+    value.type === "closing_review" &&
+    typeof value.label === "string" &&
+    typeof value.prompt === "string"
   );
 }
 

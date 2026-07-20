@@ -52,6 +52,26 @@ def create_briefing_router(
             )
         except RecordAccessDenied:
             raise HTTPException(status_code=403, detail="Forbidden") from None
-        return {"items": project_brief_items(records, limit=limit)}
+        role_action = None
+        if assignment.role == "store_manager" and assignment.store_id:
+            already_reviewed = repository.has_today_closing_review(
+                organization_id=assignment.organization_id,
+                store_id=assignment.store_id,
+            )
+            if not already_reviewed:
+                role_action = {
+                    "type": "closing_review",
+                    "label": "记录闭店复盘",
+                    "prompt": "闭店复盘：",
+                }
+        item_limit = limit - (1 if role_action else 0)
+        return {
+            "items": (
+                project_brief_items(records, limit=item_limit)
+                if item_limit > 0
+                else []
+            ),
+            "role_action": role_action,
+        }
 
     return router

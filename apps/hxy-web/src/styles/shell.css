@@ -461,6 +461,245 @@ a:focus-visible {
 
 /* Today */
 
+.service-feedback-prompt {
+  display: grid;
+  gap: 12px;
+  padding: 24px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.service-feedback-prompt > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.service-feedback-prompt > header span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.service-feedback-prompt > header h2 {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.service-feedback-prompt > header > strong {
+  flex: 0 1 auto;
+  max-width: 46%;
+  overflow-wrap: anywhere;
+  color: var(--color-accent);
+  font-size: 12px;
+  font-weight: 680;
+  line-height: 1.5;
+  text-align: right;
+}
+
+.service-feedback-prompt > label {
+  font-size: 13px;
+  font-weight: 680;
+}
+
+.service-feedback-prompt > textarea {
+  width: 100%;
+  min-height: 84px;
+  resize: vertical;
+  padding: 11px 12px;
+  color: var(--color-text);
+  font-size: 14px;
+  line-height: 1.6;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 6px;
+}
+
+.service-feedback-prompt > textarea::placeholder {
+  color: var(--color-subtle);
+}
+
+.service-feedback-prompt > textarea:hover,
+.service-feedback-prompt > textarea:focus {
+  border-color: var(--color-accent);
+}
+
+.service-feedback-actions {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.service-feedback-actions button,
+.service-feedback-retry,
+.service-feedback-prompt.is-error button {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 13px;
+  color: var(--color-text);
+  font-weight: 650;
+  white-space: nowrap;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 6px;
+  touch-action: manipulation;
+}
+
+.service-feedback-actions button:hover:not(:disabled),
+.service-feedback-retry:hover,
+.service-feedback-prompt.is-error button:hover {
+  border-color: var(--color-accent);
+}
+
+.service-feedback-actions button.is-recording {
+  color: var(--color-danger);
+  background: var(--color-danger-soft);
+  border-color: var(--color-danger);
+}
+
+.service-feedback-actions button svg,
+.service-feedback-retry svg,
+.service-feedback-prompt.is-error button svg {
+  width: 17px;
+  height: 17px;
+}
+
+.service-feedback-state {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.service-feedback-actions .service-feedback-submit {
+  min-width: 96px;
+  color: #ffffff;
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.service-feedback-actions .service-feedback-submit:hover:not(:disabled) {
+  background: var(--color-accent-strong);
+  border-color: var(--color-accent-strong);
+}
+
+.service-feedback-actions .service-feedback-submit:disabled {
+  color: #edf1ef;
+  background: var(--color-disabled);
+  border-color: var(--color-disabled);
+}
+
+.service-feedback-retry {
+  width: fit-content;
+}
+
+.service-feedback-error,
+.service-feedback-prompt.is-error p {
+  margin: 0;
+  color: var(--color-danger);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.service-feedback-prompt.is-error {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.service-feedback-prompt.is-complete {
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 11px;
+  color: var(--color-accent);
+}
+
+.service-feedback-prompt.is-complete > svg {
+  width: 22px;
+  height: 22px;
+  stroke-width: 1.8;
+}
+
+.service-feedback-prompt.is-complete > div {
+  display: grid;
+  gap: 2px;
+}
+
+.service-feedback-prompt.is-complete strong {
+  font-size: 14px;
+}
+
+.service-feedback-prompt.is-complete span {
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.today-role-action {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) 18px;
+  width: 100%;
+  min-height: 88px;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 6px;
+  color: var(--color-text);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--color-border);
+  touch-action: manipulation;
+}
+
+.today-role-action:hover {
+  background: rgb(255 255 255 / 58%);
+}
+
+.today-role-action > svg:first-child {
+  width: 21px;
+  height: 21px;
+  color: var(--color-accent);
+  stroke-width: 1.7;
+}
+
+.today-role-action > svg:last-child {
+  width: 18px;
+  height: 18px;
+  color: var(--color-subtle);
+  stroke-width: 1.7;
+}
+
+.today-role-action > span {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.today-role-action strong,
+.today-role-action small {
+  overflow-wrap: anywhere;
+}
+
+.today-role-action strong {
+  font-size: 15px;
+  font-weight: 680;
+  line-height: 1.4;
+}
+
+.today-role-action small {
+  color: var(--color-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .briefing-list,
 .record-list,
 .message-thread {
@@ -1831,6 +2070,44 @@ a:focus-visible {
   .learning-progress > div {
     display: grid;
     gap: 5px;
+  }
+
+  .service-feedback-prompt {
+    gap: 11px;
+    padding: 20px 0;
+  }
+
+  .service-feedback-prompt > header {
+    gap: 12px;
+  }
+
+  .service-feedback-prompt > header > strong {
+    max-width: 42%;
+  }
+
+  .service-feedback-prompt > textarea {
+    min-height: 90px;
+  }
+
+  .service-feedback-actions {
+    grid-template-columns: auto minmax(0, 1fr) minmax(92px, auto);
+    gap: 8px;
+  }
+
+  .service-feedback-actions button,
+  .service-feedback-retry,
+  .service-feedback-prompt.is-error button {
+    min-height: 44px;
+  }
+
+  .service-feedback-actions .service-feedback-submit {
+    min-width: 92px;
+  }
+
+  .today-role-action {
+    min-height: 88px;
+    gap: 11px;
+    padding: 15px 2px;
   }
 
   .briefing-list button {
