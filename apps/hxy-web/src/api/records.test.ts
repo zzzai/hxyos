@@ -2,11 +2,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { productMaterialClient } from "./materials";
 import {
+  OrganizationRecordInputError,
   OrganizationRecordRequestError,
   productRecordClient,
   type RecordEvidence,
 } from "./records";
 
+const RECORD_ID = "12000000-0000-4000-8000-000000000001";
+const ASSET_ID = "13000000-0000-4000-8000-000000000001";
+const UPLOAD_ID = "14000000-0000-4000-8000-000000000001";
 
 function jsonResponse(payload: unknown, status = 200) {
   return new Response(JSON.stringify(payload), {
@@ -49,6 +53,19 @@ describe("productRecordClient", () => {
     );
   });
 
+  it("uses the default list limit for non-finite input", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({ records: [] }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await productRecordClient.listRecords(Number.NaN);
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/api/v1/organization-records?limit=50",
+    );
+  });
+
   it("encodes a record id before requesting detail", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       jsonResponse({ record: {} }),
@@ -69,9 +86,9 @@ describe("productRecordClient", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await productRecordClient.createRecord({
-      clientRecordId: "record-1",
+      clientRecordId: RECORD_ID,
       text: "装修群记录",
-      sourceAssetIds: ["asset-1"],
+      sourceAssetIds: [ASSET_ID],
     });
 
     const [path, init] = fetchMock.mock.calls[0];
@@ -83,10 +100,24 @@ describe("productRecordClient", () => {
       "application/json",
     );
     expect(JSON.parse(String(init?.body))).toEqual({
-      client_record_id: "record-1",
+      client_record_id: RECORD_ID,
       text: "装修群记录",
-      source_asset_ids: ["asset-1"],
+      source_asset_ids: [ASSET_ID],
     });
+  });
+
+  it("rejects an invalid capture before making a request", async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      productRecordClient.createRecord({
+        clientRecordId: "not-a-uuid",
+        text: " ",
+        sourceAssetIds: [],
+      }),
+    ).rejects.toBeInstanceOf(OrganizationRecordInputError);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("uploads a file and then captures it as one organization record", async () => {
@@ -95,7 +126,7 @@ describe("productRecordClient", () => {
       .mockResolvedValueOnce(
         jsonResponse({
           material: {
-            id: "asset-1",
+            id: ASSET_ID,
             file_name: "装修记录.txt",
             media_type: "text/plain",
             size_bytes: 12,
@@ -129,10 +160,10 @@ describe("productRecordClient", () => {
     const material = await productMaterialClient.uploadMaterial(
       file,
       "",
-      "upload-1",
+      UPLOAD_ID,
     );
     await productRecordClient.createRecord({
-      clientRecordId: "record-1",
+      clientRecordId: RECORD_ID,
       text: "",
       sourceAssetIds: [material.material.id],
     });
@@ -141,21 +172,23 @@ describe("productRecordClient", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/materials");
     expect(fetchMock.mock.calls[1][0]).toBe("/api/v1/organization-records");
     expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toEqual({
-      client_record_id: "record-1",
+      client_record_id: RECORD_ID,
       text: "",
-      source_asset_ids: ["asset-1"],
+      source_asset_ids: [ASSET_ID],
     });
   });
 
   it("preserves the response status on request failure", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({}, 409)),
+      vi.fn<typeof fetch>().mockResolvedValue(
+        jsonResponse({ detail: "Idempotency key conflict" }, 409),
+      ),
     );
 
     await expect(
       productRecordClient.createRecord({
-        clientRecordId: "duplicate",
+        clientRecordId: RECORD_ID,
         text: "重复提交",
         sourceAssetIds: [],
       }),
@@ -163,6 +196,27 @@ describe("productRecordClient", () => {
       expect.objectContaining<Partial<OrganizationRecordRequestError>>({
         name: "OrganizationRecordRequestError",
         status: 409,
+        detail: "Idempotency key conflict",
+      }),
+    );
+  });
+
+  it("normalizes a malformed success response to the client error type", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(
+        new Response("not-json", {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    await expect(productRecordClient.listRecords()).rejects.toEqual(
+      expect.objectContaining<Partial<OrganizationRecordRequestError>>({
+        name: "OrganizationRecordRequestError",
+        status: 200,
+        detail: "Invalid organization record response",
       }),
     );
   });

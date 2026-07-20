@@ -32,22 +32,71 @@ export interface TodayClient {
 
 export class TodayRequestError extends Error {
   readonly status: number;
+  readonly detail: string;
 
-  constructor(status: number) {
-    super("Today request failed");
+  constructor(status: number, detail = "Today request failed") {
+    super(detail);
     this.name = "TodayRequestError";
     this.status = status;
+    this.detail = detail;
   }
+}
+
+function boundedLimit(value: number): number {
+  if (!Number.isFinite(value)) return 3;
+  return Math.max(1, Math.min(Math.trunc(value), 3));
+}
+
+function isTodayResponse(value: unknown): value is TodayResponse {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "items" in value &&
+    Array.isArray(value.items)
+  );
+}
+
+function responseDetail(payload: unknown, fallback: string): string {
+  if (
+    typeof payload === "object" &&
+    payload !== null &&
+    "detail" in payload &&
+    typeof payload.detail === "string" &&
+    payload.detail.trim()
+  ) {
+    return payload.detail.trim();
+  }
+  return fallback;
 }
 
 export const productTodayClient: TodayClient = {
   getToday: async (limit = 3) => {
-    const boundedLimit = Math.max(1, Math.min(Math.trunc(limit), 3));
-    const response = await fetch(`/api/v1/today?limit=${boundedLimit}`, {
+    const normalizedLimit = boundedLimit(limit);
+    const response = await fetch(`/api/v1/today?limit=${normalizedLimit}`, {
       credentials: "include",
       headers: { Accept: "application/json" },
     });
-    if (!response.ok) throw new TodayRequestError(response.status);
-    return (await response.json()) as TodayResponse;
+    if (!response.ok) {
+      let payload: unknown = null;
+      try {
+        payload = await response.json();
+      } catch {
+        // The HTTP status remains authoritative when the error body is not JSON.
+      }
+      throw new TodayRequestError(
+        response.status,
+        responseDetail(payload, "Today request failed"),
+      );
+    }
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      throw new TodayRequestError(response.status, "Invalid Today response");
+    }
+    if (!isTodayResponse(payload)) {
+      throw new TodayRequestError(response.status, "Invalid Today response");
+    }
+    return payload;
   },
 };

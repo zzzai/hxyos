@@ -85,15 +85,60 @@ export interface OrganizationRecordClient {
 
 export class OrganizationRecordRequestError extends Error {
   readonly status: number;
+  readonly detail: string;
 
-  constructor(status: number) {
-    super("Organization record request failed");
+  constructor(status: number, detail = "Organization record request failed") {
+    super(detail);
     this.name = "OrganizationRecordRequestError";
     this.status = status;
+    this.detail = detail;
   }
 }
 
-async function recordRequest<T>(path: string, init?: RequestInit): Promise<T> {
+export class OrganizationRecordInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "OrganizationRecordInputError";
+  }
+}
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function boundedLimit(value: number, fallback: number, maximum: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(1, Math.min(Math.trunc(value), maximum));
+}
+
+function responseDetail(payload: unknown, fallback: string): string {
+  if (
+    typeof payload === "object" &&
+    payload !== null &&
+    "detail" in payload &&
+    typeof payload.detail === "string" &&
+    payload.detail.trim()
+  ) {
+    return payload.detail.trim();
+  }
+  return fallback;
+}
+
+async function parseJson(
+  response: Response,
+  invalidDetail: string,
+): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    throw new OrganizationRecordRequestError(response.status, invalidDetail);
+  }
+}
+
+async function recordRequest<T>(
+  path: string,
+  init: RequestInit | undefined,
+  validate: (payload: unknown) => boolean,
+): Promise<T> {
   const headers = new Headers(init?.headers);
   headers.set("Accept", "application/json");
   const response = await fetch(path, {
@@ -101,29 +146,87 @@ async function recordRequest<T>(path: string, init?: RequestInit): Promise<T> {
     credentials: "include",
     headers,
   });
-  if (!response.ok) throw new OrganizationRecordRequestError(response.status);
-  return (await response.json()) as T;
+  if (!response.ok) {
+    let payload: unknown = null;
+    try {
+      payload = await response.json();
+    } catch {
+      // The HTTP status remains authoritative when the error body is not JSON.
+    }
+    throw new OrganizationRecordRequestError(
+      response.status,
+      responseDetail(payload, "Organization record request failed"),
+    );
+  }
+  const payload = await parseJson(response, "Invalid organization record response");
+  if (!validate(payload)) {
+    throw new OrganizationRecordRequestError(
+      response.status,
+      "Invalid organization record response",
+    );
+  }
+  return payload as T;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isRecordResponse(value: unknown): boolean {
+  return isRecord(value) && isRecord(value.record);
+}
+
+function isRecordListResponse(value: unknown): boolean {
+  return isRecord(value) && Array.isArray(value.records);
+}
+
+function validateCreateRequest(request: CreateOrganizationRecordRequest): void {
+  if (!UUID_PATTERN.test(request.clientRecordId)) {
+    throw new OrganizationRecordInputError("clientRecordId must be a UUID");
+  }
+  if (request.text.length > 20_000) {
+    throw new OrganizationRecordInputError("text exceeds 20000 characters");
+  }
+  if (request.sourceAssetIds.length > 20) {
+    throw new OrganizationRecordInputError("sourceAssetIds exceeds 20 items");
+  }
+  if (request.sourceAssetIds.some((assetId) => !UUID_PATTERN.test(assetId))) {
+    throw new OrganizationRecordInputError("sourceAssetIds must contain UUIDs");
+  }
+  if (!request.text.trim() && request.sourceAssetIds.length === 0) {
+    throw new OrganizationRecordInputError("text or sourceAssetIds is required");
+  }
 }
 
 export const productRecordClient: OrganizationRecordClient = {
   listRecords: (limit = 50) => {
-    const boundedLimit = Math.max(1, Math.min(Math.trunc(limit), 100));
+    const normalizedLimit = boundedLimit(limit, 50, 100);
     return recordRequest<OrganizationRecordListResponse>(
-      `/api/v1/organization-records?limit=${boundedLimit}`,
+      `/api/v1/organization-records?limit=${normalizedLimit}`,
+      undefined,
+      isRecordListResponse,
     );
   },
   getRecord: (recordId) =>
     recordRequest<OrganizationRecordResponse>(
       `/api/v1/organization-records/${encodeURIComponent(recordId)}`,
+      undefined,
+      isRecordResponse,
     ),
-  createRecord: (request) =>
-    recordRequest<OrganizationRecordResponse>("/api/v1/organization-records", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        client_record_id: request.clientRecordId,
-        text: request.text,
-        source_asset_ids: request.sourceAssetIds,
-      }),
-    }),
+  createRecord: async (request) => {
+    validateCreateRequest(request);
+    return recordRequest<OrganizationRecordResponse>(
+      "/api/v1/organization-records",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_record_id: request.clientRecordId,
+          text: request.text,
+          source_asset_ids: request.sourceAssetIds,
+        }),
+      },
+      isRecordResponse,
+    );
+  },
 };
