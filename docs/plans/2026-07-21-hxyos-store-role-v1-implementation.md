@@ -135,7 +135,7 @@
 ### Task 7: Add Provisional Service Context And Customer Identity
 
 **Files:**
-- Create: `apps/api/migrations/023_hxy_service_context.sql`
+- Create: `data/migrations/024_hxy_service_context.sql`
 - Create: `apps/api/hxy_product/service_schemas.py`
 - Create: `apps/api/hxy_product/service_repository.py`
 - Create: `apps/api/hxy_product/service_routes.py`

@@ -115,6 +115,8 @@ from hxy_product.record_repository import RecordRepository
 from hxy_product.record_routes import create_record_router
 from hxy_product.repository import IdentityRepository
 from hxy_product.routes import assignment_for_principal, create_identity_router
+from hxy_product.service_repository import ServiceRepository
+from hxy_product.service_routes import create_service_router
 from hxy_product.task_repository import TaskRepository
 from hxy_product.task_routes import create_task_router
 from hxy_product.training_repository import ProductTrainingRepository
@@ -812,6 +814,15 @@ def _default_product_training_repository_factory(database_url: str) -> Repositor
         if not database_url:
             raise HTTPException(status_code=503, detail="HXY_DATABASE_URL is not configured")
         return ProductTrainingRepository(database_url)
+
+    return make_repository
+
+
+def _default_service_repository_factory(database_url: str) -> RepositoryFactory:
+    def make_repository() -> ServiceRepository:
+        if not database_url:
+            raise HTTPException(status_code=503, detail="HXY_DATABASE_URL is not configured")
+        return ServiceRepository(database_url)
 
     return make_repository
 
@@ -4058,6 +4069,8 @@ def create_app(
     evidence_repository_factory: RepositoryFactory | None = None,
     operating_service_builder: Callable[[Any], Any] | None = None,
     product_training_repository_factory: RepositoryFactory | None = None,
+    service_repository_factory: RepositoryFactory | None = None,
+    service_identity_hmac_key: str | None = None,
     journey_training_evaluator: Callable[..., dict[str, Any]] | None = None,
     material_understanding_builder: Callable[..., dict[str, Any]] | None = None,
     product_auth_settings: ProductAuthSettings | None = None,
@@ -4136,6 +4149,15 @@ def create_app(
     make_product_training_repository = (
         product_training_repository_factory
         or _default_product_training_repository_factory(settings.database_url)
+    )
+    make_service_repository = (
+        service_repository_factory
+        or _default_service_repository_factory(settings.database_url)
+    )
+    resolved_service_identity_hmac_key = (
+        service_identity_hmac_key
+        if service_identity_hmac_key is not None
+        else os.environ.get("HXY_SERVICE_IDENTITY_HMAC_KEY", "")
     )
     del material_understanding_builder
     resolved_product_auth_settings = product_auth_settings or ProductAuthSettings.from_environment()
@@ -4383,6 +4405,13 @@ def create_app(
             make_product_identity_repository,
             make_product_training_repository,
             resolved_journey_training_evaluator,
+        )
+    )
+    app.include_router(
+        create_service_router(
+            make_product_identity_repository,
+            make_service_repository,
+            identity_hmac_key=resolved_service_identity_hmac_key,
         )
     )
 
