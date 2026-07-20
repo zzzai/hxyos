@@ -131,6 +131,18 @@ def test_record_projection_keeps_original_and_interpretation_separate() -> None:
     assert "storage_key" not in record["original"]["assets"][0]
 
 
+def test_record_projection_bounds_original_text_to_public_contract() -> None:
+    from apps.api.hxy_product.record_repository import public_record
+    from apps.api.hxy_product.record_schemas import OrganizationRecord
+
+    raw_text = "原" * 20_001
+
+    record = public_record(record_row(raw_text=raw_text))
+
+    assert record["original"]["text"] == raw_text[:20_000]
+    OrganizationRecord.model_validate(record)
+
+
 def test_record_projection_forces_official_knowledge_false_for_json_payload() -> None:
     from apps.api.hxy_product.record_repository import public_record
 

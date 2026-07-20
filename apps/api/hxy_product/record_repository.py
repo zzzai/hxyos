@@ -229,7 +229,11 @@ def _public_interpretation(row: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def public_record(row: dict[str, Any]) -> dict[str, Any]:
-    raw_text = row.get("raw_text") if isinstance(row.get("raw_text"), str) else ""
+    raw_text = (
+        row.get("raw_text")[:20_000]
+        if isinstance(row.get("raw_text"), str)
+        else ""
+    )
     assets = [
         normalized
         for candidate in _json_list(row.get("assets"))[:100]
