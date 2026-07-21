@@ -73,6 +73,7 @@ class AddServiceFeedbackRequest(StrictServiceModel):
     client_feedback_id: UUID
     text: str = Field(default="", max_length=4000)
     source_asset_ids: list[UUID] = Field(default_factory=list, max_length=10)
+    duration_ms: int = Field(ge=0, le=86_400_000)
 
     @field_validator("text")
     @classmethod

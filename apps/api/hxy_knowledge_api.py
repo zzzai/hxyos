@@ -111,6 +111,8 @@ from hxy_product.onboarding_routes import create_onboarding_router, validate_pub
 from hxy_product.operating_repository import OperatingRepository
 from hxy_product.operating_routes import create_operating_router
 from hxy_product.operating_service import OperatingService
+from hxy_product.product_event_repository import ProductEventRepository
+from hxy_product.product_event_routes import create_product_event_router
 from hxy_product.record_repository import RecordRepository
 from hxy_product.record_routes import create_record_router
 from hxy_product.repository import IdentityRepository
@@ -823,6 +825,15 @@ def _default_service_repository_factory(database_url: str) -> RepositoryFactory:
         if not database_url:
             raise HTTPException(status_code=503, detail="HXY_DATABASE_URL is not configured")
         return ServiceRepository(database_url)
+
+    return make_repository
+
+
+def _default_product_event_repository_factory(database_url: str) -> RepositoryFactory:
+    def make_repository() -> ProductEventRepository:
+        if not database_url:
+            raise HTTPException(status_code=503, detail="HXY_DATABASE_URL is not configured")
+        return ProductEventRepository(database_url)
 
     return make_repository
 
@@ -4070,6 +4081,7 @@ def create_app(
     operating_service_builder: Callable[[Any], Any] | None = None,
     product_training_repository_factory: RepositoryFactory | None = None,
     service_repository_factory: RepositoryFactory | None = None,
+    product_event_repository_factory: RepositoryFactory | None = None,
     service_identity_hmac_key: str | None = None,
     journey_training_evaluator: Callable[..., dict[str, Any]] | None = None,
     material_understanding_builder: Callable[..., dict[str, Any]] | None = None,
@@ -4153,6 +4165,10 @@ def create_app(
     make_service_repository = (
         service_repository_factory
         or _default_service_repository_factory(settings.database_url)
+    )
+    make_product_event_repository = (
+        product_event_repository_factory
+        or _default_product_event_repository_factory(settings.database_url)
     )
     resolved_service_identity_hmac_key = (
         service_identity_hmac_key
@@ -4412,6 +4428,12 @@ def create_app(
             make_product_identity_repository,
             make_service_repository,
             identity_hmac_key=resolved_service_identity_hmac_key,
+        )
+    )
+    app.include_router(
+        create_product_event_router(
+            make_product_identity_repository,
+            make_product_event_repository,
         )
     )
 

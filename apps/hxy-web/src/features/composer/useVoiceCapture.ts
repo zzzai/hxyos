@@ -214,15 +214,18 @@ export function useVoiceCapture({
   }, [releaseStream, stopTimer]);
 
   useEffect(
-    () => () => {
-      mountedRef.current = false;
-      requestRef.current += 1;
-      canceledRef.current = true;
-      stopTimer();
-      const recorder = recorderRef.current;
-      if (recorder?.state === "recording") recorder.stop();
-      recorderRef.current = null;
-      releaseStream();
+    () => {
+      mountedRef.current = true;
+      return () => {
+        mountedRef.current = false;
+        requestRef.current += 1;
+        canceledRef.current = true;
+        stopTimer();
+        const recorder = recorderRef.current;
+        if (recorder?.state === "recording") recorder.stop();
+        recorderRef.current = null;
+        releaseStream();
+      };
     },
     [releaseStream, stopTimer],
   );

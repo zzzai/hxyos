@@ -102,6 +102,7 @@ describe("productRecordClient", () => {
       clientRecordId: RECORD_ID,
       text: "装修群记录",
       sourceAssetIds: [ASSET_ID],
+      purpose: "closing_review",
     });
 
     const [path, init] = fetchMock.mock.calls[0];
@@ -116,6 +117,7 @@ describe("productRecordClient", () => {
       client_record_id: RECORD_ID,
       text: "装修群记录",
       source_asset_ids: [ASSET_ID],
+      purpose: "closing_review",
     });
   });
 
@@ -188,6 +190,7 @@ describe("productRecordClient", () => {
       client_record_id: RECORD_ID,
       text: "",
       source_asset_ids: [ASSET_ID],
+      purpose: "general",
     });
   });
 

@@ -68,6 +68,7 @@ def feedback_request_fingerprint(payload: dict[str, Any]) -> str:
         "client_feedback_id": str(payload.get("client_feedback_id") or ""),
         "text": str(payload.get("text") or "").strip(),
         "source_asset_ids": sorted(str(item) for item in payload.get("source_asset_ids") or []),
+        "duration_ms": int(payload.get("duration_ms") or 0),
     }
     encoded = json.dumps(
         canonical,
@@ -309,9 +310,10 @@ class ServiceRepository:
                       created_by_assignment_id,
                       client_feedback_id,
                       feedback_text,
-                      request_fingerprint
+                      request_fingerprint,
+                      duration_ms
                     )
-                    VALUES (%s::uuid, %s, %s::uuid, %s::uuid, %s::uuid, %s, %s)
+                    VALUES (%s::uuid, %s, %s::uuid, %s::uuid, %s::uuid, %s, %s, %s)
                     RETURNING service_feedback_id::text AS id,
                               service_context_id::text AS context_id,
                               created_at
@@ -324,6 +326,7 @@ class ServiceRepository:
                         payload["client_feedback_id"],
                         payload["text"],
                         fingerprint,
+                        payload["duration_ms"],
                     ),
                 ).fetchone()
                 assert inserted is not None

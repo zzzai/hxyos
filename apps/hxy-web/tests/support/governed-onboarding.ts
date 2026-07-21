@@ -467,7 +467,7 @@ export async function expectAboveMobileNavigation(
   await locator.scrollIntoViewIfNeeded();
   const box = await locator.boundingBox();
   const navigationBox = await page
-    .getByRole("navigation", { name: "主要导航" })
+    .getByRole("navigation", { name: "移动端导航" })
     .boundingBox();
   expect(box).not.toBeNull();
   expect(navigationBox).not.toBeNull();

@@ -464,7 +464,7 @@ def test_briefing_query_prioritizes_evidenced_items_before_freshness_window() ->
     assert priority_position < freshness_position
 
 
-def test_closing_review_query_is_store_scoped_and_uses_a_canonical_marker() -> None:
+def test_closing_review_query_is_store_scoped_and_uses_structured_purpose() -> None:
     from apps.api.hxy_product.briefing_repository import BriefingRepository as Repository
 
     connection = RecordingConnection()
@@ -481,6 +481,7 @@ def test_closing_review_query_is_store_scoped_and_uses_a_canonical_marker() -> N
     assert "envelope.organization_id = %s::uuid" in sql
     assert "envelope.store_id = %s" in sql
     assert "assignment.role = 'store_manager'" in sql
-    assert "BTRIM(envelope.raw_text) LIKE %s" in sql
+    assert "envelope.raw_payload ->> 'purpose' = 'closing_review'" in sql
+    assert "BTRIM(envelope.raw_text) LIKE" not in sql
     assert "Asia/Shanghai" in sql
-    assert params == (ORGANIZATION_ID, "store-1", "闭店复盘：%")
+    assert params == (ORGANIZATION_ID, "store-1")

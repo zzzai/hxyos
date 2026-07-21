@@ -61,6 +61,7 @@ interface PendingSubmissionState {
   text: string;
   file: File | null;
   recordPersisted: boolean;
+  purpose: "general" | "closing_review";
 }
 
 export function ProductShell({
@@ -91,6 +92,9 @@ export function ProductShell({
     canReadRecords ? "today" : canAsk ? "conversation" : "me",
   );
   const [draft, setDraft] = useState("");
+  const [recordPurpose, setRecordPurpose] = useState<"general" | "closing_review">(
+    "general",
+  );
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadedAsset, setUploadedAsset] = useState<UploadedAssetState | null>(null);
   const [pendingSubmission, setPendingSubmission] =
@@ -226,6 +230,7 @@ export function ProductShell({
     setActiveView(canReadRecords ? "today" : canAsk ? "conversation" : "me");
     setContextRecord(null);
     setReceipt(null);
+    setRecordPurpose("general");
     composerRef.current?.focus();
     requestAnimationFrame(() => composerRef.current?.focus());
   };
@@ -292,7 +297,9 @@ export function ProductShell({
     if ((!text && !file) || (!canCreateRecords && !canAsk)) return;
 
     const reusableSubmission =
-      pendingSubmission?.text === text && pendingSubmission.file === file
+      pendingSubmission?.text === text &&
+      pendingSubmission.file === file &&
+      pendingSubmission.purpose === recordPurpose
         ? pendingSubmission
         : null;
     const submission: PendingSubmissionState =
@@ -301,6 +308,7 @@ export function ProductShell({
         text,
         file,
         recordPersisted: false,
+        purpose: recordPurpose,
       };
     let recordPersisted = submission.recordPersisted;
 
@@ -334,6 +342,7 @@ export function ProductShell({
           clientRecordId: submission.id,
           text,
           sourceAssetIds,
+          purpose: submission.purpose,
         });
         recordPersisted = true;
         setPendingSubmission({ ...submission, recordPersisted: true });
@@ -374,7 +383,8 @@ export function ProductShell({
       setUploadedAsset(null);
       setPendingSubmission(null);
       setConversationStatus("idle");
-      if (text.startsWith("闭店复盘：")) setTodayRoleAction(null);
+      if (submission.purpose === "closing_review") setTodayRoleAction(null);
+      setRecordPurpose("general");
     } catch {
       setConversationStatus("idle");
       setReceipt({
@@ -437,6 +447,7 @@ export function ProductShell({
               roleAction={todayRoleAction}
               onRoleAction={(action) => {
                 setDraft(action.prompt);
+                setRecordPurpose("closing_review");
                 setPendingSubmission(null);
                 setReceipt(null);
                 requestAnimationFrame(() => composerRef.current?.focus());

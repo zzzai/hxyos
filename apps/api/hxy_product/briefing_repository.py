@@ -166,8 +166,8 @@ class BriefingRepository:
               WHERE envelope.organization_id = %s::uuid
                 AND envelope.store_id = %s
                 AND envelope.intent_hint = 'organization_record'
+                AND envelope.raw_payload ->> 'purpose' = 'closing_review'
                 AND assignment.role = 'store_manager'
-                AND BTRIM(envelope.raw_text) LIKE %s
                 AND envelope.received_at >= (
                   date_trunc('day', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')
                   AT TIME ZONE 'Asia/Shanghai'
@@ -177,6 +177,6 @@ class BriefingRepository:
         with self.connect() as connection:
             row = connection.execute(
                 sql,
-                (organization_id, store_id, "闭店复盘：%"),
+                (organization_id, store_id),
             ).fetchone()
         return bool(row and row.get("exists"))

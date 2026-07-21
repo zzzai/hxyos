@@ -5,7 +5,7 @@ import {
   Send,
   Square,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { MaterialClient } from "../../api/materials";
 import type { ServiceClient, ServiceContext } from "../../api/services";
@@ -36,6 +36,7 @@ export function ServiceFeedbackPrompt({
   const [loadStatus, setLoadStatus] = useState<LoadStatus>("loading");
   const [submitStatus, setSubmitStatus] = useState<SubmitStatus>("idle");
   const [message, setMessage] = useState("");
+  const feedbackStartedAtRef = useRef(Date.now());
 
   const load = useCallback(async () => {
     setLoadStatus("loading");
@@ -47,6 +48,7 @@ export function ServiceFeedbackPrompt({
       );
       onActiveChange?.(unfinished !== undefined);
       setContext(unfinished ?? null);
+      if (unfinished) feedbackStartedAtRef.current = Date.now();
       setLoadStatus("ready");
     } catch {
       onActiveChange?.(true);
@@ -102,11 +104,16 @@ export function ServiceFeedbackPrompt({
     setSubmitStatus("submitting");
     setMessage("");
     try {
-      await serviceClient.addFeedback(context.id, {
+      const response = await serviceClient.addFeedback(context.id, {
         clientFeedbackId: clientFeedbackIdFactory(),
         text: feedbackText,
         sourceAssetIds: voiceAssetId ? [voiceAssetId] : [],
+        durationMs: Math.min(
+          86_400_000,
+          Math.max(0, Date.now() - feedbackStartedAtRef.current),
+        ),
       });
+      void response;
       setSubmitStatus("complete");
       setText("");
     } catch {

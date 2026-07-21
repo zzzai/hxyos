@@ -150,6 +150,7 @@ def test_post_organization_record_returns_async_receipt(tmp_path: Path) -> None:
             "client_record_id": "12000000-0000-0000-0000-000000000001",
             "text": "水电图今天确认",
             "source_asset_ids": [],
+            "purpose": "closing_review",
         },
     )
 
@@ -160,6 +161,7 @@ def test_post_organization_record_returns_async_receipt(tmp_path: Path) -> None:
     }
     call = client.channel_repository.calls[0]
     assert call["payload"]["intent_hint"] == "organization_record"
+    assert call["payload"]["raw_payload"] == {"purpose": "closing_review"}
     assert call["payload"]["idempotency_key"] == (
         "12000000-0000-0000-0000-000000000001"
     )

@@ -84,6 +84,7 @@ describe("productServiceClient", () => {
       clientFeedbackId: "78000000-0000-0000-0000-000000000001",
       text: "顾客反馈力度合适",
       sourceAssetIds: ["79000000-0000-0000-0000-000000000001"],
+      durationMs: 42_000,
     });
 
     const request = fetchMock.mock.calls[0][1] as RequestInit;
@@ -91,6 +92,7 @@ describe("productServiceClient", () => {
       client_feedback_id: "78000000-0000-0000-0000-000000000001",
       text: "顾客反馈力度合适",
       source_asset_ids: ["79000000-0000-0000-0000-000000000001"],
+      duration_ms: 42_000,
     });
     expect(String(request.body)).not.toMatch(/organization|store|assignment/);
   });
@@ -111,6 +113,7 @@ describe("productServiceClient", () => {
         clientFeedbackId: "78000000-0000-0000-0000-000000000001",
         text: "反馈",
         sourceAssetIds: [],
+        durationMs: 1_000,
       }),
     ).rejects.toEqual(
       expect.objectContaining<Partial<ServiceRequestError>>({

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -28,6 +28,7 @@ class CreateOrganizationRecordRequest(StrictRecordRouteModel):
     client_record_id: UUID
     text: str = Field(default="", max_length=20_000)
     source_asset_ids: list[UUID] = Field(default_factory=list, max_length=20)
+    purpose: Literal["general", "closing_review"] = "general"
 
     @model_validator(mode="after")
     def require_content(self) -> "CreateOrganizationRecordRequest":
@@ -71,7 +72,7 @@ def persist_organization_record(
                 "channel_user_id": principal.account_id,
                 "idempotency_key": str(request.client_record_id),
                 "raw_text": request.text,
-                "raw_payload": {},
+                "raw_payload": {"purpose": request.purpose},
                 "source_asset_ids": [str(value) for value in request.source_asset_ids],
                 "intent_hint": "organization_record",
             },

@@ -405,6 +405,7 @@ describe("minimal HXYOS frontstage", () => {
     expect(records.createRecord).toHaveBeenCalledWith(
       expect.objectContaining({
         text: "闭店复盘：今日客流平稳，无未处理客诉。",
+        purpose: "closing_review",
       }),
     );
   });
@@ -426,6 +427,7 @@ describe("minimal HXYOS frontstage", () => {
       clientRecordId: "15000000-0000-4000-8000-000000000001",
       text: "线上运营今天正式入职",
       sourceAssetIds: [],
+      purpose: "general",
     });
     expect(conversations.sendMessage).toHaveBeenCalledWith(
       "conversation-new",
@@ -479,6 +481,7 @@ describe("minimal HXYOS frontstage", () => {
       clientRecordId: "15000000-0000-4000-8000-000000000001",
       text: "这是今天确认的门店效果图",
       sourceAssetIds: [ASSET_ID],
+      purpose: "general",
     });
     expect(conversations.sendMessage).toHaveBeenCalledWith(
       "conversation-new",
@@ -628,7 +631,11 @@ describe("minimal HXYOS frontstage", () => {
     const user = userEvent.setup();
     renderShell();
 
-    await user.click(await screen.findByRole("button", { name: /水电图仍待确认/ }));
+    await user.click(
+      await screen.findByRole("button", {
+        name: "水电图仍待确认，查看组织记录",
+      }),
+    );
 
     const detail = await screen.findByRole("region", { name: "组织记录详情" });
     expect(within(detail).getByText("施工方尚未收到最终水电图，今天需要确认。")).toBeVisible();
@@ -658,7 +665,11 @@ describe("minimal HXYOS frontstage", () => {
       }),
     });
 
-    await user.click(await screen.findByRole("button", { name: /水电图仍待确认/ }));
+    await user.click(
+      await screen.findByRole("button", {
+        name: "水电图仍待确认，查看组织记录",
+      }),
+    );
 
     expect(screen.getByRole("link", { name: "打开原始资料 最终水电图.pdf" })).toHaveAttribute(
       "href",
@@ -670,7 +681,11 @@ describe("minimal HXYOS frontstage", () => {
     const user = userEvent.setup();
     renderShell();
 
-    await user.click(await screen.findByRole("button", { name: /水电图仍待确认/ }));
+    await user.click(
+      await screen.findByRole("button", {
+        name: "水电图仍待确认，查看组织记录",
+      }),
+    );
     await user.click(screen.getByRole("button", { name: "基于这条记录提问" }));
 
     expect(screen.getByRole("heading", { name: "对话" })).toBeVisible();

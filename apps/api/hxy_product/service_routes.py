@@ -174,6 +174,7 @@ def create_service_router(
                     "client_feedback_id": str(request.client_feedback_id),
                     "text": request.text,
                     "source_asset_ids": [str(item) for item in request.source_asset_ids],
+                    "duration_ms": request.duration_ms,
                 },
                 assignment_id=assignment.assignment_id,
                 role=assignment.role,

@@ -33,7 +33,12 @@ test.describe("HXYOS governed onboarding", () => {
 
       const profile = page.locator(".organization-panel");
       await expect(page.getByRole("heading", { name: "测试创始人" })).toBeVisible();
-      await expectWithinViewport(page, page.locator(".stage-header"));
+      await expectWithinViewport(
+        page,
+        page.locator(
+          viewport.width <= 760 ? ".mobile-context-bar" : ".rail-identity",
+        ),
+      );
       await expectHorizontallyWithinViewport(page, profile);
       await expectNoHorizontalOverflow(page);
 
@@ -165,13 +170,13 @@ test.describe("HXYOS governed onboarding", () => {
       }),
     );
     await expectTextWrapsWithoutOverflow(identityStoreName);
-    await expectTextWrapsWithoutOverflow(
+    await expectEllipsisContained(
       page.getByText(GOVERNED_FIXTURES.longEmployeeName, { exact: true }),
     );
-    const headerScope = page.locator(".stage-header .context-scope");
+    const headerScope = page.locator(".mobile-context-bar button");
     await expect(headerScope).toHaveText(GOVERNED_FIXTURES.longStoreName);
     await expectEllipsisContained(headerScope);
-    await expectWithinViewport(page, page.locator(".stage-header"));
+    await expectWithinViewport(page, page.locator(".mobile-context-bar"));
     await expectHorizontallyWithinViewport(
       page,
       page.locator(".organization-panel"),
@@ -203,7 +208,7 @@ test.describe("HXYOS governed onboarding", () => {
         name: `撤销${GOVERNED_FIXTURES.longEmployeeName}的邀请`,
       }),
     ).toBeVisible();
-    await expectTextWrapsWithoutOverflow(
+    await expectEllipsisContained(
       page
         .locator(".organization-list-section")
         .last()
@@ -281,7 +286,7 @@ test.describe("HXYOS governed onboarding", () => {
     await expect(page.getByRole("button", { name: "邀请店长" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "邀请员工" })).toHaveCount(0);
     expect(state.organizationRequests).toEqual([]);
-    await expectWithinViewport(page, page.locator(".stage-header"));
+    await expectWithinViewport(page, page.locator(".mobile-context-bar"));
     await expectHorizontallyWithinViewport(
       page,
       page.locator(".organization-panel"),
@@ -308,7 +313,7 @@ test.describe("HXYOS governed onboarding", () => {
     state.releaseRedeemResponse();
 
     await expect(
-      page.getByRole("textbox", { name: "告诉 HXYOS 你要做什么" }),
+      page.getByRole("textbox", { name: "问问题，或记录刚刚发生的事" }),
     ).toBeEnabled();
     expect(state.meRequests).toEqual(["GET /api/v1/me"]);
     const composer = page.getByTestId("composer");
@@ -352,7 +357,7 @@ test.describe("HXYOS governed onboarding", () => {
     expect(browserStorage.session).not.toContain(
       GOVERNED_FIXTURES.inviteToken,
     );
-    await expectWithinViewport(page, page.locator(".stage-header"));
+    await expectWithinViewport(page, page.locator(".mobile-context-bar"));
     await expectNoHorizontalOverflow(page);
     expectNoUnexpectedRequests(state);
   });

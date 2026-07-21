@@ -1,5 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createElement, StrictMode, type ReactNode } from "react";
 
 import { useVoiceCapture } from "./useVoiceCapture";
 
@@ -84,6 +85,22 @@ describe("useVoiceCapture", () => {
 
     act(() => vi.advanceTimersByTime(2_100));
     expect(result.current.durationSeconds).toBe(2);
+  });
+
+  it("starts recording after the StrictMode effect lifecycle check", async () => {
+    const { getUserMedia } = browserAudio();
+    const { result } = renderHook(
+      () => useVoiceCapture({ onCaptured: vi.fn() }),
+      {
+        wrapper: ({ children }: { children: ReactNode }) =>
+          createElement(StrictMode, null, children),
+      },
+    );
+
+    await act(async () => result.current.start());
+
+    expect(getUserMedia).toHaveBeenCalledWith({ audio: true });
+    expect(result.current.status).toBe("recording");
   });
 
   it("stops recording, releases the microphone, and returns an audio file", async () => {

@@ -73,6 +73,7 @@ export interface CreateOrganizationRecordRequest {
   clientRecordId: string;
   text: string;
   sourceAssetIds: string[];
+  purpose?: "general" | "closing_review";
 }
 
 export interface OrganizationRecordClient {
@@ -344,6 +345,7 @@ export const productRecordClient: OrganizationRecordClient = {
           client_record_id: request.clientRecordId,
           text: request.text,
           source_asset_ids: request.sourceAssetIds,
+          purpose: request.purpose ?? "general",
         }),
       },
       isRecordResponse,

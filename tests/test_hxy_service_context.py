@@ -304,6 +304,7 @@ def test_feedback_is_linked_without_exposing_or_accepting_identity_scope() -> No
             "client_feedback_id": client_feedback_id,
             "text": "顾客反馈力度合适，肩颈仍有些紧。",
             "source_asset_ids": [],
+            "duration_ms": 42_000,
         },
     )
 
@@ -319,6 +320,7 @@ def test_feedback_is_linked_without_exposing_or_accepting_identity_scope() -> No
             "client_feedback_id": client_feedback_id,
             "text": "顾客反馈力度合适，肩颈仍有些紧。",
             "source_asset_ids": [],
+            "duration_ms": 42_000,
         },
         "assignment_id": ASSIGNMENT_ID,
         "role": "store_employee",
@@ -338,6 +340,7 @@ def test_voice_only_feedback_is_accepted_as_a_protected_asset() -> None:
             "client_feedback_id": client_feedback_id,
             "text": "",
             "source_asset_ids": [source_asset_id],
+            "duration_ms": 18_000,
         },
     )
 
@@ -359,6 +362,7 @@ def test_feedback_requires_text_or_a_protected_asset() -> None:
             "client_feedback_id": str(uuid4()),
             "text": "",
             "source_asset_ids": [],
+            "duration_ms": 0,
         },
     )
 

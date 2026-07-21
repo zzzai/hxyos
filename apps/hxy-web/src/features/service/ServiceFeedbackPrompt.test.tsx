@@ -158,6 +158,7 @@ describe("ServiceFeedbackPrompt", () => {
       clientFeedbackId: "78000000-0000-0000-0000-000000000001",
       text: "顾客反馈力度合适，肩颈仍有些紧。",
       sourceAssetIds: [],
+      durationMs: expect.any(Number),
     });
     expect(JSON.stringify(vi.mocked(services.addFeedback).mock.calls)).not.toMatch(
       /organization|store|assignment/,

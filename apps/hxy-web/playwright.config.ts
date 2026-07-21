@@ -19,6 +19,12 @@ export default defineConfig({
   testDir: "./tests",
   outputDir: "./node_modules/.cache/playwright-test-results",
   reporter: "list",
+  projects: [
+    { name: "mobile-360", use: { viewport: { width: 360, height: 800 } } },
+    { name: "mobile-390", use: { viewport: { width: 390, height: 844 } } },
+    { name: "desktop-1280", use: { viewport: { width: 1280, height: 800 } } },
+    { name: "desktop-1440", use: { viewport: { width: 1440, height: 900 } } },
+  ],
   use: {
     baseURL: "http://127.0.0.1:4173",
     browserName: "chromium",

@@ -809,6 +809,9 @@ class ChannelRepository:
         intake = ChannelIntakePayload.model_validate(payload)
         if intake.channel != "pwa" or intake.intent_hint != "organization_record":
             raise AuthenticatedIntakeScopeDenied("organization record scope is invalid")
+        purpose = str(intake.raw_payload.get("purpose") or "general")
+        if purpose not in {"general", "closing_review"}:
+            raise AuthenticatedIntakeScopeDenied("organization record purpose is invalid")
 
         def assignment_value(key: str) -> str:
             if isinstance(assignment, dict):
@@ -938,7 +941,7 @@ class ChannelRepository:
                 intake,
                 assignment_id=assignment_id,
                 store_id=expected_store_id,
-                raw_payload={},
+                raw_payload={"purpose": purpose},
                 raw_text=_sanitize_text(intake.raw_text),
                 request_fingerprint=request_fingerprint,
                 visibility_scope={

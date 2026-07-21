@@ -4,9 +4,12 @@ import {
   CheckCircle2,
   ClipboardCheck,
   RefreshCw,
+  ThumbsDown,
+  ThumbsUp,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 
+import { productEventClient } from "../../api/productEvents";
 import type { TodayBriefItem, TodayRoleAction } from "../../api/today";
 
 interface TodayViewProps {
@@ -18,6 +21,12 @@ interface TodayViewProps {
   onOpenRecord: (recordId: string) => void;
   onRoleAction?: (action: TodayRoleAction) => void;
   onRetry: () => void;
+}
+
+interface BriefFeedbackState {
+  clientEventId: string;
+  useful: boolean;
+  status: "pending" | "saved" | "error";
 }
 
 function kindLabel(item: TodayBriefItem): string {
@@ -36,8 +45,28 @@ export function TodayView({
   onRoleAction,
   onRetry,
 }: TodayViewProps) {
+  const [briefFeedback, setBriefFeedback] = useState<Record<string, BriefFeedbackState>>({});
   const occupiedSlots = leadingActionActive || roleAction ? 1 : 0;
   const visibleItems = items.slice(0, Math.max(0, 3 - occupiedSlots));
+
+  const recordBriefFeedback = async (item: TodayBriefItem, useful: boolean) => {
+    const existing = briefFeedback[item.id];
+    const clientEventId = existing?.clientEventId ?? crypto.randomUUID();
+    setBriefFeedback((current) => ({
+      ...current,
+      [item.id]: { clientEventId, useful, status: "pending" },
+    }));
+    const saved = await productEventClient.track({
+      clientEventId,
+      eventName: "briefing_feedback",
+      subjectId: item.source_record_id,
+      useful,
+    });
+    setBriefFeedback((current) => ({
+      ...current,
+      [item.id]: { clientEventId, useful, status: saved ? "saved" : "error" },
+    }));
+  };
 
   return (
     <section className="frontstage-view today-view" aria-labelledby="today-title">
@@ -86,6 +115,7 @@ export function TodayView({
           {visibleItems.map((item) => (
             <li key={item.id}>
               <button
+                className="brief-open-button"
                 type="button"
                 aria-label={`${item.statement}，查看组织记录`}
                 onClick={() => onOpenRecord(item.source_record_id)}
@@ -100,6 +130,35 @@ export function TodayView({
                 </span>
                 <ArrowRight aria-hidden="true" />
               </button>
+              <div className="brief-feedback" aria-label="简报反馈">
+                {briefFeedback[item.id]?.status === "saved" ? (
+                  <span role="status">已记录</span>
+                ) : (
+                  <>
+                    {briefFeedback[item.id]?.status === "error" ? (
+                      <span role="alert">反馈没有记录，请重试</span>
+                    ) : null}
+                    <button
+                      type="button"
+                      aria-label={`认为“${item.statement}”有帮助`}
+                      title="有帮助"
+                      disabled={briefFeedback[item.id]?.status === "pending"}
+                      onClick={() => void recordBriefFeedback(item, true)}
+                    >
+                      <ThumbsUp aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`认为“${item.statement}”不准确`}
+                      title="不准确"
+                      disabled={briefFeedback[item.id]?.status === "pending"}
+                      onClick={() => void recordBriefFeedback(item, false)}
+                    >
+                      <ThumbsDown aria-hidden="true" />
+                    </button>
+                  </>
+                )}
+              </div>
             </li>
           ))}
         </ul>

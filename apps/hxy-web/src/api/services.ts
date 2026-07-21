@@ -30,6 +30,7 @@ export interface AddServiceFeedbackInput {
   clientFeedbackId: string;
   text: string;
   sourceAssetIds: string[];
+  durationMs: number;
 }
 
 export interface ServiceClient {
@@ -139,6 +140,7 @@ export const productServiceClient: ServiceClient = {
           client_feedback_id: input.clientFeedbackId,
           text: input.text.trim(),
           source_asset_ids: input.sourceAssetIds,
+          duration_ms: input.durationMs,
         }),
       },
     )) as ServiceFeedbackResponse,
